@@ -8,6 +8,7 @@ export interface DialogField {
   placeholder?: string
   initial?: string
   type?: 'text' | 'password'
+  optional?: boolean // 为 true 时允许留空
 }
 
 interface InputState {

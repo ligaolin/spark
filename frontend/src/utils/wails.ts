@@ -8,6 +8,7 @@ import { CustomCommandService } from '../../bindings/changeme/app/service/custom
 import { DocumentService } from '../../bindings/changeme/app/service/documents'
 import { FavoriteService } from '../../bindings/changeme/app/service/favorites'
 import { SettingsService } from '../../bindings/changeme/app/service/settings'
+import { SiteService } from '../../bindings/changeme/app/service/sites'
 import { DatabaseService } from '../../bindings/changeme/app/service/databases'
 import { LocalService } from '../../bindings/changeme/app/service/local'
 import { HostKeyService } from '../../bindings/changeme/app/service/hostkeys'
@@ -25,6 +26,10 @@ import type {
   Favorite,
   ConnectionGroup,
   DocNode,
+  Site,
+  SiteLink,
+  SiteAccount,
+  SiteFolder,
 } from '../../bindings/changeme/app/model/models'
 import type { HostKeyInfo, HostKeyStatus } from '../../bindings/changeme/app/service/hostkeys/models'
 import type { DatabaseConfig } from '../../bindings/changeme/app/service/databases/models'
@@ -40,6 +45,7 @@ export {
   DocumentService,
   FavoriteService,
   SettingsService,
+  SiteService,
   DatabaseService,
   LocalService,
   HostKeyService,
@@ -52,6 +58,10 @@ export type {
   Favorite,
   ConnectionGroup,
   DocNode,
+  Site,
+  SiteLink,
+  SiteAccount,
+  SiteFolder,
   HostKeyInfo,
   HostKeyStatus,
   ServerInfo,

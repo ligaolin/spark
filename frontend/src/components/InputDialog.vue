@@ -60,6 +60,7 @@ watch(
 
 function confirm() {
   for (const f of props.fields) {
+    if (f.optional) continue
     if (!(values[f.key] ?? '').trim()) {
       ElMessage.warning(`请填写「${f.label}」`)
       return

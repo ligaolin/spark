@@ -1176,6 +1176,8 @@ onBeforeUnmount(() => {
     flex: 1;
     min-height: 0;
     position: relative;
+    /* 底部留出空白：列表滚到底时仍有空隙可起手框选（拖选） */
+    padding: 20px;
 }
 
 .box-select-overlay {

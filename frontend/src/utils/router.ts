@@ -17,6 +17,10 @@ const routes = [
     path: '/documents',
     component: () => import('../views/DocumentsView.vue'),
   },
+  {
+    path: '/sites',
+    component: () => import('../views/SitesView.vue'),
+  },
   { path: '/:pathMatch(.*)*', redirect: '/terminal' },
 ]
 

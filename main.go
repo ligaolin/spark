@@ -17,6 +17,7 @@ import (
 	"changeme/app/service/secure"
 	"changeme/app/service/settings"
 	"changeme/app/service/sftp"
+	"changeme/app/service/sites"
 	"changeme/app/service/sshconfig"
 	"changeme/app/service/terminal"
 	"changeme/app/service/types"
@@ -65,6 +66,7 @@ func main() {
 			application.NewService(&documents.DocumentService{}),
 			application.NewService(&favorites.FavoriteService{}),
 			application.NewService(&settings.SettingsService{}),
+			application.NewService(&sites.SiteService{}),
 			application.NewService(&databases.DatabaseService{}),
 			application.NewService(&local.LocalService{}),
 			application.NewService(&hostkeys.HostKeyService{}),
@@ -89,7 +91,14 @@ func main() {
 		},
 		BackgroundColour:           application.NewRGB(18, 18, 24),
 		DefaultContextMenuDisabled: true,
-		URL:                        "/",
+		// F12 打开调试工具：注册到原生层，内嵌站点 iframe 获得焦点时同样生效，
+		// 便于调试「站点管理」中打开的内嵌页面。
+		KeyBindings: map[string]func(window application.Window){
+			"F12": func(window application.Window) {
+				window.OpenDevTools()
+			},
+		},
+		URL: "/",
 	})
 
 	if err := app.Run(); err != nil {

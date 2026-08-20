@@ -108,3 +108,64 @@ export interface SavedConnection {
     "createdAt": string;
     "updatedAt": string;
 }
+
+/**
+ * Site is one website group (站点), sitting in a folder (or root).
+ */
+export interface Site {
+    "id": number;
+
+    /**
+     * 0 = root
+     */
+    "folderId": number;
+    "name": string;
+    "note": string;
+    "sort": number;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+/**
+ * SiteAccount is a username/password pair belonging to a link (账号). The
+ * password is encrypted at rest (AES-256-GCM, same key as connections).
+ */
+export interface SiteAccount {
+    "id": number;
+    "linkId": number;
+    "username": string;
+    "password": string;
+    "note": string;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+/**
+ * SiteFolder is a folder node in the site tree (multi-level, like documents).
+ */
+export interface SiteFolder {
+    "id": number;
+
+    /**
+     * 0 = root
+     */
+    "parentId": number;
+    "name": string;
+    "sort": number;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+/**
+ * SiteLink is one URL belonging to a site (链接).
+ */
+export interface SiteLink {
+    "id": number;
+    "siteId": number;
+    "name": string;
+    "url": string;
+    "note": string;
+    "sort": number;
+    "createdAt": string;
+    "updatedAt": string;
+}
