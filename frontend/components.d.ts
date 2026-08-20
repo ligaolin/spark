@@ -18,6 +18,7 @@ declare module 'vue' {
     DialogHost: typeof import('./src/components/DialogHost.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElButton: typeof import('element-plus/es')['ElButton']
+    ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
     ElConfigProvider: typeof import('element-plus/es')['ElConfigProvider']
     ElDialog: typeof import('element-plus/es')['ElDialog']
     ElEmpty: typeof import('element-plus/es')['ElEmpty']
@@ -48,6 +49,7 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     ServerInfoView: typeof import('./src/components/ServerInfoView.vue')['default']
+    SshConfigImport: typeof import('./src/components/SshConfigImport.vue')['default']
     TerminalPane: typeof import('./src/components/TerminalPane.vue')['default']
     TransferDock: typeof import('./src/components/TransferDock.vue')['default']
   }

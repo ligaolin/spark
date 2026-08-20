@@ -125,8 +125,8 @@ func AsHostKeyError(err error) error {
 	return nil
 }
 
-// BuildClientConfig creates an SSH client config from connection options.
-func BuildClientConfig(opts types.ConnectOptions) (*xssh.ClientConfig, error) {
+// buildAuthMethods assembles SSH auth methods from connection options.
+func buildAuthMethods(opts types.ConnectOptions) ([]xssh.AuthMethod, error) {
 	if strings.TrimSpace(opts.Username) == "" {
 		return nil, errors.New("用户名不能为空")
 	}
@@ -150,6 +150,15 @@ func BuildClientConfig(opts types.ConnectOptions) (*xssh.ClientConfig, error) {
 	default:
 		return nil, errors.New("需要提供密码或私钥")
 	}
+	return auths, nil
+}
+
+// BuildClientConfig creates an SSH client config from connection options.
+func BuildClientConfig(opts types.ConnectOptions) (*xssh.ClientConfig, error) {
+	auths, err := buildAuthMethods(opts)
+	if err != nil {
+		return nil, err
+	}
 
 	cb, err := hostKeyCallback()
 	if err != nil {
@@ -162,6 +171,37 @@ func BuildClientConfig(opts types.ConnectOptions) (*xssh.ClientConfig, error) {
 		HostKeyCallback: cb,
 		Timeout:         15 * time.Second,
 	}, nil
+}
+
+// TestLogin attempts a full SSH authentication against the host using the
+// given credentials. It skips known_hosts verification (a login probe should
+// not be blocked by an untrusted key) and returns nil on successful auth.
+func TestLogin(opts types.ConnectOptions) error {
+	auths, err := buildAuthMethods(opts)
+	if err != nil {
+		return err
+	}
+	port := opts.Port
+	if port <= 0 || port > 65535 {
+		port = 22
+	}
+	addr := net.JoinHostPort(opts.Host, strconv.Itoa(port))
+
+	config := &xssh.ClientConfig{
+		User: opts.Username,
+		Auth: auths,
+		HostKeyCallback: func(string, net.Addr, xssh.PublicKey) error {
+			return nil // 测试用：跳过主机密钥校验
+		},
+		Timeout: 10 * time.Second,
+	}
+
+	conn, err := xssh.Dial("tcp", addr, config)
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
+	return nil
 }
 
 // ParsePrivateKey parses a PEM-encoded private key, optionally protected by a passphrase.

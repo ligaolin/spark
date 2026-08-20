@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"changeme/app/service/types"
 
@@ -74,6 +75,42 @@ func (l *LocalService) PickFiles() ([]string, error) {
 		CanChooseFiles(true).
 		CanChooseDirectories(false).
 		PromptForMultipleSelection()
+}
+
+// PickOpenFile opens a native single-file dialog for reading a local file.
+func (l *LocalService) PickOpenFile(title string) (string, error) {
+	if strings.TrimSpace(title) == "" {
+		title = "选择文件"
+	}
+	return application.Get().Dialog.OpenFile().
+		SetTitle(title).
+		CanChooseFiles(true).
+		CanChooseDirectories(false).
+		PromptForSingleSelection()
+}
+
+// ReadTextFile reads a local text file (supports leading ~ for home dir).
+func (l *LocalService) ReadTextFile(path string) (string, error) {
+	path = expandUserPath(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func expandUserPath(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "~\\") {
+		return filepath.Join(home, p[2:])
+	}
+	return p
 }
 
 // PickDirectory opens a native directory chooser.

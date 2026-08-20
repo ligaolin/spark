@@ -14,6 +14,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as model$0 from "../../model/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 /**
  * Create persists a new saved connection and returns it with its id.
  */
@@ -61,6 +65,20 @@ export function List(): $CancellablePromise<model$0.SavedConnection[] | null> {
  */
 export function ListGroups(): $CancellablePromise<model$0.ConnectionGroup[] | null> {
     return $Call.ByID(3420954172);
+}
+
+/**
+ * RemoveDuplicates finds connections sharing the same host + type and keeps
+ * one of each group: the reachable one with the highest id if any is
+ * reachable, otherwise the highest id (the "last" created one).
+ * 
+ * deep=false uses a plain TCP dial to host:port (no credentials needed).
+ * deep=true additionally performs a real login (SSH auth / FTP Login) so the
+ * keep-decision also distinguishes credentials that still work. Deep checks
+ * are slower and may trigger server-side login-failure policies.
+ */
+export function RemoveDuplicates(deep: boolean): $CancellablePromise<$models.DedupResult> {
+    return $Call.ByID(2948822714, deep);
 }
 
 /**

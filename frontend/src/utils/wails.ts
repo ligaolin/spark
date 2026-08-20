@@ -10,6 +10,7 @@ import { SettingsService } from '../../bindings/changeme/app/service/settings'
 import { DatabaseService } from '../../bindings/changeme/app/service/databases'
 import { LocalService } from '../../bindings/changeme/app/service/local'
 import { HostKeyService } from '../../bindings/changeme/app/service/hostkeys'
+import { SshConfigService } from '../../bindings/changeme/app/service/sshconfig'
 
 import type {
   ConnectOptions,
@@ -25,6 +26,8 @@ import type {
 } from '../../bindings/changeme/app/model/models'
 import type { HostKeyInfo, HostKeyStatus } from '../../bindings/changeme/app/service/hostkeys/models'
 import type { DatabaseConfig } from '../../bindings/changeme/app/service/databases/models'
+import type { SshHost, ImportResult } from '../../bindings/changeme/app/service/sshconfig/models'
+import type { DedupResult } from '../../bindings/changeme/app/service/connections/models'
 
 export {
   TerminalService,
@@ -37,6 +40,7 @@ export {
   DatabaseService,
   LocalService,
   HostKeyService,
+  SshConfigService,
 }
 export type {
   ConnectOptions,
@@ -50,6 +54,9 @@ export type {
   ProcessInfo,
   SessionClosed,
   DatabaseConfig,
+  SshHost,
+  ImportResult,
+  DedupResult,
 }
 
 // 绑定模型为接口且字段全必填，这里提供带默认值的工厂函数便于构造。

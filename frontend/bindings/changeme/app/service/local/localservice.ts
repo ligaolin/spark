@@ -50,10 +50,24 @@ export function PickFiles(): $CancellablePromise<string[] | null> {
 }
 
 /**
+ * PickOpenFile opens a native single-file dialog for reading a local file.
+ */
+export function PickOpenFile(title: string): $CancellablePromise<string> {
+    return $Call.ByID(959602706, title);
+}
+
+/**
  * PickSaveFile opens a native save dialog with a suggested filename.
  */
 export function PickSaveFile(defaultName: string): $CancellablePromise<string> {
     return $Call.ByID(4029933031, defaultName);
+}
+
+/**
+ * ReadTextFile reads a local text file (supports leading ~ for home dir).
+ */
+export function ReadTextFile(path: string): $CancellablePromise<string> {
+    return $Call.ByID(3963761876, path);
 }
 
 /**

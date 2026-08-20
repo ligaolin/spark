@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ConnService } from '../utils/wails'
-import type { SavedConnection, ConnectionGroup } from '../utils/wails'
+import type { SavedConnection, ConnectionGroup, DedupResult } from '../utils/wails'
 
 export const useConnectionsStore = defineStore('connections', {
   state: () => ({
@@ -63,6 +63,12 @@ export const useConnectionsStore = defineStore('connections', {
     async deleteGroup(name: string) {
       await ConnService.DeleteGroup(name)
       await this.load()
+    },
+
+    async removeDuplicates(deep: boolean): Promise<DedupResult> {
+      const res = await ConnService.RemoveDuplicates(deep)
+      await this.load()
+      return res
     },
   },
 })

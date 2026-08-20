@@ -16,6 +16,7 @@ import (
 	"changeme/app/service/secure"
 	"changeme/app/service/settings"
 	"changeme/app/service/sftp"
+	"changeme/app/service/sshconfig"
 	"changeme/app/service/terminal"
 	"changeme/app/service/types"
 
@@ -65,6 +66,7 @@ func main() {
 			application.NewService(&databases.DatabaseService{}),
 			application.NewService(&local.LocalService{}),
 			application.NewService(&hostkeys.HostKeyService{}),
+			application.NewService(&sshconfig.SshConfigService{}),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

@@ -3,12 +3,21 @@
 package connections
 
 import (
+	"crypto/tls"
 	"errors"
+	"fmt"
+	"net"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"changeme/app/model"
 	"changeme/app/service/db"
+	"changeme/app/service/sshlib"
+	"changeme/app/service/types"
 
+	"github.com/jlaffaye/ftp"
 	"gorm.io/gorm"
 )
 
@@ -139,6 +148,165 @@ func (c *ConnService) RenameGroup(oldName, newName string) error {
 			Where("group_name = ?", oldName).
 			Update("group_name", newName).Error
 	})
+}
+
+// DedupResult reports the outcome of RemoveDuplicates.
+type DedupResult struct {
+	Removed int      `json:"removed"`
+	Summary []string `json:"summary"`
+}
+
+// RemoveDuplicates finds connections sharing the same host + type and keeps
+// one of each group: the reachable one with the highest id if any is
+// reachable, otherwise the highest id (the "last" created one).
+//
+// deep=false uses a plain TCP dial to host:port (no credentials needed).
+// deep=true additionally performs a real login (SSH auth / FTP Login) so the
+// keep-decision also distinguishes credentials that still work. Deep checks
+// are slower and may trigger server-side login-failure policies.
+func (c *ConnService) RemoveDuplicates(deep bool) (DedupResult, error) {
+	var all []model.SavedConnection
+	if err := db.GetDB().Order("id asc").Find(&all).Error; err != nil {
+		return DedupResult{}, err
+	}
+
+	type key struct {
+		host string
+		typ  string
+	}
+	groups := map[key][]model.SavedConnection{}
+	var order []key
+	for _, conn := range all {
+		k := key{conn.Host, conn.Type}
+		if _, ok := groups[k]; !ok {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], conn)
+	}
+
+	// 仅对属于重复组的连接做连通性探测
+	reachable := map[uint]bool{}
+	var toProbe []model.SavedConnection
+	for _, k := range order {
+		if len(groups[k]) <= 1 {
+			continue
+		}
+		toProbe = append(toProbe, groups[k]...)
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, conn := range toProbe {
+		wg.Add(1)
+		go func(cn model.SavedConnection) {
+			defer wg.Done()
+			ok := reachableConn(cn, deep)
+			mu.Lock()
+			reachable[cn.ID] = ok
+			mu.Unlock()
+		}(conn)
+	}
+	wg.Wait()
+
+	stateWord := "可联通"
+	if deep {
+		stateWord = "可登录"
+	}
+
+	res := DedupResult{Summary: []string{}}
+	for _, k := range order {
+		g := groups[k]
+		if len(g) <= 1 {
+			continue
+		}
+		// g 已按 id 升序；默认保留最后一个（id 最大），优先保留可联通的最后一个
+		keep := g[len(g)-1]
+		for i := len(g) - 1; i >= 0; i-- {
+			if reachable[g[i].ID] {
+				keep = g[i]
+				break
+			}
+		}
+		note := stateWord
+		if !reachable[keep.ID] {
+			note = "均不可" + stateWord + "，保留最后一条"
+		}
+		for _, cn := range g {
+			if cn.ID == keep.ID {
+				continue
+			}
+			if err := db.GetDB().Delete(&model.SavedConnection{}, cn.ID).Error; err != nil {
+				return res, err
+			}
+			res.Removed++
+		}
+		res.Summary = append(res.Summary, fmt.Sprintf(
+			"%s（%s）：保留「%s」（%s），删除 %d 个",
+			keep.Host, strings.ToUpper(keep.Type), keep.Name, note, len(g)-1,
+		))
+	}
+	return res, nil
+}
+
+// reachableConn reports whether a saved connection is usable. With deep=true
+// it performs a real login (SSH auth / FTP Login); otherwise a plain TCP dial.
+func reachableConn(cn model.SavedConnection, deep bool) bool {
+	if !deep {
+		return tcpReachable(cn.Host, cn.Port)
+	}
+	if cn.Type == "ftp" {
+		return ftpLoginReachable(cn.Host, cn.Port, cn.Username, cn.Password, cn.TLS)
+	}
+	opts := types.ConnectOptions{
+		Host:       cn.Host,
+		Port:       cn.Port,
+		Username:   cn.Username,
+		Password:   cn.Password,
+		UseKey:     cn.UseKey,
+		PrivateKey: cn.PrivateKey,
+		Passphrase: cn.Passphrase,
+	}
+	return sshlib.TestLogin(opts) == nil
+}
+
+// tcpReachable dials host:port with a short timeout to test reachability.
+func tcpReachable(host string, port int) bool {
+	if port <= 0 || port > 65535 {
+		port = 22
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// ftpLoginReachable dials an FTP(S) server and attempts a login. Certificate
+// verification is skipped so a self-signed cert does not hide a working login.
+func ftpLoginReachable(host string, port int, username, password string, tlsMode bool) bool {
+	if port <= 0 || port > 65535 {
+		port = 21
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+
+	var conn *ftp.ServerConn
+	var err error
+	if tlsMode {
+		tlsConf := &tls.Config{InsecureSkipVerify: true, ServerName: host}
+		conn, err = ftp.Dial(addr,
+			ftp.DialWithTimeout(8*time.Second),
+			ftp.DialWithExplicitTLS(tlsConf),
+		)
+	} else {
+		conn, err = ftp.Dial(addr, ftp.DialWithTimeout(8*time.Second))
+	}
+	if err != nil {
+		return false
+	}
+	defer func() { _ = conn.Quit() }()
+	return conn.Login(username, password) == nil
 }
 
 // DeleteGroup removes a group and moves its connections back to "未分组".

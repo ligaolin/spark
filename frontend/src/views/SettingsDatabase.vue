@@ -73,7 +73,7 @@
           />
         </el-form-item>
 
-        <el-form-item label=" ">
+        <!-- <el-form-item label=" ">
           <el-alert
             type="success"
             :closable="false"
@@ -81,7 +81,7 @@
             title="远程库自动互通，无需额外设置"
             description="连接密码的加密密钥由数据库连接信息自动派生：任何能连接同一数据库的机器都能自动解密，开箱即用。"
           />
-        </el-form-item>
+        </el-form-item> -->
 
         <el-form-item label=" ">
           <div class="db-note">
