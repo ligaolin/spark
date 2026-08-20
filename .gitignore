@@ -18,3 +18,5 @@ build.log
 *.sqlite3
 changeme.exe
 /.pnpm-store/
+/.npm-cache/
+/.gocache/

@@ -61,6 +61,14 @@ export function Mkdir(id: string, remotePath: string): $CancellablePromise<void>
 }
 
 /**
+ * ReadFile reads a remote text file for the built-in editor, enforcing a size
+ * limit and rejecting binary content.
+ */
+export function ReadFile(id: string, remotePath: string): $CancellablePromise<string> {
+    return $Call.ByID(366095997, id, remotePath);
+}
+
+/**
  * Remove deletes a remote file or directory (recursively for directories).
  */
 export function Remove(id: string, remotePath: string, isDir: boolean): $CancellablePromise<void> {
@@ -75,9 +83,24 @@ export function Rename(id: string, oldPath: string, newPath: string): $Cancellab
 }
 
 /**
+ * Search walks a remote directory recursively and returns filename matches
+ * (mode "name") or content matches (mode "content").
+ */
+export function Search(id: string, dir: string, pattern: string, mode: string): $CancellablePromise<types$0.SearchResult[] | null> {
+    return $Call.ByID(2777099599, id, dir, pattern, mode);
+}
+
+/**
  * Upload copies a local file or directory (recursively) to the remote path.
  * Interrupted file transfers resume from the remote file size (REST).
  */
 export function Upload(id: string, localPath: string, remotePath: string): $CancellablePromise<void> {
     return $Call.ByID(4108006530, id, localPath, remotePath);
+}
+
+/**
+ * WriteFile overwrites a remote text file with the given content (FTP STOR).
+ */
+export function WriteFile(id: string, remotePath: string, content: string): $CancellablePromise<void> {
+    return $Call.ByID(296365508, id, remotePath, content);
 }

@@ -95,6 +95,24 @@ export interface ProcessInfo {
 }
 
 /**
+ * SearchResult describes one search hit: either a filename match or a
+ * content match (content matches also carry the line number and text).
+ */
+export interface SearchResult {
+    "path": string;
+    "name": string;
+    "size": number;
+    "modTime": string;
+    "isDir": boolean;
+
+    /**
+     * Content search only
+     */
+    "lineNo"?: number;
+    "line"?: string;
+}
+
+/**
  * ServerInfo describes basic facts about a remote server (Linux first).
  */
 export interface ServerInfo {

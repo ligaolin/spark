@@ -66,6 +66,14 @@ export function Mkdir(id: string, remotePath: string): $CancellablePromise<void>
 }
 
 /**
+ * ReadFile reads a remote text file for the built-in editor, enforcing a size
+ * limit and rejecting binary content.
+ */
+export function ReadFile(id: string, remotePath: string): $CancellablePromise<string> {
+    return $Call.ByID(1969051887, id, remotePath);
+}
+
+/**
  * Remove deletes a remote file or directory (recursively).
  */
 export function Remove(id: string, remotePath: string): $CancellablePromise<void> {
@@ -77,6 +85,14 @@ export function Remove(id: string, remotePath: string): $CancellablePromise<void
  */
 export function Rename(id: string, oldPath: string, newPath: string): $CancellablePromise<void> {
     return $Call.ByID(3295465095, id, oldPath, newPath);
+}
+
+/**
+ * Search walks a remote directory recursively and returns filename matches
+ * (mode "name") or content matches (mode "content").
+ */
+export function Search(id: string, dir: string, pattern: string, mode: string): $CancellablePromise<types$0.SearchResult[] | null> {
+    return $Call.ByID(2768692821, id, dir, pattern, mode);
 }
 
 /**
@@ -92,4 +108,11 @@ export function Stat(id: string, remotePath: string): $CancellablePromise<types$
  */
 export function Upload(id: string, localPath: string, remotePath: string): $CancellablePromise<void> {
     return $Call.ByID(1160532464, id, localPath, remotePath);
+}
+
+/**
+ * WriteFile overwrites a remote text file with the given content.
+ */
+export function WriteFile(id: string, remotePath: string, content: string): $CancellablePromise<void> {
+    return $Call.ByID(2488285382, id, remotePath, content);
 }

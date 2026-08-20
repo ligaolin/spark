@@ -1,7 +1,7 @@
 // 文件面板后端适配器：把 SFTP / FTP / 本地文件操作统一成同一个接口，
 // 供 FilePanel 组件复用。
 import { LocalService, SFTPFileService, FTPFileService } from './wails'
-import type { FileEntry } from '../types'
+import type { FileEntry, SearchResult } from '../types'
 
 export interface FileBackend {
   kind: 'local' | 'remote'
@@ -15,6 +15,11 @@ export interface FileBackend {
   chmod?(path: string, mode: number): Promise<void>
   upload(localPath: string, remotePath: string): Promise<void>
   download(remotePath: string, localPath: string, isDir?: boolean): Promise<void>
+  // 编辑器：读取 / 保存文本文件
+  readFile(path: string): Promise<string>
+  writeFile(path: string, content: string): Promise<void>
+  // 搜索：按文件名或文件内容递归搜索
+  search(dir: string, pattern: string, mode: 'name' | 'content'): Promise<SearchResult[]>
 }
 
 export function makeLocalBackend(): FileBackend {
@@ -29,6 +34,9 @@ export function makeLocalBackend(): FileBackend {
     remove: (p) => LocalService.Remove(p),
     upload: async () => {},
     download: async () => {},
+    readFile: (p) => LocalService.ReadFile(p),
+    writeFile: (p, c) => LocalService.WriteFile(p, c),
+    search: async (d, p, m) => (await LocalService.Search(d, p, m)) ?? [],
   }
 }
 
@@ -45,6 +53,9 @@ export function makeSftpBackend(sessionId: string): FileBackend {
     chmod: (p, m) => SFTPFileService.Chmod(sessionId, p, m),
     upload: (l, r) => SFTPFileService.Upload(sessionId, l, r),
     download: (r, l) => SFTPFileService.Download(sessionId, r, l),
+    readFile: (p) => SFTPFileService.ReadFile(sessionId, p),
+    writeFile: (p, c) => SFTPFileService.WriteFile(sessionId, p, c),
+    search: async (d, p, m) => (await SFTPFileService.Search(sessionId, d, p, m)) ?? [],
   }
 }
 
@@ -60,6 +71,9 @@ export function makeFtpBackend(sessionId: string): FileBackend {
     remove: (p, isDir) => FTPFileService.Remove(sessionId, p, isDir),
     upload: (l, r) => FTPFileService.Upload(sessionId, l, r),
     download: (r, l, isDir) => FTPFileService.Download(sessionId, r, l, !!isDir),
+    readFile: (p) => FTPFileService.ReadFile(sessionId, p),
+    writeFile: (p, c) => FTPFileService.WriteFile(sessionId, p, c),
+    search: async (d, p, m) => (await FTPFileService.Search(sessionId, d, p, m)) ?? [],
   }
 }
 

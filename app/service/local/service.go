@@ -3,11 +3,14 @@
 package local
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"changeme/app/service/fileutil"
 	"changeme/app/service/types"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -142,4 +145,91 @@ func (l *LocalService) Rename(oldPath, newPath string) error {
 // Remove deletes a local file or directory (recursively).
 func (l *LocalService) Remove(p string) error {
 	return os.RemoveAll(p)
+}
+
+// Search walks a local directory recursively and returns filename matches
+// (mode "name") or content matches (mode "content").
+func (l *LocalService) Search(dir, pattern, mode string) ([]types.SearchResult, error) {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return nil, errors.New("请输入搜索关键字")
+	}
+	if dir == "" {
+		dir, _ = os.UserHomeDir()
+	}
+	dir = filepath.Clean(dir)
+	contentMode := strings.EqualFold(mode, "content")
+	results := make([]types.SearchResult, 0, 64)
+	err := filepath.Walk(dir, func(p string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return nil // 跳过不可读的目录/文件
+		}
+		if p == dir {
+			return nil // 跳过根目录本身
+		}
+		if len(results) >= fileutil.MaxSearchResults {
+			return filepath.SkipAll
+		}
+		name := filepath.Base(p)
+		if info.IsDir() {
+			if !contentMode && fileutil.MatchName(name, pattern) {
+				results = append(results, types.SearchResult{
+					Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(), IsDir: true,
+				})
+			}
+			return nil
+		}
+		if contentMode {
+			if info.Size() <= 0 || info.Size() > fileutil.MaxContentSearchSize {
+				return nil
+			}
+			data, rerr := os.ReadFile(p)
+			if rerr != nil {
+				return nil
+			}
+			if fileutil.IsBinary(data) {
+				return nil
+			}
+			for _, h := range fileutil.MatchLines(data, pattern, fileutil.MaxMatchesPerFile) {
+				results = append(results, types.SearchResult{
+					Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(),
+					LineNo: h.LineNo, Line: h.Line,
+				})
+				if len(results) >= fileutil.MaxSearchResults {
+					return filepath.SkipAll
+				}
+			}
+			return nil
+		}
+		if fileutil.MatchName(name, pattern) {
+			results = append(results, types.SearchResult{
+				Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(),
+			})
+		}
+		return nil
+	})
+	return results, err
+}
+
+// ReadFile reads a local text file for the built-in editor, enforcing a size
+// limit and rejecting binary content.
+func (l *LocalService) ReadFile(path string) (string, error) {
+	path = expandUserPath(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if int64(len(data)) > fileutil.MaxEditSize {
+		return "", fmt.Errorf("文件过大（超过 %d MB），无法在编辑器中打开", fileutil.MaxEditSize>>20)
+	}
+	if fileutil.IsBinary(data) {
+		return "", errors.New("该文件为二进制文件，无法用文本编辑器打开")
+	}
+	return string(data), nil
+}
+
+// WriteFile writes text content to a local file.
+func (l *LocalService) WriteFile(path, content string) error {
+	path = expandUserPath(path)
+	return os.WriteFile(path, []byte(content), 0o644)
 }

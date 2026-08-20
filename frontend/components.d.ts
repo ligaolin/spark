@@ -48,9 +48,11 @@ declare module 'vue' {
     ProcessManagerView: typeof import('./src/components/ProcessManagerView.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SearchDialog: typeof import('./src/components/SearchDialog.vue')['default']
     ServerInfoView: typeof import('./src/components/ServerInfoView.vue')['default']
     SshConfigImport: typeof import('./src/components/SshConfigImport.vue')['default']
     TerminalPane: typeof import('./src/components/TerminalPane.vue')['default']
+    TextEditor: typeof import('./src/components/TextEditor.vue')['default']
     TransferDock: typeof import('./src/components/TransferDock.vue')['default']
   }
 }

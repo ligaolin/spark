@@ -49,6 +49,20 @@ type FileEntry struct {
 	LinkTarget string    `json:"linkTarget,omitempty"`
 }
 
+// SearchResult describes one search hit: either a filename match or a
+// content match (content matches also carry the line number and text).
+type SearchResult struct {
+	Path    string    `json:"path"`
+	Name    string    `json:"name"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"modTime"`
+	IsDir   bool      `json:"isDir"`
+
+	// Content search only
+	LineNo int    `json:"lineNo,omitempty"`
+	Line   string `json:"line,omitempty"`
+}
+
 // TerminalOutput is emitted to the frontend with chunks of SSH terminal output.
 type TerminalOutput struct {
 	SessionID string `json:"sessionId"`

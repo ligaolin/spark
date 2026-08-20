@@ -64,6 +64,14 @@ export function PickSaveFile(defaultName: string): $CancellablePromise<string> {
 }
 
 /**
+ * ReadFile reads a local text file for the built-in editor, enforcing a size
+ * limit and rejecting binary content.
+ */
+export function ReadFile(path: string): $CancellablePromise<string> {
+    return $Call.ByID(2180120455, path);
+}
+
+/**
  * ReadTextFile reads a local text file (supports leading ~ for home dir).
  */
 export function ReadTextFile(path: string): $CancellablePromise<string> {
@@ -82,4 +90,19 @@ export function Remove(p: string): $CancellablePromise<void> {
  */
 export function Rename(oldPath: string, newPath: string): $CancellablePromise<void> {
     return $Call.ByID(1485292127, oldPath, newPath);
+}
+
+/**
+ * Search walks a local directory recursively and returns filename matches
+ * (mode "name") or content matches (mode "content").
+ */
+export function Search(dir: string, pattern: string, mode: string): $CancellablePromise<types$0.SearchResult[] | null> {
+    return $Call.ByID(3326553181, dir, pattern, mode);
+}
+
+/**
+ * WriteFile writes text content to a local file.
+ */
+export function WriteFile(path: string, content: string): $CancellablePromise<void> {
+    return $Call.ByID(3172815358, path, content);
 }

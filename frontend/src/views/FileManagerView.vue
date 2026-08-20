@@ -200,6 +200,18 @@ const remoteBackend: FileBackend = {
     props.mode === 'sftp'
       ? SFTPFileService.Download(currentSessionId.value, r, l)
       : FTPFileService.Download(currentSessionId.value, r, l, !!isDir),
+  readFile: (p) =>
+    props.mode === 'sftp'
+      ? SFTPFileService.ReadFile(currentSessionId.value, p)
+      : FTPFileService.ReadFile(currentSessionId.value, p),
+  writeFile: (p, c) =>
+    props.mode === 'sftp'
+      ? SFTPFileService.WriteFile(currentSessionId.value, p, c)
+      : FTPFileService.WriteFile(currentSessionId.value, p, c),
+  search: async (d, p, m) =>
+    props.mode === 'sftp'
+      ? ((await SFTPFileService.Search(currentSessionId.value, d, p, m)) ?? [])
+      : ((await FTPFileService.Search(currentSessionId.value, d, p, m)) ?? []),
 }
 
 function optsFromConn(conn: SavedConnection): ConnectOptions {

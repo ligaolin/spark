@@ -33,6 +33,17 @@ export interface TransferProgress {
   total: number
 }
 
+// 搜索命中的结果：文件名匹配或文件内容匹配（内容匹配带行号与行文本）
+export interface SearchResult {
+  path: string
+  name: string
+  size: number
+  modTime: string
+  isDir: boolean
+  lineNo?: number
+  line?: string
+}
+
 // 拖拽传输负载：source 为拖拽来源，entries 为内部面板条目，paths 为操作系统文件路径
 // targetDir：拖到某个目录行上时指定的目标目录（缺省为面板当前目录）
 export interface DropPayload {

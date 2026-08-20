@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"changeme/app/service/fileutil"
 	"changeme/app/service/sshlib"
 	"changeme/app/service/settings"
 	"changeme/app/service/types"
@@ -201,6 +202,120 @@ func (s *SFTPFileService) Chmod(id, remotePath string, mode uint32) error {
 		return err
 	}
 	return sess.sftp.Chmod(remotePath, os.FileMode(mode))
+}
+
+// Search walks a remote directory recursively and returns filename matches
+// (mode "name") or content matches (mode "content").
+func (s *SFTPFileService) Search(id, dir, pattern, mode string) ([]types.SearchResult, error) {
+	sess, err := s.get(id)
+	if err != nil {
+		return nil, err
+	}
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return nil, errors.New("请输入搜索关键字")
+	}
+	if dir == "" {
+		if dir, err = sess.sftp.Getwd(); err != nil {
+			return nil, err
+		}
+	}
+	contentMode := strings.EqualFold(mode, "content")
+	results := make([]types.SearchResult, 0, 64)
+	w := sess.sftp.Walk(dir)
+	for w.Step() {
+		if w.Err() != nil {
+			continue
+		}
+		p := w.Path()
+		if p == dir {
+			continue // 跳过根目录本身
+		}
+		if len(results) >= fileutil.MaxSearchResults {
+			break
+		}
+		info := w.Stat()
+		name := path.Base(p)
+		if info.IsDir() {
+			if !contentMode && fileutil.MatchName(name, pattern) {
+				results = append(results, types.SearchResult{
+					Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(), IsDir: true,
+				})
+			}
+			continue
+		}
+		if contentMode {
+			if info.Size() <= 0 || info.Size() > fileutil.MaxContentSearchSize {
+				continue
+			}
+			f, oerr := sess.sftp.Open(p)
+			if oerr != nil {
+				continue
+			}
+			data, rerr := io.ReadAll(io.LimitReader(f, fileutil.MaxContentSearchSize+1))
+			_ = f.Close()
+			if rerr != nil || int64(len(data)) > fileutil.MaxContentSearchSize {
+				continue
+			}
+			if fileutil.IsBinary(data) {
+				continue
+			}
+			for _, h := range fileutil.MatchLines(data, pattern, fileutil.MaxMatchesPerFile) {
+				results = append(results, types.SearchResult{
+					Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(),
+					LineNo: h.LineNo, Line: h.Line,
+				})
+				if len(results) >= fileutil.MaxSearchResults {
+					break
+				}
+			}
+		} else if fileutil.MatchName(name, pattern) {
+			results = append(results, types.SearchResult{
+				Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(),
+			})
+		}
+	}
+	return results, nil
+}
+
+// ReadFile reads a remote text file for the built-in editor, enforcing a size
+// limit and rejecting binary content.
+func (s *SFTPFileService) ReadFile(id, remotePath string) (string, error) {
+	sess, err := s.get(id)
+	if err != nil {
+		return "", err
+	}
+	f, err := sess.sftp.Open(remotePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, fileutil.MaxEditSize+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(data)) > fileutil.MaxEditSize {
+		return "", fmt.Errorf("文件过大（超过 %d MB），无法在编辑器中打开", fileutil.MaxEditSize>>20)
+	}
+	if fileutil.IsBinary(data) {
+		return "", errors.New("该文件为二进制文件，无法用文本编辑器打开")
+	}
+	return string(data), nil
+}
+
+// WriteFile overwrites a remote text file with the given content.
+func (s *SFTPFileService) WriteFile(id, remotePath, content string) error {
+	sess, err := s.get(id)
+	if err != nil {
+		return err
+	}
+	f, err := sess.sftp.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write([]byte(content))
+	return err
 }
 
 // Upload copies a local file or directory (recursively) to the remote path.

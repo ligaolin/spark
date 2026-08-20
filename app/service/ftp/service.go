@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"changeme/app/service/fileutil"
 	"changeme/app/service/sshlib"
 	"changeme/app/service/settings"
 	"changeme/app/service/types"
@@ -193,6 +194,117 @@ func (s *FTPFileService) Remove(id, remotePath string, isDir bool) error {
 		return sess.conn.RemoveDirRecur(remotePath)
 	}
 	return sess.conn.Delete(remotePath)
+}
+
+// Search walks a remote directory recursively and returns filename matches
+// (mode "name") or content matches (mode "content").
+func (s *FTPFileService) Search(id, dir, pattern, mode string) ([]types.SearchResult, error) {
+	sess, err := s.get(id)
+	if err != nil {
+		return nil, err
+	}
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return nil, errors.New("请输入搜索关键字")
+	}
+	if dir == "" {
+		if dir, err = sess.conn.CurrentDir(); err != nil {
+			return nil, err
+		}
+	}
+	contentMode := strings.EqualFold(mode, "content")
+	results := make([]types.SearchResult, 0, 64)
+	w := sess.conn.Walk(dir)
+	for w.Next() {
+		if w.Err() != nil {
+			continue
+		}
+		p := w.Path()
+		if p == dir {
+			continue // 跳过根目录本身
+		}
+		if len(results) >= fileutil.MaxSearchResults {
+			break
+		}
+		entry := w.Stat()
+		name := path.Base(p)
+		if entry.Type == ftp.EntryTypeFolder {
+			if !contentMode && fileutil.MatchName(name, pattern) {
+				results = append(results, types.SearchResult{
+					Path: p, Name: name, Size: int64(entry.Size), ModTime: entry.Time, IsDir: true,
+				})
+			}
+			continue
+		}
+		if entry.Type != ftp.EntryTypeFile {
+			continue // 跳过链接等非常规条目
+		}
+		if contentMode {
+			if entry.Size == 0 || entry.Size > fileutil.MaxContentSearchSize {
+				continue
+			}
+			rc, rerr := sess.conn.Retr(p)
+			if rerr != nil {
+				continue
+			}
+			data, rerr := io.ReadAll(io.LimitReader(rc, fileutil.MaxContentSearchSize+1))
+			_ = rc.Close()
+			if rerr != nil || int64(len(data)) > fileutil.MaxContentSearchSize {
+				continue
+			}
+			if fileutil.IsBinary(data) {
+				continue
+			}
+			for _, h := range fileutil.MatchLines(data, pattern, fileutil.MaxMatchesPerFile) {
+				results = append(results, types.SearchResult{
+					Path: p, Name: name, Size: int64(entry.Size), ModTime: entry.Time,
+					LineNo: h.LineNo, Line: h.Line,
+				})
+				if len(results) >= fileutil.MaxSearchResults {
+					break
+				}
+			}
+		} else if fileutil.MatchName(name, pattern) {
+			results = append(results, types.SearchResult{
+				Path: p, Name: name, Size: int64(entry.Size), ModTime: entry.Time,
+			})
+		}
+	}
+	return results, nil
+}
+
+// ReadFile reads a remote text file for the built-in editor, enforcing a size
+// limit and rejecting binary content.
+func (s *FTPFileService) ReadFile(id, remotePath string) (string, error) {
+	sess, err := s.get(id)
+	if err != nil {
+		return "", err
+	}
+	rc, err := sess.conn.Retr(remotePath)
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(rc, fileutil.MaxEditSize+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(data)) > fileutil.MaxEditSize {
+		return "", fmt.Errorf("文件过大（超过 %d MB），无法在编辑器中打开", fileutil.MaxEditSize>>20)
+	}
+	if fileutil.IsBinary(data) {
+		return "", errors.New("该文件为二进制文件，无法用文本编辑器打开")
+	}
+	return string(data), nil
+}
+
+// WriteFile overwrites a remote text file with the given content (FTP STOR).
+func (s *FTPFileService) WriteFile(id, remotePath, content string) error {
+	sess, err := s.get(id)
+	if err != nil {
+		return err
+	}
+	return sess.conn.Stor(remotePath, strings.NewReader(content))
 }
 
 // Upload copies a local file or directory (recursively) to the remote path.

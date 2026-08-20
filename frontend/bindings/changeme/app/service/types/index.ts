@@ -6,6 +6,7 @@ export type {
     DiskInfo,
     FileEntry,
     ProcessInfo,
+    SearchResult,
     ServerInfo,
     SessionClosed,
     TerminalExit,

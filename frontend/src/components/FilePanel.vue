@@ -24,6 +24,11 @@
                     <Refresh />
                 </el-icon>
             </el-button>
+            <el-button size="small" text @click="openSearch" title="搜索（文件名 / 文件内容）">
+                <el-icon>
+                    <Search />
+                </el-icon>
+            </el-button>
             <!-- 收藏：对应本面板（远程=服务器目录，本地=本机目录），与导航按钮同行 -->
             <el-popover v-if="favKey !== undefined" placement="bottom-start" :width="270" trigger="click">
                 <template #reference>
@@ -115,6 +120,11 @@
         </div>
 
         <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
+
+        <!-- 文本编辑器：双击文件打开 -->
+        <TextEditor ref="editorRef" />
+        <!-- 搜索：文件名 / 文件内容，递归搜索 -->
+        <SearchDialog ref="searchRef" :backend="backend" @pick="onSearchPick" />
     </div>
 </template>
 
@@ -138,13 +148,16 @@ import {
     FolderOpened,
     Star,
     Close,
+    Search,
 } from '@element-plus/icons-vue'
 import ContextMenu from './ContextMenu.vue'
 import type { CtxItem } from './ContextMenu.vue'
+import TextEditor from './TextEditor.vue'
+import SearchDialog from './SearchDialog.vue'
 import { FavoriteService, makeFavorite } from '../utils/wails'
 import type { Favorite } from '../utils/wails'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
-import type { DropPayload, FileEntry, PanelAction } from '../types'
+import type { DropPayload, FileEntry, PanelAction, SearchResult } from '../types'
 import { formatSize, formatTime } from '../types'
 import { joinPath, parentDir, type FileBackend } from '../utils/fileBackend'
 
@@ -235,6 +248,42 @@ const entries = ref<FileEntry[]>([])
 const loading = ref(false)
 const selected = ref<FileEntry | null>(null)
 const selectedRows = ref<FileEntry[]>([])
+
+// 编辑器 / 搜索
+const editorRef = ref<InstanceType<typeof TextEditor>>()
+const searchRef = ref<InstanceType<typeof SearchDialog>>()
+
+function openEditor(file: { path: string; name: string }, lineNo?: number) {
+  editorRef.value?.open(props.backend, file, lineNo)
+}
+
+async function openSearch() {
+  if (props.backend.kind === 'remote' && props.connected === false) {
+    ElMessage.warning('请先连接远程服务器')
+    return
+  }
+  let dir = currentPath.value
+  if (!dir) {
+    try {
+      dir = await props.backend.home()
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!dir) {
+    ElMessage.warning('请先进入目录')
+    return
+  }
+  searchRef.value?.open(dir)
+}
+
+function onSearchPick(r: SearchResult) {
+  if (r.isDir) {
+    void cd(r.path)
+  } else {
+    openEditor({ path: r.path, name: r.name }, r.lineNo)
+  }
+}
 
 // 拖拽高亮状态（用计数器避免子元素间移动时闪烁）
 const dragDepth = ref(0)
@@ -719,9 +768,8 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
     items.push(
         {
             key: 'open',
-            label: entry.isDir ? '打开 / 进入' : '打开',
+            label: entry.isDir ? '打开 / 进入' : '打开（编辑）',
             icon: FolderOpened,
-            disabled: !entry.isDir,
         },
         'divider',
         { key: 'rename', label: '重命名', icon: Edit },
@@ -768,6 +816,7 @@ async function onCtxPick(item: CtxItem) {
             break
         case 'open':
             if (entry?.isDir) await cd(entry.path)
+            else if (entry) openEditor(entry)
             break
         case 'rename':
             await rename()
@@ -847,6 +896,8 @@ function rowClassName({ row }: { row: FileEntry }): string {
 async function onDblClick(row: FileEntry) {
     if (row.isDir) {
         await cd(row.path)
+    } else {
+        openEditor(row)
     }
 }
 
