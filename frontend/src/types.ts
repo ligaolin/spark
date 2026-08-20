@@ -34,15 +34,23 @@ export interface TransferProgress {
 }
 
 // 拖拽传输负载：source 为拖拽来源，entries 为内部面板条目，paths 为操作系统文件路径
+// targetDir：拖到某个目录行上时指定的目标目录（缺省为面板当前目录）
 export interface DropPayload {
   source: 'local' | 'remote' | 'files'
   entries?: { path: string; name: string; isDir: boolean }[]
   paths?: string[]
+  targetDir?: string
 }
 
 // 文件面板右键菜单动作（跨面板操作由父组件处理）
 export interface PanelAction {
-  action: 'pick-upload' | 'pick-upload-dir' | 'upload-entry' | 'download-entry'
+  action:
+    | 'pick-upload'
+    | 'pick-upload-dir'
+    | 'upload-entry'
+    | 'download-entry'
+    | 'upload-multi'
+    | 'download-multi'
   entry?: { path: string; name: string; isDir: boolean }
 }
 

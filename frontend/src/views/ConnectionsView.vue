@@ -95,7 +95,7 @@
                             </el-select>
                         </template>
                     </el-table-column>
-                    <el-table-column label="类型">
+                    <el-table-column label="类型" width="60">
                         <template #default="{ row }">
                             <el-tag :type="row.type === 'ssh' ? 'primary' : 'warning'" size="small" effect="dark">
                                 {{ row.type.toUpperCase() }}

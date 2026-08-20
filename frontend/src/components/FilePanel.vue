@@ -59,14 +59,17 @@
                 @blur="pathInput = currentPath" :placeholder="placeholder" />
         </div>
 
-        <div class="table-wrap file-table">
+        <div ref="tableWrapRef" class="table-wrap file-table" @mousedown="onTableMouseDown">
             <el-table :data="entries" height="100%" size="small" :highlight-current-row="!multiSelect"
                 :row-class-name="rowClassName" @current-change="onSelect" @row-click="onRowClick"
                 @row-dblclick="onDblClick" @row-contextmenu="onRowContext" empty-text="空目录">
                 <el-table-column label="名称" min-width="180">
                     <template #default="{ row }">
                         <span class="entry-name" draggable="true" :title="dragHint"
-                            @dragstart="onDragStart($event, row)">
+                            @dragstart="onDragStart($event, row)"
+                            @dragover="onRowDragOver($event, row)"
+                            @dragleave="onRowDragLeave($event, row)"
+                            @drop="onRowDrop($event, row)">
                             <el-icon v-if="row.isDir" color="#e6c06c">
                                 <Folder />
                             </el-icon>
@@ -97,6 +100,8 @@
                     </template>
                 </el-table-column>
             </el-table>
+            <!-- 框选矩形覆盖层 -->
+            <div v-if="boxSelecting" class="box-select-overlay" :style="boxStyle"></div>
         </div>
 
         <div class="panel-foot">
@@ -114,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
     Top,
@@ -141,7 +146,7 @@ import type { Favorite } from '../utils/wails'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
 import type { DropPayload, FileEntry, PanelAction } from '../types'
 import { formatSize, formatTime } from '../types'
-import { parentDir, type FileBackend } from '../utils/fileBackend'
+import { joinPath, parentDir, type FileBackend } from '../utils/fileBackend'
 
 const props = defineProps<{
     backend: FileBackend
@@ -233,9 +238,36 @@ const selectedRows = ref<FileEntry[]>([])
 
 // 拖拽高亮状态（用计数器避免子元素间移动时闪烁）
 const dragDepth = ref(0)
+// 当前悬停的可放置目录路径（用于高亮该目录行）
+const dropTargetPath = ref('')
+
+// 框选（拉框多选）状态
+const tableWrapRef = ref<HTMLElement>()
+const boxSelecting = ref(false)
+const boxStart = ref({ x: 0, y: 0 })
+const boxCurrent = ref({ x: 0, y: 0 })
+// 框选预览结果（非响应式，仅在 mouseup 提交时转为 selectedRows）
+let boxPreview: FileEntry[] = []
+let boxAdditive = false
+let boxRaf = 0
+
+const boxStyle = computed(() => {
+    const x1 = boxStart.value.x
+    const y1 = boxStart.value.y
+    const x2 = boxCurrent.value.x
+    const y2 = boxCurrent.value.y
+    return {
+        left: `${Math.min(x1, x2)}px`,
+        top: `${Math.min(y1, y2)}px`,
+        width: `${Math.abs(x2 - x1)}px`,
+        height: `${Math.abs(y2 - y1)}px`,
+    }
+})
 
 const dragHint = computed(() =>
-    props.backend.kind === 'local' ? '拖到右侧远程面板以上传' : '拖到左侧本地面板以下载',
+    props.backend.kind === 'local'
+        ? '拖到右侧远程面板上传，或拖到本面板目录内移动'
+        : '拖到左侧本地面板下载，或拖到本面板目录内移动',
 )
 
 // 本面板接受的数据类型
@@ -262,7 +294,8 @@ function onDragStart(e: DragEvent, row: FileEntry) {
     }
     e.dataTransfer?.setData(mime, JSON.stringify(entries))
     if (e.dataTransfer) {
-        e.dataTransfer.effectAllowed = 'copy'
+        // 允许复制（跨面板传输）与移动（同面板拖入目录）两种放置效果
+        e.dataTransfer.effectAllowed = 'copyMove'
     }
 }
 
@@ -285,37 +318,149 @@ function onDragLeave() {
     dragDepth.value = Math.max(0, dragDepth.value - 1)
 }
 
+// 解析拖拽负载中的条目数组（内部面板条目均以数组序列化）
+function readEntries(dt: DataTransfer, mime: string): { path: string; name: string; isDir: boolean }[] {
+    const raw = dt.getData(mime)
+    if (!raw) return []
+    try {
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed) ? parsed : [parsed]
+    } catch {
+        return []
+    }
+}
+
 function onDrop(e: DragEvent) {
     dragDepth.value = 0
+    handleDrop(e, undefined)
+}
+
+// 目录行上的拖拽：判断是同面板移动还是跨面板传输
+function rowRelevantData(e: DragEvent): 'move' | 'copy' | null {
+    const types = e.dataTransfer?.types || []
+    const own = props.backend.kind === 'local' ? mimeLocal : mimeRemote
+    const other = props.backend.kind === 'local' ? mimeRemote : mimeLocal
+    if (types.includes(own)) return 'move'
+    if (props.backend.kind === 'local') {
+        return types.includes(other) ? 'copy' : null
+    }
+    return types.includes(other) || types.includes('Files') ? 'copy' : null
+}
+
+function onRowDragOver(e: DragEvent, row: FileEntry) {
+    if (!row.isDir) return
+    const kind = rowRelevantData(e)
+    if (!kind) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = kind === 'move' ? 'move' : 'copy'
+    }
+    dropTargetPath.value = row.path
+}
+
+function onRowDragLeave(e: DragEvent, row: FileEntry) {
+    if (dropTargetPath.value === row.path) {
+        dropTargetPath.value = ''
+    }
+}
+
+function onRowDrop(e: DragEvent, row: FileEntry) {
+    if (!row.isDir) return
+    const kind = rowRelevantData(e)
+    if (!kind) return
+    e.preventDefault()
+    e.stopPropagation()
+    dragDepth.value = 0
+    dropTargetPath.value = ''
+    if (kind === 'move') {
+        void moveToDir(e, row.path)
+    } else {
+        handleDrop(e, row.path)
+    }
+}
+
+// 归一化路径用于比较（折叠分隔符、去末尾分隔符，统一为 /）
+function normPath(p: string): string {
+    return p.replace(/[\\/]+$/, '').replace(/[\\/]/g, '/')
+}
+
+// 判断 target 是否等于 base 或位于 base 之下（分隔符无关，兼容 Windows/POSIX）
+function isDescendantOrSelf(target: string, base: string): boolean {
+    const t = normPath(target)
+    const b = normPath(base)
+    if (t === b) return true
+    return t.startsWith(b + '/')
+}
+
+// 同面板移动：把条目拖到某个目录内（改名/移动）
+async function moveToDir(e: DragEvent, targetDir: string) {
+    const dt = e.dataTransfer
+    if (!dt) return
+    const mime = props.backend.kind === 'local' ? mimeLocal : mimeRemote
+    const entries = readEntries(dt, mime)
+    if (!entries.length) return
+    const sep = props.backend.sep
+    // 过滤非法移动：
+    //  - 目录不能移动到其自身或其子目录内
+    //  - 已在目标目录内的条目跳过（无操作）
+    const valid: { path: string; name: string; target: string }[] = []
+    let skipped = 0
+    for (const en of entries) {
+        if (en.isDir && isDescendantOrSelf(targetDir, en.path)) {
+            skipped++
+            continue
+        }
+        const target = joinPath(targetDir, en.name, sep)
+        if (normPath(target) === normPath(en.path)) {
+            skipped++
+            continue
+        }
+        valid.push({ path: en.path, name: en.name, target })
+    }
+    if (valid.length === 0) {
+        ElMessage.warning('所选条目已在目标目录中，或不能移动到自身/子目录')
+        return
+    }
+    let ok = 0
+    const failed: string[] = []
+    for (const en of valid) {
+        try {
+            await props.backend.rename(en.path, en.target)
+            ok++
+        } catch (err: any) {
+            failed.push(en.name)
+            ElMessage.error(`移动 ${en.name} 失败：${err?.message || err}`)
+        }
+    }
+    if (failed.length === 0) {
+        ElMessage.success(skipped ? `已移动 ${ok} 项（跳过 ${skipped} 项）` : `已移动 ${ok} 项到 ${targetDir}`)
+    } else {
+        ElMessage.error(`移动完成：成功 ${ok} 项，失败 ${failed.length} 项（${failed.slice(0, 3).join('、')}）`)
+    }
+    await refresh()
+}
+
+// 统一的跨面板放置处理；targetDir 缺省为面板当前目录
+function handleDrop(e: DragEvent, targetDir?: string) {
     if (!hasRelevantData(e)) return
     e.preventDefault()
     const dt = e.dataTransfer
     if (!dt) return
 
     if (props.backend.kind === 'local') {
-        const raw = dt.getData(mimeRemote)
-        if (raw) {
-            try {
-                emit('drop', { source: 'remote', entries: [JSON.parse(raw)] })
-            } catch {
-                /* ignore */
-            }
+        const entries = readEntries(dt, mimeRemote)
+        if (entries.length) {
+            emit('drop', { source: 'remote', entries, targetDir })
         }
         return
     }
 
     // 远程面板
-    const rawLocal = dt.getData(mimeLocal)
-    if (rawLocal) {
-        try {
-            const parsed = JSON.parse(rawLocal)
-            // 兼容单个条目与多选条目数组两种负载
-            const list = Array.isArray(parsed) ? parsed : [parsed]
-            emit('drop', { source: 'local', entries: list })
-            return
-        } catch {
-            /* ignore */
-        }
+    const localEntries = readEntries(dt, mimeLocal)
+    if (localEntries.length) {
+        emit('drop', { source: 'local', entries: localEntries, targetDir })
+        return
     }
     // 操作系统文件（资源管理器拖入）
     const paths: string[] = []
@@ -327,10 +472,152 @@ function onDrop(e: DragEvent) {
         }
     }
     if (paths.length > 0) {
-        emit('drop', { source: 'files', paths })
+        emit('drop', { source: 'files', paths, targetDir })
     } else if (files.length > 0) {
         ElMessage.warning('无法获取文件路径，请使用「上传」按钮选择文件')
     }
+}
+
+// ---------- 框选（拉框多选） ----------
+
+function selectionRect() {
+    const x1 = boxStart.value.x
+    const y1 = boxStart.value.y
+    const x2 = boxCurrent.value.x
+    const y2 = boxCurrent.value.y
+    return {
+        left: Math.min(x1, x2),
+        right: Math.max(x1, x2),
+        top: Math.min(y1, y2),
+        bottom: Math.max(y1, y2),
+    }
+}
+
+function intersects(
+    r: { left: number; right: number; top: number; bottom: number },
+    s: { left: number; right: number; top: number; bottom: number },
+): boolean {
+    return !(r.right < s.left || r.left > s.right || r.bottom < s.top || r.top > s.bottom)
+}
+
+// 从空白区域按下左键启动框选（点在行/表头/滚动条上时不启动）
+function onTableMouseDown(e: MouseEvent) {
+    if (!props.multiSelect) return
+    if (e.button !== 0) return
+    const target = e.target as HTMLElement
+    if (target.closest('tr.el-table__row')) return
+    if (target.closest('.el-table__header-wrapper')) return
+    if (target.closest('.el-scrollbar__bar')) return
+    const wrap = tableWrapRef.value
+    if (!wrap) return
+
+    const rect = wrap.getBoundingClientRect()
+    boxStart.value = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+    boxCurrent.value = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+    boxSelecting.value = true
+    boxAdditive = e.ctrlKey || e.metaKey
+    boxPreview = []
+    e.preventDefault()
+    document.body.style.userSelect = 'none'
+    window.addEventListener('mousemove', onBoxMove)
+    window.addEventListener('mouseup', onBoxUp)
+}
+
+function onBoxMove(e: MouseEvent) {
+    if (!boxSelecting.value) return
+    const wrap = tableWrapRef.value
+    if (!wrap) return
+    const rect = wrap.getBoundingClientRect()
+    boxCurrent.value = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+    if (boxRaf) return
+    boxRaf = requestAnimationFrame(() => {
+        boxRaf = 0
+        updateBoxPreview()
+    })
+}
+
+function updateBoxPreview() {
+    const wrap = tableWrapRef.value
+    if (!wrap) return
+    const rows = Array.from(wrap.querySelectorAll<HTMLElement>('tr.el-table__row'))
+    const wrapRect = wrap.getBoundingClientRect()
+    const sel = selectionRect()
+    const preview: FileEntry[] = []
+    rows.forEach((rowEl, i) => {
+        const r = rowEl.getBoundingClientRect()
+        const rowBox = {
+            left: r.left - wrapRect.left,
+            right: r.right - wrapRect.left,
+            top: r.top - wrapRect.top,
+            bottom: r.bottom - wrapRect.top,
+        }
+        const hit = intersects(rowBox, sel)
+        rowEl.classList.toggle('is-box-preview', hit)
+        if (hit && entries.value[i]) preview.push(entries.value[i])
+    })
+    boxPreview = preview
+}
+
+function onBoxUp() {
+    if (!boxSelecting.value) return
+    boxSelecting.value = false
+    window.removeEventListener('mousemove', onBoxMove)
+    window.removeEventListener('mouseup', onBoxUp)
+    document.body.style.userSelect = ''
+    if (boxRaf) {
+        cancelAnimationFrame(boxRaf)
+        boxRaf = 0
+    }
+    updateBoxPreview() // 用最终框选范围刷新一次
+    commitBoxSelection()
+}
+
+function commitBoxSelection() {
+    const wrap = tableWrapRef.value
+    if (wrap) {
+        wrap.querySelectorAll<HTMLElement>('tr.el-table__row.is-box-preview').forEach((el) => {
+            el.classList.remove('is-box-preview')
+        })
+    }
+    const boxed = boxPreview
+    boxPreview = []
+    if (boxed.length === 0) {
+        // 点击空白处或框选区域未覆盖任何条目：清空多选（Ctrl 按住则保持不变）
+        if (!boxAdditive) {
+            selectedRows.value = []
+            selected.value = null
+        }
+        return
+    }
+
+    if (boxAdditive) {
+        // Ctrl/Cmd 框选：并入现有选择
+        const map = new Map(selectedRows.value.map((r) => [r.path, r]))
+        for (const it of boxed) {
+            if (!map.has(it.path)) map.set(it.path, it)
+        }
+        selectedRows.value = Array.from(map.values())
+    } else {
+        selectedRows.value = boxed
+    }
+    // 同步单选引用（父组件在无多选时回退使用 selected）
+    selected.value = boxed[boxed.length - 1] ?? null
+}
+
+function clearBoxSelect() {
+    if (boxSelecting.value) {
+        boxSelecting.value = false
+        window.removeEventListener('mousemove', onBoxMove)
+        window.removeEventListener('mouseup', onBoxUp)
+        document.body.style.userSelect = ''
+    }
+    const wrap = tableWrapRef.value
+    if (wrap) {
+        wrap.querySelectorAll<HTMLElement>('tr.el-table__row.is-box-preview').forEach((el) => {
+            el.classList.remove('is-box-preview')
+        })
+    }
+    boxPreview = []
 }
 
 const isRoot = computed(() => {
@@ -360,6 +647,12 @@ function onRowContext(row: FileEntry, _column: unknown, event: MouseEvent) {
     // 面板/全局的 contextmenu 处理器，不拦截就会弹出系统菜单盖住我们的菜单
     event.preventDefault()
     event.stopPropagation() // 避免触发面板空白菜单
+    // 多选：右键已选中项保留多选；右键未选中项则切换为单选该项
+    if (props.multiSelect) {
+        if (!selectedRows.value.some((r) => r.path === row.path)) {
+            selectedRows.value = [row]
+        }
+    }
     selected.value = row
     ctxEntry.value = row
     ctxItems.value = buildMenu(row)
@@ -390,6 +683,22 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
             { key: 'home', label: '主目录', icon: House },
         ]
     }
+    // 是否处于多选上下文：右键选中项之一，且选中数量 > 1
+    const multi =
+        props.multiSelect &&
+        selectedRows.value.length > 1 &&
+        selectedRows.value.some((r) => r.path === entry.path)
+
+    if (multi) {
+        const n = selectedRows.value.length
+        return [
+            isLocal
+                ? { key: 'upload-multi', label: `上传选中（${n}）`, icon: Upload, disabled: !linked.value }
+                : { key: 'download-multi', label: `下载选中（${n}）`, icon: Download, disabled: !linked.value },
+            { key: 'remove', label: `删除选中（${n}）`, icon: Delete, danger: true },
+        ]
+    }
+
     // 文件/目录：操作条目
     const items: (CtxItem | 'divider')[] = []
     if (isLocal) {
@@ -438,6 +747,12 @@ async function onCtxPick(item: CtxItem) {
             break
         case 'download-entry':
             if (entry) emit('action', { action: 'download-entry', entry: { path: entry.path, name: entry.name, isDir: entry.isDir } })
+            break
+        case 'upload-multi':
+            emit('action', { action: 'upload-multi' })
+            break
+        case 'download-multi':
+            emit('action', { action: 'download-multi' })
             break
         case 'mkdir':
             await mkdir()
@@ -517,12 +832,16 @@ function onRowClick(row: FileEntry) {
     }
 }
 
-// 多选高亮行样式
+// 多选高亮行样式 + 拖放目标目录高亮
 function rowClassName({ row }: { row: FileEntry }): string {
+    const classes: string[] = []
     if (props.multiSelect && selectedRows.value.some((r) => r.path === row.path)) {
-        return 'is-multi-selected'
+        classes.push('is-multi-selected')
     }
-    return ''
+    if (dropTargetPath.value && row.path === dropTargetPath.value) {
+        classes.push('is-drop-target')
+    }
+    return classes.join(' ')
 }
 
 async function onDblClick(row: FileEntry) {
@@ -572,22 +891,42 @@ async function rename() {
 }
 
 async function remove() {
-    if (!selected.value) {
+    // 多选模式且选中多项时批量删除；否则删除单选
+    const targets =
+        props.multiSelect && selectedRows.value.length > 0
+            ? selectedRows.value.slice()
+            : selected.value
+              ? [selected.value]
+              : []
+    if (targets.length === 0) {
         ElMessage.warning('请先选择文件或目录')
         return
     }
-    const tip = selected.value.isDir
-        ? `确定删除目录 ${selected.value.name} 及其全部内容？`
-        : `确定删除文件 ${selected.value.name}？`
+    const tip =
+        targets.length === 1
+            ? targets[0].isDir
+                ? `确定删除目录 ${targets[0].name} 及其全部内容？`
+                : `确定删除文件 ${targets[0].name}？`
+            : `确定删除选中的 ${targets.length} 个项目？`
     const ok = await showConfirmDialog('删除', tip, true, '删除')
     if (!ok) return
-    try {
-        await props.backend.remove(selected.value.path, selected.value.isDir)
-        ElMessage.success('已删除')
-        await refresh()
-    } catch (e: any) {
-        ElMessage.error(`删除失败：${e?.message || e}`)
+    let okCount = 0
+    const failed: string[] = []
+    for (const t of targets) {
+        try {
+            await props.backend.remove(t.path, t.isDir)
+            okCount++
+        } catch (e: any) {
+            failed.push(t.name)
+            ElMessage.error(`删除 ${t.name} 失败：${e?.message || e}`)
+        }
     }
+    if (failed.length === 0) {
+        ElMessage.success(`已删除 ${okCount} 项`)
+    } else {
+        ElMessage.error(`删除完成：成功 ${okCount} 项，失败 ${failed.length} 项`)
+    }
+    await refresh()
 }
 
 async function chmod() {
@@ -646,6 +985,10 @@ onMounted(() => {
     if (props.backend.kind === 'local') {
         goHome()
     }
+})
+
+onBeforeUnmount(() => {
+    clearBoxSelect()
 })
 </script>
 
@@ -781,6 +1124,15 @@ onMounted(() => {
 .table-wrap {
     flex: 1;
     min-height: 0;
+    position: relative;
+}
+
+.box-select-overlay {
+    position: absolute;
+    z-index: 5;
+    background: rgba(79, 140, 255, 0.12);
+    border: 1px solid #5b9dff;
+    pointer-events: none;
 }
 
 .entry-name {

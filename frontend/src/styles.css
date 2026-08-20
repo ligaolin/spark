@@ -73,6 +73,17 @@ body {
   background: #2f549c !important;
 }
 
+/* 框选预览行：拉框过程中的实时高亮 */
+.file-table .el-table__row.is-box-preview > td.el-table__cell {
+  background: #2a4a86 !important;
+  box-shadow: inset 3px 0 0 #5b9dff !important;
+}
+
+/* 拖放目标目录：绿色描边提示可放置（移动/复制到该目录） */
+.file-table .el-table__row.is-drop-target > td.el-table__cell {
+  box-shadow: inset 0 0 0 2px #3fbf7f !important;
+}
+
 .path-input {
   background: transparent !important;
   border: none !important;

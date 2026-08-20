@@ -61,6 +61,7 @@
             :backend="remoteBackend"
             :title="mode === 'sftp' ? 'SFTP 远程' : 'FTP 远程'"
             show-mode
+            multi-select
             placeholder="远程目录，回车跳转"
             :connected="connected"
             :fav-key="connId || 0"
@@ -74,7 +75,7 @@
                 :disabled="!canDownload"
                 @click="downloadSelected"
               >
-                ⇩ 下载选中
+                ⇩ 下载选中{{ downloadCount > 1 ? `（${downloadCount}）` : '' }}
               </el-button>
               <el-button size="small" :disabled="!connected" @click="pickAndUpload">
                 上传
@@ -298,8 +299,13 @@ const uploadCount = computed(() => {
   if (rows && rows.length > 0) return rows.length
   return localPanel.value?.selected ? 1 : 0
 })
+const downloadCount = computed(() => {
+  const rows = remotePanel.value?.selectedRows
+  if (rows && rows.length > 0) return rows.length
+  return remotePanel.value?.selected ? 1 : 0
+})
 const canUpload = computed(() => connected.value && uploadCount.value > 0)
-const canDownload = computed(() => connected.value && !!remotePanel.value?.selected)
+const canDownload = computed(() => connected.value && downloadCount.value > 0)
 
 function basename(p: string): string {
   const parts = p.split(/[\\/]/)
@@ -317,14 +323,17 @@ async function runTransfer(op: 'upload' | 'download', name: string, fn: () => Pr
   }
 }
 
-// 批量上传：逐项执行，全部结束后统一提示
-async function uploadBatch(items: { path: string; name: string; isDir: boolean }[]) {
+// 批量上传：逐项执行，全部结束后统一提示。remoteDirOverride 用于拖到指定目录时定向放置
+async function uploadBatch(
+  items: { path: string; name: string; isDir: boolean }[],
+  remoteDirOverride?: string,
+) {
   if (!items.length) return
   if (!currentSessionId.value) {
     ElMessage.warning('请先连接远程服务器')
     return
   }
-  const remoteDir = remotePanel.value?.currentPath
+  const remoteDir = remoteDirOverride || remotePanel.value?.currentPath
   if (!remoteDir) return
   let ok = 0
   const failed: string[] = []
@@ -407,26 +416,55 @@ async function pickDirAndUpload() {
   await remotePanel.value?.refresh()
 }
 
+// 批量下载远程选中项（可多选）到本地当前目录
 async function downloadSelected() {
-  const sel = remotePanel.value?.selected
+  const panel = remotePanel.value
+  if (!panel) return
+  const rows = panel.selectedRows
+  const items =
+    rows.length > 0
+      ? rows.map((r) => ({ path: r.path, name: r.name, isDir: r.isDir }))
+      : panel.selected
+        ? [{ path: panel.selected.path, name: panel.selected.name, isDir: panel.selected.isDir }]
+        : []
+  if (!items.length) {
+    ElMessage.warning('请先选择要下载的文件或目录')
+    return
+  }
   const localDir = localPanel.value?.currentPath
-  if (!sel || !localDir) return
-  const target = joinPath(localDir, sel.name, '/')
-  const label = sel.isDir ? `${sel.name}/ (目录)` : sel.name
-  await runTransfer('download', label, () =>
-    remoteBackend.download(sel.path, target, sel.isDir),
-  )
+  if (!localDir) return
+  let ok = 0
+  const failed: string[] = []
+  for (const it of items) {
+    const target = joinPath(localDir, it.name, '/')
+    const label = it.isDir ? `${it.name}/ (目录)` : it.name
+    try {
+      await remoteBackend.download(it.path, target, it.isDir)
+      transfers.complete(currentSessionId.value, 'download', label)
+      ok++
+    } catch (e: any) {
+      transfers.fail(currentSessionId.value, 'download', label, e?.message || String(e))
+      failed.push(it.name)
+    }
+  }
   await localPanel.value?.refresh()
+  if (failed.length === 0) {
+    ElMessage.success(`全部下载完成（${ok} 项）`)
+  } else {
+    ElMessage.error(
+      `下载完成：成功 ${ok} 项，失败 ${failed.length} 项（${failed.slice(0, 3).join('、')}${failed.length > 3 ? '…' : ''}）`,
+    )
+  }
 }
 
-// 拖到左侧本地面板：把远程条目下载到本地当前目录
+// 拖到左侧本地面板：把远程条目下载到本地当前目录（或拖到指定目录行时下载到该目录）
 async function onLocalDrop(payload: DropPayload) {
   if (payload.source !== 'remote' || !payload.entries?.length) return
   if (!currentSessionId.value) {
     ElMessage.warning('请先连接远程服务器')
     return
   }
-  const localDir = localPanel.value?.currentPath
+  const localDir = payload.targetDir || localPanel.value?.currentPath
   if (!localDir) return
   for (const entry of payload.entries) {
     const target = joinPath(localDir, entry.name, '/')
@@ -438,20 +476,23 @@ async function onLocalDrop(payload: DropPayload) {
   await localPanel.value?.refresh()
 }
 
-// 拖到右侧远程面板：本地条目 / 操作系统文件上传到远程当前目录
+// 拖到右侧远程面板：本地条目 / 操作系统文件上传到远程当前目录（或拖到指定目录行时上传到该目录）
 async function onRemoteDrop(payload: DropPayload) {
   if (!currentSessionId.value) {
     ElMessage.warning('请先连接远程服务器')
     return
   }
-  const remoteDir = remotePanel.value?.currentPath
+  const remoteDir = payload.targetDir || remotePanel.value?.currentPath
   if (!remoteDir) return
 
   // 拖拽本地条目（可能是多选集合）与操作系统文件都走批量上传，结束后统一提示
   if (payload.source === 'local' && payload.entries?.length) {
-    await uploadBatch(payload.entries)
+    await uploadBatch(payload.entries, remoteDir)
   } else if (payload.source === 'files' && payload.paths?.length) {
-    await uploadBatch(payload.paths.map((p) => ({ path: p, name: basename(p), isDir: false })))
+    await uploadBatch(
+      payload.paths.map((p) => ({ path: p, name: basename(p), isDir: false })),
+      remoteDir,
+    )
   }
 }
 
@@ -496,6 +537,12 @@ async function onPanelAction(payload: PanelAction) {
       await localPanel.value?.refresh()
       break
     }
+    case 'upload-multi':
+      await uploadSelected()
+      break
+    case 'download-multi':
+      await downloadSelected()
+      break
   }
 }
 

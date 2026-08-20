@@ -78,16 +78,16 @@ func main() {
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Spark 终端工具",
-		Width:  1280,
-		Height: 800,
+		Width:  1380,
+		Height: 880,
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
 			Backdrop:                application.MacBackdropTranslucent,
 			TitleBar:                application.MacTitleBarHiddenInset,
 		},
-		BackgroundColour:            application.NewRGB(18, 18, 24),
+		BackgroundColour:           application.NewRGB(18, 18, 24),
 		DefaultContextMenuDisabled: true,
-		URL:                         "/",
+		URL:                        "/",
 	})
 
 	if err := app.Run(); err != nil {
