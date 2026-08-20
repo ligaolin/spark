@@ -20,6 +20,7 @@ import (
 	"changeme/app/service/sites"
 	"changeme/app/service/sshconfig"
 	"changeme/app/service/terminal"
+	"changeme/app/service/tray"
 	"changeme/app/service/types"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -27,6 +28,11 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+// 托盘 / 任务栏图标（PNG，Wails 会自动缩放到系统小图标尺寸）
+//
+//go:embed build/appicon.png
+var appIcon []byte
 
 func init() {
 	application.RegisterEvent[types.TerminalOutput]("terminal:output")
@@ -75,12 +81,13 @@ func main() {
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
+		Icon: appIcon,
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
 	})
 
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Spark 终端工具",
 		Width:  1380,
 		Height: 880,
@@ -100,6 +107,9 @@ func main() {
 		},
 		URL: "/",
 	})
+
+	// 托盘图标 + 关闭按钮行为（缩小到托盘 / 直接退出，见 设置 → 通用）
+	tray.Setup(app, win, appIcon)
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

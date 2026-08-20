@@ -56,7 +56,7 @@
                             </div>
                             <el-button size="small" text class="fullscreen-btn"
                                 :class="{ active: browserFullscreen }"
-                                :title="browserFullscreen ? '退出全屏' : '全屏'" @click="toggleFullscreen">
+                                :title="browserFullscreen ? '退出全屏（Esc）' : '全屏（隐藏左侧菜单）'" @click="toggleFullscreen">
                                 <el-icon>
                                     <FullScreen />
                                 </el-icon>
@@ -187,7 +187,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Clipboard } from '@wailsio/runtime'
 import {
@@ -322,6 +322,18 @@ async function loadLinkAccounts(linkId: number) {
 }
 
 onMounted(loadAll)
+
+// 全屏时导航菜单被盖住，按 Esc 退出全屏作为兜底出口
+// （焦点在内嵌 iframe 内时按键不会冒泡到这里，此时用标签栏右侧的全屏按钮退出）
+function onEsc(e: KeyboardEvent) {
+    if (e.key === 'Escape' && browserFullscreen.value) {
+        e.preventDefault()
+        browserFullscreen.value = false
+    }
+}
+
+onMounted(() => window.addEventListener('keydown', onEsc))
+onBeforeUnmount(() => window.removeEventListener('keydown', onEsc))
 
 // ---------- 树交互 ----------
 
@@ -715,9 +727,15 @@ async function openInSystemBrowser(url?: string) {
     padding: 10px 12px;
 }
 
+/* 全屏：脱离文档流盖住整个窗口（含最左侧导航菜单），拿到最大可视区域。
+   z-index 低于 ElementPlus 弹层(2000+) 和 ContextMenu(3000)，弹窗仍能正常盖在上面。 */
 .sites-view.is-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
     gap: 0;
     padding: 0;
+    background: var(--app-bg);
 }
 
 .sites-view.is-fullscreen .right-pane {

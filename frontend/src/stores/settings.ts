@@ -24,6 +24,10 @@ export const useSettingsStore = defineStore('settings', {
       const v = parseInt(state.values['terminal.fontSize'] ?? '', 10)
       return Number.isFinite(v) && v >= 8 && v <= 32 ? v : 13
     },
+    // 点窗口关闭按钮的行为：minimize=缩小到托盘，exit=直接退出
+    windowCloseAction(state): 'minimize' | 'exit' {
+      return state.values['window.closeAction'] === 'exit' ? 'exit' : 'minimize'
+    },
   },
 
   actions: {

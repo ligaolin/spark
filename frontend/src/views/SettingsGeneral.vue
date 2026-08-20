@@ -39,6 +39,25 @@
       </div>
     </div>
 
+    <div class="cfg-row">
+      <div class="cfg-info">
+        <div class="cfg-label">点击窗口关闭按钮时</div>
+        <div class="cfg-desc">
+          「缩小到托盘」会把窗口隐藏到任务栏右下角的托盘区，程序继续在后台运行（连接保持不断）；
+          左键点击托盘图标可重新显示窗口，右键点击可选择退出。保存后立即生效
+        </div>
+      </div>
+      <div class="cfg-ctrl">
+        <el-select v-model="closeActionVal" size="small" style="width: 132px">
+          <el-option label="缩小到托盘" value="minimize" />
+          <el-option label="直接退出" value="exit" />
+        </el-select>
+        <el-button size="small" type="primary" :loading="savingCloseAction" @click="saveCloseAction">
+          保存
+        </el-button>
+      </div>
+    </div>
+
     <div class="cfg-note">更多配置项会陆续加到这里（配置存于本地数据库 settings 表）。</div>
   </div>
 </template>
@@ -53,15 +72,18 @@ const settings = useSettingsStore()
 const keepaliveVal = ref(20)
 const processVal = ref(5)
 const fontVal = ref(13)
+const closeActionVal = ref<'minimize' | 'exit'>('minimize')
 const savingKeepalive = ref(false)
 const savingProcess = ref(false)
 const savingFont = ref(false)
+const savingCloseAction = ref(false)
 
 onMounted(async () => {
   await settings.load()
   keepaliveVal.value = settings.keepaliveInterval
   processVal.value = settings.processRefreshInterval
   fontVal.value = settings.terminalFontSize
+  closeActionVal.value = settings.windowCloseAction
 })
 
 async function saveKeepalive() {
@@ -97,6 +119,20 @@ async function saveFont() {
     ElMessage.error(`保存失败：${e?.message || e}`)
   } finally {
     savingFont.value = false
+  }
+}
+
+async function saveCloseAction() {
+  savingCloseAction.value = true
+  try {
+    await settings.set('window.closeAction', closeActionVal.value)
+    ElMessage.success(
+      closeActionVal.value === 'exit' ? '已保存：关闭按钮将直接退出程序' : '已保存：关闭按钮将缩小到托盘',
+    )
+  } catch (e: any) {
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  } finally {
+    savingCloseAction.value = false
   }
 }
 </script>
