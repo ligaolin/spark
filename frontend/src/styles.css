@@ -1,97 +1,146 @@
 html,
 body,
 #app {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', -apple-system, sans-serif;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', -apple-system, sans-serif;
+}
+
+* {
+    box-sizing: border-box;
 }
 
 :root {
-  --app-bg: #16181d;
-  --panel-bg: #1c1f26;
-  --border-color: #2a2e37;
-  --text-primary: #d6d9e0;
-  --text-secondary: #8b90a0;
-  --accent: #4f8cff;
-  --term-font: 'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+    --app-bg: #16181d;
+    --panel-bg: #1c1f26;
+    --border-color: #2a2e37;
+    --text-primary: #d6d9e0;
+    --text-secondary: #8b90a0;
+    --accent: #4f8cff;
+    --term-font: 'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
 }
 
 body {
-  background: var(--app-bg);
-  color: var(--text-primary);
-  user-select: none;
+    background: var(--app-bg);
+    color: var(--text-primary);
+    user-select: none;
 }
 
 .el-table,
 .el-input,
 .el-button,
 .el-dropdown {
-  user-select: text;
+    user-select: text;
 }
 
-.el-button+.el-button{
-    margin-left:0 !important;
+.el-button+.el-button {
+    margin-left: 0 !important;
 }
 
-.el-dialog__footer .el-button+.el-button{
-  margin-left: 10px !important;
+.el-dialog__footer .el-button+.el-button {
+    margin-left: 10px !important;
 }
 
 /* 滚动条 */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+    width: 8px;
+    height: 8px;
 }
+
 ::-webkit-scrollbar-thumb {
-  background: #333846;
-  border-radius: 4px;
+    background: #333846;
+    border-radius: 4px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
-  background: #454c5e;
+    background: #454c5e;
 }
+
 ::-webkit-scrollbar-track {
-  background: transparent;
+    background: transparent;
 }
 
 /* 文件面板表格样式 */
 .file-table .el-table__row {
-  cursor: pointer;
+    cursor: pointer;
 }
+
 .file-table .el-table__row.is-selected {
-  --el-table-row-hover-bg-color: transparent;
+    --el-table-row-hover-bg-color: transparent;
 }
 
 /* 点击多选的高亮行：深蓝背景 + 左侧蓝色指示条，明显区别于普通行 */
-.file-table .el-table__row.is-multi-selected > td.el-table__cell {
-  background: #26478a !important;
-  box-shadow: inset 3px 0 0 #5b9dff !important;
+.file-table .el-table__row.is-multi-selected>td.el-table__cell {
+    background: #26478a !important;
+    box-shadow: inset 3px 0 0 #5b9dff !important;
 }
 
-.file-table .el-table__row.is-multi-selected:hover > td.el-table__cell {
-  background: #2f549c !important;
+.file-table .el-table__row.is-multi-selected:hover>td.el-table__cell {
+    background: #2f549c !important;
 }
 
 /* 框选预览行：拉框过程中的实时高亮 */
-.file-table .el-table__row.is-box-preview > td.el-table__cell {
-  background: #2a4a86 !important;
-  box-shadow: inset 3px 0 0 #5b9dff !important;
+.file-table .el-table__row.is-box-preview>td.el-table__cell {
+    background: #2a4a86 !important;
+    box-shadow: inset 3px 0 0 #5b9dff !important;
 }
 
 /* 拖放目标目录：绿色描边提示可放置（移动/复制到该目录） */
-.file-table .el-table__row.is-drop-target > td.el-table__cell {
-  box-shadow: inset 0 0 0 2px #3fbf7f !important;
+.file-table .el-table__row.is-drop-target>td.el-table__cell {
+    box-shadow: inset 0 0 0 2px #3fbf7f !important;
 }
 
 .path-input {
-  background: transparent !important;
-  border: none !important;
-  color: var(--text-secondary) !important;
-  font-family: var(--term-font);
-  font-size: 12px;
+    background: transparent !important;
+    border: none !important;
+    color: var(--text-secondary) !important;
+    font-family: var(--term-font);
+    font-size: 12px;
 }
 
 .mono {
-  font-family: var(--term-font);
+    font-family: var(--term-font);
+}
+
+.ͼ3 .cm-button {
+    background: #353c4c;
+    background-image: none;
+    border: none;
+}
+
+.ͼ1 .cm-button {
+    color: var(--text-primary);
+    padding: 0.5em 1em;
+    border-radius: 3px;
+    font-size: 11px;
+}
+
+.ͼo .cm-panels.cm-panels-bottom {
+    border-top: none;
+    padding: 8px;
+}
+
+.ͼ1 .cm-panel.cm-search button,
+.ͼ1 .cm-panel.cm-search label {
+    margin: .2em .6em 0.4em 0;
+}
+
+.ͼ1 .cm-panel.cm-search input,
+.ͼ1 .cm-panel.cm-search label {
+    display: inline-flex;
+    align-items: flex-start;
+    font-size: 13px;
+}
+
+.ͼ1 .cm-panel.cm-search input {
+    padding: 0.3em 1em;
+}
+
+.ͼo .cm-searchMatch.cm-searchMatch-selected {
+    background-color: black;
+}
+.ͼo .cm-searchMatch {
+    background-color: #2e509300;
 }

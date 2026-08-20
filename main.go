@@ -9,6 +9,7 @@ import (
 	"changeme/app/service/customcmd"
 	"changeme/app/service/databases"
 	"changeme/app/service/db"
+	"changeme/app/service/documents"
 	"changeme/app/service/favorites"
 	"changeme/app/service/ftp"
 	"changeme/app/service/hostkeys"
@@ -61,6 +62,7 @@ func main() {
 			application.NewService(&ftp.FTPFileService{}),
 			application.NewService(&connections.ConnService{}),
 			application.NewService(&customcmd.CustomCommandService{}),
+			application.NewService(&documents.DocumentService{}),
 			application.NewService(&favorites.FavoriteService{}),
 			application.NewService(&settings.SettingsService{}),
 			application.NewService(&databases.DatabaseService{}),

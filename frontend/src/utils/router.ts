@@ -13,6 +13,10 @@ const routes = [
     path: '/ftp',
     component: () => import('../views/FtpView.vue'),
   },
+  {
+    path: '/documents',
+    component: () => import('../views/DocumentsView.vue'),
+  },
   { path: '/:pathMatch(.*)*', redirect: '/terminal' },
 ]
 

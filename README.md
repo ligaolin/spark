@@ -6,6 +6,7 @@
 - **SFTP 文件管理**：基于 SSH 的文件管理，双栏（本地 ⇄ 远程），支持浏览、上传、下载、新建目录、重命名、删除（递归）、修改权限
 - **FTP / FTPS 文件管理**：与 SFTP 一致的双栏文件管理，支持显式 TLS（FTPS）、递归删除
 - **文件搜索与编辑**：本地 / SFTP / FTP 均支持按**文件名**或**文件内容**递归搜索当前目录及全部子目录；双击文件在内置 **CodeMirror** 编辑器打开并可直接保存回远端/本地
+- **文档管理**：类 VS Code 的文档模块——左侧目录树、右侧内容编辑，文档列表与内容全部存数据库；支持新建 / 重命名 / 删除 / 拖拽移动、按文件名或内容搜索
 - **连接管理**：SSH / FTP 连接信息持久化保存到本地 SQLite，一键打开终端 / SFTP / FTP
 
 ## 技术栈
@@ -21,21 +22,23 @@
 ```
 ├── main.go                    # 应用入口：注册服务与事件
 ├── app/
-│   ├── model/                 # GORM 模型（SavedConnection）
+│   ├── model/                 # GORM 模型（SavedConnection / DocNode 等）
 │   └── service/
 │       ├── terminal/          # SSH 终端会话（PTY、resize、输入输出事件）
 │       ├── sftp/              # SFTP 文件操作（目录递归、断点续传）
 │       ├── ftp/               # FTP/FTPS 文件操作（目录递归、REST 续传）
+│       ├── documents/         # 文档管理（树 CRUD、内容存取、搜索）
 │       ├── connections/       # 已保存连接 CRUD
 │       ├── local/             # 本地文件列表 + 原生文件对话框
 │       ├── hostkeys/          # SSH 主机密钥校验与 known_hosts 管理
 │       ├── secure/            # 凭据 AES-256-GCM 加密（机器绑定密钥）
 │       ├── sshlib/            # SSH 认证配置、known_hosts 校验
+│       ├── fileutil/          # 搜索/编辑器共享工具（二进制判断、匹配）
 │       └── types/             # 前后端共享 DTO
 └── frontend/
     ├── src/
-    │   ├── views/             # ConnectionsView / TerminalView / FileManagerView
-    │   ├── components/        # TerminalPane / FilePanel / ConnectDialog / TransferDock
+    │   ├── views/             # ConnectionsView / TerminalView / FileManagerView / DocumentsView
+    │   ├── components/        # TerminalPane / FilePanel / CodeEditor / TextEditor / SearchDialog ...
     │   ├── stores/            # Pinia：连接、终端会话、传输队列
     │   └── utils/             # wails 绑定出口、文件面板适配器
     └── bindings/              # wails3 generate bindings 生成的 TS 绑定（勿手改）
@@ -97,6 +100,12 @@ go build .
    - **内置编辑器**：双击文件（或右键「打开（编辑）」）在 CodeMirror 编辑器中打开并编辑，`Ctrl+S` 保存回远端/本地；打开时会拒绝二进制文件与超过 20MB 的文件
    - 双击目录进入，路径栏可手动输入后回车跳转
    - 底部传输队列实时显示上传/下载进度
+4. **文档管理**页：类 VS Code 的文档模块，左侧目录树、右侧内容编辑，**列表与内容都存数据库**；
+   - 工具栏：新建文件 / 新建文件夹 / 重命名 / 删除；右键树节点也可新建（目录内）、重命名、删除
+   - **拖拽移动**：把节点拖到目录上（或目录前/后）调整层级与顺序
+   - **编辑器**：基于 CodeMirror，按文件扩展名自动语法高亮，支持搜索（Ctrl+F）、`Ctrl+S` 保存；切换文件时未保存会提示
+   - **搜索**：顶部搜索框可**按文件名**或**按文件内容**搜索全部文档，双击结果打开并定位到命中行
+   - 与 SFTP / FTP 文件页共用同一套 CodeMirror 编辑器组件
 
 ## 存储与同步
 
@@ -111,7 +120,7 @@ go build .
 
 - **设置与快捷键**：侧边栏底部「设置」页（配置存数据库 settings 表，可随时扩展新配置）：
   - 常规：连接保活间隔、进程管理自动刷新间隔、终端字号（即时生效）
-  - 快捷键：点击快捷键标签即可重新绑定（Esc 取消），冲突检测、一键恢复默认；默认快捷键：Ctrl+1~4 切换页面、Ctrl+T 新建 SSH 会话、Ctrl+W 关闭当前终端标签、Ctrl+B 开关终端信息面板、**F12 打开调试工具（DevTools）**；输入框 / 终端中按键不会被拦截（功能键 F1~F12 除外）
+  - 快捷键：点击快捷键标签即可重新绑定（Esc 取消），冲突检测、一键恢复默认；默认快捷键：Ctrl+1~4 切换页面、**Ctrl+5 打开文档管理**、Ctrl+T 新建 SSH 会话、Ctrl+W 关闭当前终端标签、Ctrl+B 开关终端信息面板、**F12 打开调试工具（DevTools）**；输入框 / 终端中按键不会被拦截（功能键 F1~F12 除外）
 
 - **主机密钥校验**：所有 SSH / SFTP 连接都通过 `known_hosts`（`%APPDATA%\spark\known_hosts`）校验主机密钥，未知 / 不匹配 / 吊销都会明确提示，杜绝静默的中间人风险。
 - **凭据加密**：已保存连接的密码、私钥、密钥口令使用 AES-256-GCM 加密后写入 SQLite，密钥由本机标识（Windows MachineGuid）派生，数据库文件被拷贝到其他机器也无法解密；旧版明文数据首次启动时自动加密迁移。

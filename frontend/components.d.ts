@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    CodeEditor: typeof import('./src/components/CodeEditor.vue')['default']
     ConfirmDialog: typeof import('./src/components/ConfirmDialog.vue')['default']
     ConnectDialog: typeof import('./src/components/ConnectDialog.vue')['default']
     ContextMenu: typeof import('./src/components/ContextMenu.vue')['default']
@@ -43,6 +44,7 @@ declare module 'vue' {
     ElTabPane: typeof import('element-plus/es')['ElTabPane']
     ElTabs: typeof import('element-plus/es')['ElTabs']
     ElTag: typeof import('element-plus/es')['ElTag']
+    ElTree: typeof import('element-plus/es')['ElTree']
     FilePanel: typeof import('./src/components/FilePanel.vue')['default']
     InputDialog: typeof import('./src/components/InputDialog.vue')['default']
     ProcessManagerView: typeof import('./src/components/ProcessManagerView.vue')['default']

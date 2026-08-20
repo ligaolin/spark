@@ -5,6 +5,7 @@ import { SFTPFileService } from '../../bindings/changeme/app/service/sftp'
 import { FTPFileService } from '../../bindings/changeme/app/service/ftp'
 import { ConnService } from '../../bindings/changeme/app/service/connections'
 import { CustomCommandService } from '../../bindings/changeme/app/service/customcmd'
+import { DocumentService } from '../../bindings/changeme/app/service/documents'
 import { FavoriteService } from '../../bindings/changeme/app/service/favorites'
 import { SettingsService } from '../../bindings/changeme/app/service/settings'
 import { DatabaseService } from '../../bindings/changeme/app/service/databases'
@@ -23,6 +24,7 @@ import type {
   CustomCommand,
   Favorite,
   ConnectionGroup,
+  DocNode,
 } from '../../bindings/changeme/app/model/models'
 import type { HostKeyInfo, HostKeyStatus } from '../../bindings/changeme/app/service/hostkeys/models'
 import type { DatabaseConfig } from '../../bindings/changeme/app/service/databases/models'
@@ -35,6 +37,7 @@ export {
   FTPFileService,
   ConnService,
   CustomCommandService,
+  DocumentService,
   FavoriteService,
   SettingsService,
   DatabaseService,
@@ -48,6 +51,7 @@ export type {
   CustomCommand,
   Favorite,
   ConnectionGroup,
+  DocNode,
   HostKeyInfo,
   HostKeyStatus,
   ServerInfo,

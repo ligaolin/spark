@@ -4,6 +4,7 @@
 export type {
     ConnectionGroup,
     CustomCommand,
+    DocNode,
     Favorite,
     SavedConnection
 } from "./models.js";

@@ -168,7 +168,6 @@ onBeforeUnmount(() => {
   padding: 10px;
   height: 100%;
   min-height: 0;
-  box-sizing: border-box;
 }
 
 .pm-toolbar {

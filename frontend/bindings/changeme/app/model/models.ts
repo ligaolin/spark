@@ -25,6 +25,34 @@ export interface CustomCommand {
 }
 
 /**
+ * DocNode is one node in the built-in document tree. Folders and files share
+ * the same table; files carry their text content in Content.
+ */
+export interface DocNode {
+    "id": number;
+
+    /**
+     * 0 = root
+     */
+    "parentId": number;
+    "name": string;
+
+    /**
+     * "folder" | "file"
+     */
+    "type": string;
+    "content": string;
+
+    /**
+     * Sort keeps siblings in a stable user-visible order (folders first is
+     * applied on the frontend).
+     */
+    "sort": number;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+/**
  * Favorite bookmarks a directory (remote or local) for quick navigation.
  * Kind: "remote" (belongs to a saved connection) or "local" (global local bookmarks).
  */

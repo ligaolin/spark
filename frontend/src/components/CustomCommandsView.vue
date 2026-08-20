@@ -163,7 +163,6 @@ async function remove(cmd: CustomCommand) {
   padding: 10px;
   height: 100%;
   overflow-y: auto;
-  box-sizing: border-box;
 }
 
 .cc-adhoc {

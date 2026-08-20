@@ -44,7 +44,7 @@ import { onBeforeUnmount, onMounted } from 'vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { useRoute, useRouter } from 'vue-router'
 import { Window } from '@wailsio/runtime'
-import { Monitor, FolderOpened, Connection, Link, Setting } from '@element-plus/icons-vue'
+import { Monitor, FolderOpened, Connection, Link, Setting, Notebook } from '@element-plus/icons-vue'
 import DialogHost from './components/DialogHost.vue'
 import { useShortcutsStore, eventToCombo } from './stores/shortcuts'
 import { emit } from './utils/bus'
@@ -58,6 +58,7 @@ const menu = [
   { path: '/terminal', label: 'SSH 终端', icon: Monitor },
   { path: '/sftp', label: 'SFTP 文件', icon: FolderOpened },
   { path: '/ftp', label: 'FTP 文件', icon: Link },
+  { path: '/documents', label: '文档管理', icon: Notebook },
 ]
 
 // 全局快捷键分发（输入框/终端等可输入区域不拦截；纯功能键 F1~F12 除外）
@@ -84,6 +85,9 @@ function onKeyDown(e: KeyboardEvent) {
       break
     case 'nav.ftp':
       router.push('/ftp')
+      break
+    case 'nav.documents':
+      router.push('/documents')
       break
     case 'terminal.new':
       router.push('/terminal')

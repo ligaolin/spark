@@ -27,7 +27,7 @@
     </div>
 
     <div class="editor-wrap">
-      <div ref="hostRef" class="editor-host"></div>
+      <CodeEditor ref="editorRef" :filename="fileName" @change="onChange" @save="save" />
       <div v-if="loading" class="editor-loading-overlay">
         <el-icon class="is-loading"><Loading /></el-icon>
         <span>正在读取文件…</span>
@@ -40,12 +40,7 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { EditPen, Loading } from '@element-plus/icons-vue'
-import { basicSetup } from 'codemirror'
-import { EditorView, keymap } from '@codemirror/view'
-import { EditorState, type Extension } from '@codemirror/state'
-import { oneDark } from '@codemirror/theme-one-dark'
-import { languages } from '@codemirror/language-data'
-import { LanguageDescription } from '@codemirror/language'
+import CodeEditor from './CodeEditor.vue'
 import { showConfirmDialog } from '../utils/dialog'
 import type { FileBackend } from '../utils/fileBackend'
 
@@ -57,9 +52,8 @@ const ready = ref(false)
 const saving = ref(false)
 const dirty = ref(false)
 
-const hostRef = ref<HTMLElement>()
+const editorRef = ref<InstanceType<typeof CodeEditor>>()
 
-let view: EditorView | null = null
 let currentBackend: FileBackend | null = null
 let currentFile: { path: string; name: string } | null = null
 let currentLineNo: number | undefined
@@ -79,7 +73,6 @@ async function open(
   originalContent = ''
   ready.value = false
   dirty.value = false
-  destroyEditor()
   if (visible.value) {
     await init()
   } else {
@@ -99,9 +92,9 @@ async function init() {
     const content = await currentBackend.readFile(currentFile.path)
     if (token !== initToken) return
     originalContent = content
-    await createEditor(content)
-    if (token !== initToken) return
-    if (currentLineNo) jumpTo(currentLineNo)
+    editorRef.value?.setContent(content)
+    if (currentLineNo) editorRef.value?.jumpToLine(currentLineNo)
+    else editorRef.value?.focus()
     ready.value = true
   } catch (e: any) {
     if (token !== initToken) return
@@ -112,50 +105,13 @@ async function init() {
   }
 }
 
-async function createEditor(content: string) {
-  const host = hostRef.value
-  if (!host) return
-  const exts: Extension[] = [basicSetup, oneDark]
-  try {
-    const desc = LanguageDescription.matchFilename(languages, currentFile?.name ?? '')
-    if (desc) exts.push(await desc.load())
-  } catch {
-    // 语言包加载失败不影响编辑，仅缺少语法高亮
-  }
-  exts.push(
-    EditorView.updateListener.of((u) => {
-      if (u.docChanged) {
-        dirty.value = view?.state.doc.toString() !== originalContent
-      }
-    }),
-    keymap.of([
-      {
-        key: 'Mod-s',
-        run: () => {
-          void save()
-          return true
-        },
-      },
-    ]),
-  )
-  const state = EditorState.create({ doc: content, extensions: exts })
-  view = new EditorView({ state, parent: host })
-}
-
-function jumpTo(lineNo: number) {
-  if (!view) return
-  const n = Math.max(1, Math.min(lineNo, view.state.doc.lines))
-  const line = view.state.doc.line(n)
-  view.dispatch({
-    selection: { anchor: line.from },
-    effects: EditorView.scrollIntoView(line.from, { y: 'center' }),
-  })
-  view.focus()
+function onChange(value: string) {
+  dirty.value = value !== originalContent
 }
 
 async function save() {
-  if (!view || !currentBackend || !currentFile) return
-  const content = view.state.doc.toString()
+  if (!currentBackend || !currentFile || !ready.value) return
+  const content = editorRef.value?.getContent() ?? ''
   saving.value = true
   try {
     await currentBackend.writeFile(currentFile.path, content)
@@ -169,24 +125,15 @@ async function save() {
   }
 }
 
-function destroyEditor() {
-  if (view) {
-    view.destroy()
-    view = null
-  }
-}
-
 async function beforeClose(done: () => void) {
   if (dirty.value) {
     const ok = await showConfirmDialog('关闭编辑器', '文件尚未保存，确定关闭？', true, '不保存并关闭')
     if (!ok) return
   }
-  destroyEditor()
   done()
 }
 
 function onClosed() {
-  destroyEditor()
   currentBackend = null
   currentFile = null
   ready.value = false
@@ -233,24 +180,10 @@ defineExpose({ open })
 
 .editor-wrap {
   position: relative;
-}
-
-.editor-host {
   height: 58vh;
   border: 1px solid var(--border-color);
   border-radius: 6px;
   overflow: hidden;
-  background: #1a1d24;
-}
-
-.editor-host :deep(.cm-editor) {
-  height: 100%;
-  font-size: 13px;
-}
-
-.editor-host :deep(.cm-scroller) {
-  font-family: var(--term-font, 'Consolas', 'Menlo', monospace);
-  line-height: 1.6;
 }
 
 .editor-loading-overlay {
