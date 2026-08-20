@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "1.0.0"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "1.0.0",
+			"CompanyName": "Spark",
+			"FileDescription": "Spark 终端工具 - SSH / SFTP / FTP",
+			"LegalCopyright": "(c) 2026, Spark",
+			"ProductName": "Spark 终端工具",
+			"Comments": "SSH terminal / SFTP / FTP desktop tool built with Wails v3"
+		}
+	}
+}

@@ -1,0 +1,19 @@
+.task
+bin
+frontend/dist
+frontend/node_modules
+build/linux/appimage/build
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+# Mobile generated (per-machine; overlays hold absolute paths)
+build/ios/xcode/overlay.json
+build/ios/xcode/gen/
+build/android/overlay.json
+build/android/gen/
+# Build artifacts & runtime data
+*.syso
+build.log
+# 数据库文件（含本地连接信息等敏感数据）
+*.db
+*.sqlite
+*.sqlite3
+changeme.exe

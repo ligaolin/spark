@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=My Product
+Comment=A spark application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/spark.exe %u
+Terminal=false
+Type=Application
+Icon=spark.exe
+Categories=Utility;
+StartupWMClass=spark.exe
+
+ 

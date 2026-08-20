@@ -1,0 +1,150 @@
+# 发布工作流：推送 v* 标签时自动构建 Windows / Linux / macOS 并发布到 GitHub Release
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install wails3 + task CLI
+        shell: bash
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.4
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Set version from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          sed -i "s/\"file_version\": \"[^\"]*\"/\"file_version\": \"$VERSION\"/" build/windows/info.json
+          sed -i "s/\"ProductVersion\": \"[^\"]*\"/\"ProductVersion\": \"$VERSION\"/" build/windows/info.json
+
+      - name: Build
+        run: task build VERSION=${{ env.VERSION }}
+
+      - name: Rename artifact
+        shell: bash
+        run: mv bin/spark.exe "Spark-${{ env.VERSION }}-windows-amd64.exe"
+
+      - name: Publish to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Spark-*.exe
+          name: Spark ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+
+  build-linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libgtk-4-dev \
+            libwebkitgtk-6.0-dev \
+            libglib2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            patchelf
+
+      - name: Install wails3 + task CLI
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.4
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Set version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: task build VERSION=${{ env.VERSION }}
+
+      - name: Rename artifact
+        run: mv bin/spark "Spark-${{ env.VERSION }}-linux-amd64"
+
+      - name: Publish to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Spark-*-linux-amd64
+          name: Spark ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+
+  build-macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install wails3 + task CLI
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.4
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Set version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: task build VERSION=${{ env.VERSION }}
+
+      - name: Package app bundle
+        run: |
+          cd bin
+          zip -r "../Spark-${{ env.VERSION }}-macos.zip" . > /dev/null
+
+      - name: Publish to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Spark-*-macos.zip
+          name: Spark ${{ github.ref_name }}
+          draft: false
+          prerelease: false
