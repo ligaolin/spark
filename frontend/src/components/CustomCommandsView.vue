@@ -184,7 +184,7 @@ async function remove(cmd: CustomCommand) {
 }
 
 .cc-item {
-  background: #1e222b;
+  background: var(--hover-bg);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 6px 10px;
@@ -223,7 +223,7 @@ async function remove(cmd: CustomCommand) {
   min-height: 120px;
   display: flex;
   flex-direction: column;
-  background: #0f1115;
+  background: var(--term-bg);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   overflow: hidden;
@@ -256,12 +256,12 @@ async function remove(cmd: CustomCommand) {
 }
 
 .cc-log-time {
-  color: #4a5060;
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
 .cc-log-cmd {
-  color: #c8d3e0;
+  color: var(--text-primary);
   word-break: break-all;
   white-space: pre-wrap;
 }
@@ -272,6 +272,6 @@ async function remove(cmd: CustomCommand) {
   align-items: center;
   justify-content: center;
   font-size: 12px;
-  color: #4a5060;
+  color: var(--text-muted);
 }
 </style>

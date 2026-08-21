@@ -79,10 +79,10 @@
                             <el-icon v-if="row.isDir" color="#e6c06c">
                                 <Folder />
                             </el-icon>
-                            <el-icon v-else-if="row.symlink" color="#7fb0ff">
+                            <el-icon v-else-if="row.symlink" color="var(--active-text)">
                                 <Link />
                             </el-icon>
-                            <el-icon v-else color="#8b90a0">
+                            <el-icon v-else color="var(--text-secondary)">
                                 <Document />
                             </el-icon>
                             <span class="name-text" :title="row.name">{{ row.name }}</span>
@@ -1206,7 +1206,7 @@ onBeforeUnmount(() => {
 }
 
 .fav-item:hover {
-    background: #2e3442;
+    background: var(--hover-strong);
 }
 
 .fav-path {

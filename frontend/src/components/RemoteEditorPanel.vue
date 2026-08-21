@@ -25,7 +25,7 @@
                         >
                             <template #default="{ data }">
                                 <span class="rep-tree-node">
-                                    <el-icon :color="data.isDir ? '#e6c06c' : '#8b90a0'">
+                                    <el-icon :color="data.isDir ? '#e6c06c' : 'var(--text-secondary)'">
                                         <Folder v-if="data.isDir" />
                                         <Document v-else />
                                     </el-icon>
@@ -394,7 +394,7 @@ defineExpose({ openPath, confirmClose, hasDirty: () => openFiles.value.some((f) 
     padding: 5px 9px;
     font-size: 12.5px;
     color: var(--text-secondary);
-    background: #1b1f27;
+    background: var(--panel-soft);
     border: 1px solid var(--border-color);
     border-bottom: none;
     border-radius: 6px 6px 0 0;
@@ -405,8 +405,8 @@ defineExpose({ openPath, confirmClose, hasDirty: () => openFiles.value.some((f) 
 }
 
 .rep-tab.active {
-    background: #233049;
-    color: #7fb0ff;
+    background: var(--active-bg);
+    color: var(--active-text);
 }
 
 .rep-tab-title {
@@ -458,7 +458,7 @@ defineExpose({ openPath, confirmClose, hasDirty: () => openFiles.value.some((f) 
     justify-content: center;
     gap: 8px;
     color: var(--text-secondary);
-    background: #1a1d24;
+    background: var(--editor-bg);
 }
 
 .rep-empty p {
@@ -478,7 +478,7 @@ defineExpose({ openPath, confirmClose, hasDirty: () => openFiles.value.some((f) 
     align-items: center;
     justify-content: center;
     gap: 8px;
-    background: rgba(18, 18, 24, 0.72);
+    background: var(--overlay-bg);
     z-index: 5;
     color: var(--text-secondary);
     font-size: 13px;

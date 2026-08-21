@@ -162,7 +162,7 @@ watch(
 }
 
 .si-cell {
-  background: #1e222b;
+  background: var(--hover-bg);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 8px 10px;
@@ -184,7 +184,7 @@ watch(
 }
 
 .si-block {
-  background: #1e222b;
+  background: var(--hover-bg);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 10px;

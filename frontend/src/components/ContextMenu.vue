@@ -99,8 +99,8 @@ function pick(item: CtxItem) {
   position: fixed;
   min-width: 180px;
   padding: 5px;
-  background: #23262f;
-  border: 1px solid #3a4152;
+  background: var(--menu-bg);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   user-select: none;
@@ -119,7 +119,7 @@ function pick(item: CtxItem) {
 }
 
 .ctx-item:hover:not(.disabled) {
-  background: #2e3442;
+  background: var(--hover-strong);
 }
 
 .ctx-item.danger {
@@ -131,7 +131,7 @@ function pick(item: CtxItem) {
 }
 
 .ctx-item.disabled {
-  color: #5a6072;
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 

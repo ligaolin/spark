@@ -20,10 +20,19 @@
           </router-link>
         </nav>
         <div class="sidebar-foot">
-          <router-link to="/settings" class="foot-link" :class="{ active: route.path === '/settings' }">
-            <el-icon class="nav-icon"><Setting /></el-icon>
-            <span>设置</span>
-          </router-link>
+          <div class="foot-row">
+            <router-link to="/settings" class="foot-link" :class="{ active: route.path === '/settings' }">
+              <el-icon class="nav-icon"><Setting /></el-icon>
+              <span>设置</span>
+            </router-link>
+            <button
+              class="theme-toggle"
+              :title="isDark ? '切换到亮色主题' : '切换到暗色主题'"
+              @click="toggleTheme"
+            >
+              <el-icon class="nav-icon"><component :is="isDark ? Sunny : Moon" /></el-icon>
+            </button>
+          </div>
         </div>
       </aside>
       <main class="content">
@@ -42,15 +51,26 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { useRoute, useRouter } from 'vue-router'
 import { Window } from '@wailsio/runtime'
-import { Monitor, Connection, Link, Setting, Notebook, Collection, EditPen } from '@element-plus/icons-vue'
+import {
+  Monitor,
+  Connection,
+  Link,
+  Setting,
+  Notebook,
+  Collection,
+  EditPen,
+  Sunny,
+  Moon,
+} from '@element-plus/icons-vue'
 import DialogHost from './components/DialogHost.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import { useShortcutsStore, eventToCombo } from './stores/shortcuts'
 import { useSettingsStore } from './stores/settings'
+import { applyTheme, cacheTheme } from './utils/theme'
 import { emit } from './utils/bus'
 import { checkForUpdates } from './utils/updateCheck'
 
@@ -58,6 +78,19 @@ const route = useRoute()
 const router = useRouter()
 const shortcuts = useShortcutsStore()
 const settings = useSettingsStore()
+
+const isDark = computed(() => settings.theme === 'dark')
+
+async function toggleTheme() {
+  try {
+    await settings.setTheme(isDark.value ? 'light' : 'dark')
+  } catch {
+    // 持久化失败时也本地生效（不阻断切换）
+    const next: 'dark' | 'light' = isDark.value ? 'light' : 'dark'
+    applyTheme(next)
+    cacheTheme(next)
+  }
+}
 
 const menu = [
   { path: '/connections', label: '连接管理', icon: Connection },
@@ -119,7 +152,11 @@ function onKeyDown(e: KeyboardEvent) {
 
 onMounted(() => {
   shortcuts.load()
-  settings.load()
+  settings.load().then(() => {
+    // 数据库设置为准，覆盖启动时的本地缓存
+    applyTheme(settings.theme)
+    cacheTheme(settings.theme)
+  })
   window.addEventListener('keydown', onKeyDown)
   // 启动后延迟检查 GitHub 新版本：有新版时弹窗提示可点击下载更新
   setTimeout(() => {
@@ -141,7 +178,7 @@ onBeforeUnmount(() => {
 .sidebar {
   width: 190px;
   flex-shrink: 0;
-  background: #131519;
+  background: var(--sidebar-bg);
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
@@ -191,13 +228,13 @@ onBeforeUnmount(() => {
 }
 
 .nav-item:hover {
-  background: #1e222b;
+  background: var(--hover-bg);
   color: var(--text-primary);
 }
 
 .nav-item.active {
-  background: #233049;
-  color: #7fb0ff;
+  background: var(--active-bg);
+  color: var(--active-text);
 }
 
 .nav-icon {
@@ -207,13 +244,19 @@ onBeforeUnmount(() => {
 .sidebar-footer {
   padding: 12px 16px;
   font-size: 11px;
-  color: #4a5060;
+  color: var(--text-muted);
   border-top: 1px solid var(--border-color);
 }
 
 .sidebar-foot {
   padding: 8px;
   border-top: 1px solid var(--border-color);
+}
+
+.foot-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .foot-link {
@@ -225,17 +268,39 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   text-decoration: none;
   font-size: 13px;
+  flex: 1;
   transition: background 0.15s, color 0.15s;
 }
 
 .foot-link:hover {
-  background: #1e222b;
+  background: var(--hover-bg);
   color: var(--text-primary);
 }
 
 .foot-link.active {
-  background: #233049;
-  color: #7fb0ff;
+  background: var(--active-bg);
+  color: var(--active-text);
+}
+
+/* 主题切换按钮：设置入口右侧的图标按钮 */
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.theme-toggle:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
 }
 
 .content {

@@ -96,7 +96,7 @@ onBeforeUnmount(stopCapture)
 .sc-note {
   font-size: 12px;
   color: var(--text-secondary);
-  background: #1e222b;
+  background: var(--hover-bg);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 8px 12px;

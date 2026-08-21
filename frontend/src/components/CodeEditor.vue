@@ -11,6 +11,7 @@ import { indentWithTab } from '@codemirror/commands'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { languages } from '@codemirror/language-data'
 import { LanguageDescription } from '@codemirror/language'
+import { useSettingsStore } from '../stores/settings'
 
 const props = defineProps<{
   // 用于根据文件扩展名自动匹配语法高亮
@@ -54,10 +55,36 @@ const zhCNPhrases: Record<string, string> = {
 
 const hostRef = ref<HTMLElement>()
 
+const settings = useSettingsStore()
+
+// 亮色主题：与应用配色保持一致（暗色用 oneDark）
+const lightTheme = EditorView.theme(
+  {
+    '&': { backgroundColor: '#ffffff', color: '#2b3040' },
+    '.cm-content': { caretColor: '#2b3040' },
+    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+      backgroundColor: '#cfe0ff',
+    },
+    '.cm-gutters': { backgroundColor: '#f7f8fc', color: '#8a91a3', border: 'none' },
+    '.cm-activeLine': { backgroundColor: '#f2f5fa' },
+    '.cm-activeLineGutter': { backgroundColor: '#eef1f7', color: '#2b3040' },
+    '&.cm-focused': { outline: 'none' },
+    '.cm-tooltip': { backgroundColor: '#ffffff', border: '1px solid #e3e6ee' },
+    '.cm-panels': { backgroundColor: '#f7f8fc', color: '#2b3040' },
+    '.cm-panels.cm-panels-top': { borderBottom: '1px solid #e3e6ee' },
+    '.cm-panels.cm-panels-bottom': { borderTop: '1px solid #e3e6ee' },
+    '.cm-searchMatch': { backgroundColor: '#dbe7ff', outline: '1px solid #3b82f6' },
+    '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: '#b3d4ff' },
+    '.cm-selectionMatch': { backgroundColor: '#e3ecff' },
+  },
+  { dark: false },
+)
+
 let view: EditorView | null = null
 const languageConf = new Compartment()
 const editableConf = new Compartment()
 const wrapConf = new Compartment()
+const themeConf = new Compartment()
 
 onMounted(() => {
   const host = hostRef.value
@@ -66,7 +93,7 @@ onMounted(() => {
     doc: '',
     extensions: [
       basicSetup,
-      oneDark,
+      themeConf.of(settings.theme === 'dark' ? oneDark : lightTheme),
       EditorState.phrases.of(zhCNPhrases),
       languageConf.of([]),
       editableConf.of(EditorView.editable.of(true)),
@@ -102,6 +129,15 @@ watch(
   (w) => {
     if (!view) return
     view.dispatch({ effects: wrapConf.reconfigure(w ? EditorView.lineWrapping : []) })
+  },
+)
+
+// 明暗主题切换后即时重配置 CodeMirror 主题
+watch(
+  () => settings.theme,
+  (t) => {
+    if (!view) return
+    view.dispatch({ effects: themeConf.reconfigure(t === 'dark' ? oneDark : lightTheme) })
   },
 )
 
@@ -163,7 +199,7 @@ defineExpose({ setContent, getContent, focus, jumpToLine, setReadonly })
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #1a1d24;
+  background: var(--editor-bg);
 }
 
 .code-editor-host :deep(.cm-editor) {

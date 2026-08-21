@@ -47,7 +47,7 @@
                                 empty-text="暂无文档，点击上方「新建文件」开始">
                                 <template #default="{ data }">
                                     <span class="tree-node">
-                                        <el-icon :color="data.type === 'folder' ? '#e6c06c' : data.kind === 'md' ? '#67c23a' : '#8b90a0'">
+                                        <el-icon :color="data.type === 'folder' ? '#e6c06c' : data.kind === 'md' ? '#67c23a' : 'var(--text-secondary)'">
                                             <Folder v-if="data.type === 'folder'" />
                                             <Document v-else />
                                         </el-icon>
@@ -67,7 +67,7 @@
                                         <el-icon v-if="row.isDir" color="#e6c06c">
                                             <Folder />
                                         </el-icon>
-                                        <el-icon v-else color="#8b90a0">
+                                        <el-icon v-else color="var(--text-secondary)">
                                             <Document />
                                         </el-icon>
                                         <span class="res-name" :title="row.name">{{ row.name }}</span>
@@ -680,15 +680,15 @@ function openResult(row: SearchResult) {
 }
 
 .left-tab.active {
-    color: #7fb0ff;
-    border-bottom-color: #7fb0ff;
+    color: var(--active-text);
+    border-bottom-color: var(--active-text);
 }
 
 .tab-badge {
     margin-left: 4px;
     font-size: 11px;
     color: var(--text-secondary);
-    background: #2e3442;
+    background: var(--hover-strong);
     border-radius: 8px;
     padding: 0 6px;
 }
@@ -764,7 +764,7 @@ function openResult(row: SearchResult) {
     padding: 6px 10px;
     font-size: 12.5px;
     color: var(--text-secondary);
-    background: #1b1f27;
+    background: var(--panel-soft);
     border: 1px solid var(--border-color);
     border-bottom: none;
     border-radius: 6px 6px 0 0;
@@ -775,8 +775,8 @@ function openResult(row: SearchResult) {
 }
 
 .doc-tab.active {
-    background: #233049;
-    color: #7fb0ff;
+    background: var(--active-bg);
+    color: var(--active-text);
 }
 
 .doc-tab-title {
@@ -828,7 +828,7 @@ function openResult(row: SearchResult) {
     justify-content: center;
     gap: 8px;
     color: var(--text-secondary);
-    background: #1a1d24;
+    background: var(--editor-bg);
 }
 
 .editor-empty p {

@@ -8,9 +8,11 @@ import 'element-plus/theme-chalk/dark/css-vars.css'
 import 'element-plus/es/components/message/style/css'
 import 'element-plus/es/components/message-box/style/css'
 import './styles.css'
+import { applyTheme, getCachedTheme } from './utils/theme'
 
-// 启用 Element Plus 暗色主题
-document.documentElement.classList.add('dark')
+// 应用主题（Element Plus 暗色依赖 <html> 上的 .dark 类）；
+// 启动时同步读 localStorage 缓存，避免首屏闪主题。
+applyTheme(getCachedTheme())
 
 // 禁用浏览器（WebView2）内置右键菜单：桌面应用内右键菜单由应用自身提供。
 // 用捕获阶段监听，确保在任何元素处理器（含 stopPropagation）之前就

@@ -12,14 +12,78 @@ body,
     box-sizing: border-box;
 }
 
+/* 亮色主题（默认） */
 :root {
+    --app-bg: #f2f4f8;
+    --panel-bg: #ffffff;
+    --border-color: #e3e6ee;
+    --text-primary: #2b3040;
+    --text-secondary: #767e93;
+    --text-muted: #9aa1b2;
+    --accent: #3b82f6;
+
+    --sidebar-bg: #e9edf4;
+    --hover-bg: #e3e8f1;
+    --active-bg: #dbe7ff;
+    --active-text: #2f6bdb;
+    --panel-soft: #f7f8fc;
+    --editor-bg: #ffffff;
+    --hover-strong: #e8ecf4;
+    --border-strong: #d7dce7;
+    --menu-bg: #ffffff;
+    --side-bg: #f7f8fc;
+    --badge-bg: #e9edf5;
+    --badge-active-bg: #d4e4ff;
+    --badge-active-text: #2f6bdb;
+    --tabbar-bg: #eceff5;
+    --tab-hover: #e3e8f1;
+    --tab-hover-2: #dde3ee;
+    --notes-bg: #f7f8fc;
+    --cm-btn-bg: #eceff5;
+    --card-active-bg: #e8f0ff;
+    --term-bg: #f8fafc;
+    --term-selection: #cfe0ff;
+    --overlay-bg: rgba(255, 255, 255, 0.75);
+    --scrollbar-thumb: #c5cbd9;
+    --scrollbar-thumb-hover: #adb5c7;
+
+    --term-font: 'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+}
+
+/* 暗色主题：html.dark 时覆盖（与 Element Plus 暗色类一致） */
+:root.dark {
     --app-bg: #16181d;
     --panel-bg: #1c1f26;
     --border-color: #2a2e37;
     --text-primary: #d6d9e0;
     --text-secondary: #8b90a0;
+    --text-muted: #4a5060;
     --accent: #4f8cff;
-    --term-font: 'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+
+    --sidebar-bg: #131519;
+    --hover-bg: #1e222b;
+    --active-bg: #233049;
+    --active-text: #7fb0ff;
+    --panel-soft: #1b1f27;
+    --editor-bg: #1a1d24;
+    --hover-strong: #2e3442;
+    --border-strong: #3a4152;
+    --menu-bg: #23262f;
+    --side-bg: #171a20;
+    --badge-bg: #22262f;
+    --badge-active-bg: #2c3c5c;
+    --badge-active-text: #9cc0ff;
+    --tabbar-bg: #14161b;
+    --tab-hover: #1b1e26;
+    --tab-hover-2: #2c303b;
+    --notes-bg: #161a21;
+    --cm-btn-bg: #353c4c;
+    --card-active-bg: #1d2534;
+    --term-bg: #0f1115;
+    --term-selection: #2b3a55;
+    --overlay-bg: rgba(18, 18, 24, 0.72);
+    --scrollbar-thumb: #333846;
+    --scrollbar-thumb-hover: #454c5e;
 }
 
 body {
@@ -50,12 +114,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #333846;
+    background: var(--scrollbar-thumb);
     border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #454c5e;
+    background: var(--scrollbar-thumb-hover);
 }
 
 ::-webkit-scrollbar-track {
@@ -105,7 +169,7 @@ body {
 }
 
 .ͼ3 .cm-button {
-    background: #353c4c;
+    background: var(--cm-btn-bg);
     background-image: none;
     border: none;
 }

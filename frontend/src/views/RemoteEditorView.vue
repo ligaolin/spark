@@ -145,7 +145,7 @@ watch(
   padding: 6px 10px;
   font-size: 12.5px;
   color: var(--text-secondary);
-  background: #1b1f27;
+  background: var(--panel-soft);
   border: 1px solid var(--border-color);
   border-bottom: none;
   border-radius: 6px 6px 0 0;
@@ -156,8 +156,8 @@ watch(
 }
 
 .re-tab.active {
-  background: #233049;
-  color: #7fb0ff;
+  background: var(--active-bg);
+  color: var(--active-text);
 }
 
 .re-tab-icon {

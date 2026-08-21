@@ -1,7 +1,7 @@
 <template>
     <div class="terminal-view">
         <div v-if="store.tabs.length === 0" class="empty-state">
-            <el-icon :size="44" color="#3a4152">
+            <el-icon :size="44" color="var(--border-strong)">
                 <Monitor />
             </el-icon>
             <p>还没有 SSH 会话</p>
@@ -226,7 +226,7 @@ async function onConnect(opts: ConnectOptions, save: boolean) {
 .tab-bar {
     display: flex;
     align-items: stretch;
-    background: #14161b;
+    background: var(--tabbar-bg);
     border-bottom: 1px solid var(--border-color);
     overflow-x: auto;
     flex-shrink: 0;
@@ -254,7 +254,7 @@ async function onConnect(opts: ConnectOptions, save: boolean) {
 }
 
 .tab:hover {
-    background: #1b1e26;
+    background: var(--tab-hover);
 }
 
 .tab.active {
@@ -296,7 +296,7 @@ async function onConnect(opts: ConnectOptions, save: boolean) {
 }
 
 .tab-close:hover {
-    background: #2c303b;
+    background: var(--tab-hover-2);
     color: #fff;
 }
 
@@ -311,7 +311,7 @@ async function onConnect(opts: ConnectOptions, save: boolean) {
 
 .tab-add:hover {
     color: var(--text-primary);
-    background: #1b1e26;
+    background: var(--tab-hover);
 }
 
 .tab-add.active {
@@ -402,7 +402,7 @@ async function onConnect(opts: ConnectOptions, save: boolean) {
 
 .side-close:hover {
     color: var(--text-primary);
-    background: #2c303b;
+    background: var(--tab-hover-2);
 }
 
 .side-body {

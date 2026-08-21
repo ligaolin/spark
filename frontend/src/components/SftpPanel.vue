@@ -1,7 +1,7 @@
 <template>
     <div class="sftp-panel">
         <div v-if="!opts" class="sftp-empty">
-            <el-icon :size="30" color="#3a4152">
+            <el-icon :size="30" color="var(--border-strong)">
                 <FolderOpened />
             </el-icon>
             <p>打开 SSH 会话后，此面板自动连接 SFTP</p>

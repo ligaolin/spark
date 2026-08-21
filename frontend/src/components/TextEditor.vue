@@ -198,7 +198,7 @@ defineExpose({ open })
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: rgba(18, 18, 24, 0.72);
+  background: var(--overlay-bg);
   border-radius: 6px;
   z-index: 5;
   color: var(--text-secondary);

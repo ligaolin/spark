@@ -208,6 +208,6 @@ async function saveWordWrap() {
 
 .cfg-note {
   font-size: 12px;
-  color: #4a5060;
+  color: var(--text-muted);
 }
 </style>

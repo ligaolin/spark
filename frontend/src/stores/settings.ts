@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { SettingsService } from '../utils/wails'
+import { applyTheme, cacheTheme, type Theme } from '../utils/theme'
 
 // 全局配置（存数据库 settings 表，key-value，可随时扩展）
 export const useSettingsStore = defineStore('settings', {
@@ -32,6 +33,10 @@ export const useSettingsStore = defineStore('settings', {
     editorWordWrap(state): boolean {
       return state.values['editor.wordWrap'] !== '0'
     },
+    // 明暗主题（默认暗色，保持现有行为）
+    theme(state): Theme {
+      return state.values['app.theme'] === 'light' ? 'light' : 'dark'
+    },
   },
 
   actions: {
@@ -47,6 +52,13 @@ export const useSettingsStore = defineStore('settings', {
     async set(key: string, value: string) {
       await SettingsService.Set(key, value)
       this.values[key] = value
+    },
+
+    // 切换明暗主题：持久化到数据库设置，并同步应用 + 写启动缓存
+    async setTheme(theme: Theme) {
+      await this.set('app.theme', theme)
+      applyTheme(theme)
+      cacheTheme(theme)
     },
   },
 })

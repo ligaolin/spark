@@ -2,7 +2,7 @@
   <div ref="wrapRef" class="md-editor-wrap">
     <MdEditor
       v-model="content"
-      theme="dark"
+      :theme="settings.theme === 'dark' ? 'dark' : 'light'"
       language="zh-CN"
       :preview="true"
       :toolbars="toolbars"
@@ -21,6 +21,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { MdEditor } from 'md-editor-v3'
 import type { ToolbarNames } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
+import { useSettingsStore } from '../stores/settings'
 
 const props = defineProps<{
   // 是否只读（默认可编辑）
@@ -34,6 +35,7 @@ const emit = defineEmits<{
 
 const wrapRef = ref<HTMLElement>()
 const content = ref('')
+const settings = useSettingsStore()
 
 // 常用排版工具栏（隐藏图片上传等需要后端的项）
 const toolbars: ToolbarNames[] = [
@@ -113,18 +115,18 @@ defineExpose({ setContent, getContent, focus, jumpToLine, setReadonly: (v: boole
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: #1a1d24;
+  background: var(--editor-bg);
 }
 
 .md-editor-wrap :deep(.md-editor) {
   border-radius: 0;
   --md-color: var(--text-primary);
-  --md-hover-color: #7fb0ff;
+  --md-hover-color: var(--active-text);
   --md-border-color: var(--border-color);
-  --md-background: #1a1d24;
-  --md-background-color: #1a1d24;
+  --md-background: var(--editor-bg);
+  --md-background-color: var(--editor-bg);
   --md-box-shadow: none;
-  --md-input-bg-color: #1a1d24;
+  --md-input-bg-color: var(--editor-bg);
 }
 
 .md-editor-wrap :deep(.md-editor-toolbar) {

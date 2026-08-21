@@ -111,7 +111,7 @@ const percent = computed(() => {
     margin-top: 12px;
     border: 1px solid var(--border-color);
     border-radius: 6px;
-    background: #161a21;
+    background: var(--notes-bg);
     padding: 8px 10px;
     max-height: 220px;
     overflow-y: auto;

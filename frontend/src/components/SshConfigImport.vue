@@ -242,7 +242,7 @@ async function doImport(list: SshHost[]) {
 }
 
 .sel-note {
-  color: #7fb0ff;
+  color: var(--active-text);
 }
 
 .host-name {

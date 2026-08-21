@@ -526,7 +526,7 @@ function escapeHtml(s: string) {
     flex-direction: column;
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    background: #171a20;
+    background: var(--side-bg);
     overflow: hidden;
 }
 
@@ -565,13 +565,13 @@ function escapeHtml(s: string) {
 }
 
 .group-item:hover {
-    background: #1e222b;
+    background: var(--hover-bg);
     color: var(--text-primary);
 }
 
 .group-item.active {
-    background: #233049;
-    color: #7fb0ff;
+    background: var(--active-bg);
+    color: var(--active-text);
 }
 
 .group-icon {
@@ -590,7 +590,7 @@ function escapeHtml(s: string) {
 .group-count {
     font-size: 11px;
     color: var(--text-secondary);
-    background: #22262f;
+    background: var(--badge-bg);
     border-radius: 9px;
     padding: 0 7px;
     line-height: 18px;
@@ -598,8 +598,8 @@ function escapeHtml(s: string) {
 }
 
 .group-item.active .group-count {
-    background: #2c3c5c;
-    color: #9cc0ff;
+    background: var(--badge-active-bg);
+    color: var(--badge-active-text);
 }
 
 .group-actions {
@@ -618,7 +618,7 @@ function escapeHtml(s: string) {
 }
 
 .group-actions .el-icon:hover {
-    color: #7fb0ff;
+    color: var(--active-text);
 }
 
 .group-actions .el-icon.danger:hover {

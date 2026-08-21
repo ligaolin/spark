@@ -34,7 +34,7 @@
       <el-table-column label="名称" min-width="200">
         <template #default="{ row }">
           <el-icon v-if="row.isDir" color="#e6c06c"><Folder /></el-icon>
-          <el-icon v-else color="#8b90a0"><Document /></el-icon>
+          <el-icon v-else color="var(--text-secondary)"><Document /></el-icon>
           <span class="res-name" :title="row.name">{{ row.name }}</span>
         </template>
       </el-table-column>

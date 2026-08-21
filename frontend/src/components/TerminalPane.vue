@@ -191,17 +191,29 @@ function closeTab() {
   store.removeTab(props.tab.key)
 }
 
+// xterm 主题色：随明暗主题切换
+function xtermTheme(): Record<string, string> {
+  return settings.theme === 'dark'
+    ? {
+        background: '#0f1115',
+        foreground: '#d6d9e0',
+        cursor: '#4f8cff',
+        selectionBackground: '#2b3a55',
+      }
+    : {
+        background: '#f8fafc',
+        foreground: '#2b3040',
+        cursor: '#3b82f6',
+        selectionBackground: '#cfe0ff',
+      }
+}
+
 onMounted(async () => {
   term = new Terminal({
     cursorBlink: true,
     fontSize: settings.terminalFontSize,
     fontFamily: 'Cascadia Code, JetBrains Mono, Consolas, monospace',
-    theme: {
-      background: '#0f1115',
-      foreground: '#d6d9e0',
-      cursor: '#4f8cff',
-      selectionBackground: '#2b3a55',
-    },
+    theme: xtermTheme(),
     scrollback: 8000,
   })
   fitAddon = new FitAddon()
@@ -273,6 +285,17 @@ watch(
   },
 )
 
+// 明暗主题切换后即时刷新 xterm 配色
+watch(
+  () => settings.theme,
+  () => {
+    if (term) {
+      term.options.theme = xtermTheme()
+      term.refresh(0, term.rows - 1)
+    }
+  },
+)
+
 onBeforeUnmount(() => {
   observer?.disconnect()
   unOutput?.()
@@ -287,7 +310,7 @@ onBeforeUnmount(() => {
   position: relative;
   width: 100%;
   height: 100%;
-  background: #0f1115;
+  background: var(--term-bg);
 }
 
 .term-container {
@@ -308,7 +331,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 14px;
-  background: rgba(15, 17, 21, 0.92);
+  background: var(--overlay-bg);
   color: var(--text-secondary);
   font-size: 13px;
   z-index: 10;

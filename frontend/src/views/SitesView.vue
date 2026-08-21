@@ -31,7 +31,7 @@
                             @node-contextmenu="onNodeContext" @node-drop="onNodeDrop" empty-text="暂无站点，点击上方「新建站点」">
                             <template #default="{ data }">
                                 <span class="tree-node">
-                                    <el-icon :color="data.type === 'folder' ? '#e6c06c' : '#7fb0ff'">
+                                    <el-icon :color="data.type === 'folder' ? '#e6c06c' : 'var(--active-text)'">
                                         <Folder v-if="data.type === 'folder'" />
                                         <Collection v-else />
                                     </el-icon>
@@ -73,7 +73,7 @@
                             <template v-if="selectedSite">
                                 <div class="detail-head">
                                     <div class="detail-title">
-                                        <el-icon color="#7fb0ff">
+                                        <el-icon color="var(--active-text)">
                                             <Collection />
                                         </el-icon>
                                         <span>{{ selectedSite.name }}</span>
@@ -919,7 +919,7 @@ async function openInSystemBrowser(url?: string) {
     padding: 6px 10px;
     font-size: 12.5px;
     color: var(--text-secondary);
-    background: #1b1f27;
+    background: var(--panel-soft);
     border: 1px solid var(--border-color);
     border-bottom: none;
     border-radius: 6px 6px 0 0;
@@ -929,8 +929,8 @@ async function openInSystemBrowser(url?: string) {
 }
 
 .tab.active {
-    background: #233049;
-    color: #7fb0ff;
+    background: var(--active-bg);
+    color: var(--active-text);
 }
 
 .tab-title {
@@ -947,7 +947,7 @@ async function openInSystemBrowser(url?: string) {
 }
 
 .tab-action:hover {
-    color: #7fb0ff;
+    color: var(--active-text);
     background: rgba(127, 176, 255, 0.15);
 }
 
@@ -966,7 +966,7 @@ async function openInSystemBrowser(url?: string) {
 
 .fullscreen-btn:hover,
 .fullscreen-btn.active {
-    color: #7fb0ff;
+    color: var(--active-text);
     background: rgba(127, 176, 255, 0.15);
 }
 
@@ -1063,12 +1063,12 @@ async function openInSystemBrowser(url?: string) {
 }
 
 .link-card:hover {
-    border-color: #3a4152;
+    border-color: var(--border-strong);
 }
 
 .link-card.active {
     border-color: #5b9dff;
-    background: #1d2534;
+    background: var(--card-active-bg);
 }
 
 .lc-title {
@@ -1082,7 +1082,7 @@ async function openInSystemBrowser(url?: string) {
 
 .lc-url {
     font-size: 11.5px;
-    color: #7fb0ff;
+    color: var(--active-text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1103,7 +1103,7 @@ async function openInSystemBrowser(url?: string) {
 }
 
 .account-card {
-    background: #1e222b;
+    background: var(--hover-bg);
 }
 
 .acc-actions {
@@ -1184,7 +1184,7 @@ async function openInSystemBrowser(url?: string) {
     align-items: center;
     justify-content: center;
     gap: 12px;
-    background: #1b1f27;
+    background: var(--panel-soft);
     color: var(--text-secondary);
     font-size: 12.5px;
 }
