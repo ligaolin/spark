@@ -53,6 +53,19 @@ jobs:
           sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;26.3.11579264"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> "$GITHUB_ENV"
 
+      - name: Install Linux GUI dependencies (for wails3 CLI)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libgtk-4-dev \
+            libwebkitgtk-6.0-dev \
+            libglib2.0-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            patchelf
+
       - name: Install wails3 + task CLI
         run: |
           go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.4

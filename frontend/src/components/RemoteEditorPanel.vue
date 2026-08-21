@@ -21,7 +21,7 @@
                         <el-button v-if="canChmod" size="small" text title="修改权限" :disabled="!canOperateSelected" @click="chmodNode">
                             <el-icon><Lock /></el-icon>
                         </el-button>
-                        <el-button size="small" text title="刷新目录" @click="refreshRoot">
+                        <el-button size="small" text title="刷新当前目录" @click="refreshCurrent">
                             <el-icon><Refresh /></el-icon>
                         </el-button>
                     </div>
@@ -274,6 +274,16 @@ function reloadDir(path: string) {
     if (node.expanded) node.expand()
 }
 
+// 刷新「当前上下文」：选中目录 → 只刷新该目录；选中文件 → 刷新其父目录；未选中 → 整棵树刷新
+function refreshCurrent() {
+    const n = selectedNode.value
+    if (n) {
+        reloadDir(n.isDir ? n.path : parentDir(n.path, props.backend.sep))
+    } else {
+        refreshRoot()
+    }
+}
+
 // 检查目标目录下是否已存在同名条目，避免新建文件时静默覆盖已有文件
 async function nameExists(dir: string, name: string): Promise<boolean> {
     try {
@@ -431,6 +441,9 @@ function buildMenu(data: TreeNode | null): (CtxItem | 'divider')[] {
         'divider',
     ]
     if (!isRoot) {
+        if (data.isDir) {
+            items.push({ key: 'refresh', label: '刷新', icon: Refresh })
+        }
         items.push({ key: 'rename', label: '重命名', icon: Edit })
         if (props.backend.chmod) {
             items.push({ key: 'chmod', label: '修改权限', icon: Lock })
@@ -475,7 +488,7 @@ async function onCtxPick(item: CtxItem) {
             await removeNode()
             break
         case 'refresh':
-            refreshRoot()
+            refreshCurrent()
             break
     }
 }
