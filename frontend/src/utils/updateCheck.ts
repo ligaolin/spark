@@ -69,6 +69,7 @@ export async function checkForUpdates(silent = false): Promise<void> {
     if (!info.hasUpdate) {
       if (!silent) {
         ElMessage.success(`当前已是最新版本（${info.current}）`)
+        updateState.visible = false
       }
       return
     }
