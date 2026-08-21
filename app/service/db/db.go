@@ -3,10 +3,12 @@ package db
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	oracle "github.com/godoes/gorm-oracle"
 	"github.com/glebarez/sqlite"
+	"github.com/wailsapp/wails/v3/pkg/application"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlserver"
@@ -16,8 +18,19 @@ import (
 var db *gorm.DB
 
 func InitDB() (err error) {
-	db, err = gorm.Open(sqlite.Open("gorm.db"), &gorm.Config{})
+	db, err = gorm.Open(sqlite.Open(dataSourcePath()), &gorm.Config{})
 	return err
+}
+
+// dataSourcePath returns the SQLite file path. On mobile (Android/iOS) the
+// process working directory is "/" and is not writable, so the database must
+// live in the app's private files directory; elsewhere it keeps the historical
+// relative "gorm.db" in the current directory.
+func dataSourcePath() string {
+	if dir := application.Mobile.StoragePath(); dir != "" {
+		return filepath.Join(dir, "gorm.db")
+	}
+	return "gorm.db"
 }
 
 // Reconnect switches the global database to the given dialect + DSN
