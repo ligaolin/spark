@@ -6,11 +6,26 @@
                 <div class="rep-tree">
                     <div class="rep-tree-head">
                         <span class="rep-root" :title="rootPath">{{ rootPath }}</span>
+                        <el-button size="small" text title="新建文件" @click="createFile">
+                            <el-icon><DocumentAdd /></el-icon>
+                        </el-button>
+                        <el-button size="small" text title="新建目录" @click="mkdir">
+                            <el-icon><FolderAdd /></el-icon>
+                        </el-button>
+                        <el-button size="small" text title="重命名" :disabled="!canOperateSelected" @click="renameNode">
+                            <el-icon><Edit /></el-icon>
+                        </el-button>
+                        <el-button size="small" text title="删除" :disabled="!canOperateSelected" @click="removeNode">
+                            <el-icon><Delete /></el-icon>
+                        </el-button>
+                        <el-button v-if="canChmod" size="small" text title="修改权限" :disabled="!canOperateSelected" @click="chmodNode">
+                            <el-icon><Lock /></el-icon>
+                        </el-button>
                         <el-button size="small" text title="刷新目录" @click="refreshRoot">
                             <el-icon><Refresh /></el-icon>
                         </el-button>
                     </div>
-                    <div class="rep-tree-body">
+                    <div class="rep-tree-body" @contextmenu.prevent="onBlankContextMenu">
                         <el-tree
                             :key="treeVersion"
                             ref="treeRef"
@@ -22,6 +37,7 @@
                             highlight-current
                             :expand-on-click-node="true"
                             @node-click="onNodeClick"
+                            @node-contextmenu="onNodeContextMenu"
                         >
                             <template #default="{ data }">
                                 <span class="rep-tree-node">
@@ -78,18 +94,33 @@
                 </div>
             </el-splitter-panel>
         </el-splitter>
+
+        <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
     </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Folder, Document, Close, Refresh, Loading } from '@element-plus/icons-vue'
+import {
+    Folder,
+    Document,
+    Close,
+    Refresh,
+    Loading,
+    DocumentAdd,
+    FolderAdd,
+    Edit,
+    Delete,
+    Lock,
+} from '@element-plus/icons-vue'
 import CodeEditor from './CodeEditor.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
-import { showConfirmDialog } from '../utils/dialog'
+import ContextMenu from './ContextMenu.vue'
+import type { CtxItem } from './ContextMenu.vue'
+import { showConfirmDialog, showInputDialog } from '../utils/dialog'
 import { useSettingsStore } from '../stores/settings'
-import type { FileBackend } from '../utils/fileBackend'
+import { parentDir, joinPath, type FileBackend } from '../utils/fileBackend'
 
 // 两个编辑器组件暴露同一套操作方法
 interface EditorApi {
@@ -124,6 +155,35 @@ const loadingFile = ref(false)
 const editorRefs = ref<Record<string, EditorApi | null>>({})
 
 const activeFile = computed(() => openFiles.value.find((f) => f.key === activeKey.value) ?? null)
+
+// ---------- 目录树操作（新建文件 / 新建目录 / 重命名 / 删除 / 改权限 / 刷新） ----------
+
+interface TreeNode {
+    path: string
+    name: string
+    isDir: boolean
+}
+
+// 当前选中的树节点；未选中时操作针对根目录
+const selectedNode = ref<TreeNode | null>(null)
+// 右键菜单状态
+const ctxVisible = ref(false)
+const ctxX = ref(0)
+const ctxY = ref(0)
+const ctxItems = ref<(CtxItem | 'divider')[]>([])
+
+// FTP 后端没有 chmod 能力（仅 SFTP 提供）
+const canChmod = computed(() => !!props.backend.chmod)
+// 重命名 / 删除 / 改权限：需要一个非根节点的选中项
+const canOperateSelected = computed(
+    () => !!selectedNode.value && selectedNode.value.path !== props.rootPath,
+)
+// 新建文件 / 新建目录的落点：选中目录 → 该目录；选中文件 → 其父目录；未选中 → 根目录
+const currentDir = computed(() => {
+    const n = selectedNode.value
+    if (!n) return props.rootPath
+    return n.isDir ? n.path : parentDir(n.path, props.backend.sep)
+})
 
 function setEditorRef(key: string, el: EditorApi | null) {
     editorRefs.value[key] = el
@@ -188,14 +248,235 @@ async function expandRoot() {
 
 function refreshRoot() {
     treeVersion.value++
+    selectedNode.value = null // 整树重建，清空已失效的选中引用
     void expandRoot()
 }
 
 onMounted(expandRoot)
 
 function onNodeClick(data: any) {
+    selectedNode.value = { path: data.path, name: data.name, isDir: data.isDir }
     if (!data.isDir) {
         void openFile({ path: data.path, name: data.name })
+    }
+}
+
+// 重新加载某个目录节点的子级（懒加载树）。节点不在当前已加载集合中时，
+// 回退为整体刷新（重新挂树并展开根目录）。
+function reloadDir(path: string) {
+    const tree = treeRef.value as any
+    const node = tree?.getNode?.(path)
+    if (!node) {
+        refreshRoot()
+        return
+    }
+    node.loaded = false
+    if (node.expanded) node.expand()
+}
+
+// 检查目标目录下是否已存在同名条目，避免新建文件时静默覆盖已有文件
+async function nameExists(dir: string, name: string): Promise<boolean> {
+    try {
+        const list = await props.backend.list(dir)
+        return (list ?? []).some((e) => e.name === name)
+    } catch {
+        return false // 列目录失败时不拦截，交给后端报错
+    }
+}
+
+async function createFile() {
+    const values = await showInputDialog('新建文件', [{ key: 'name', label: '文件名称' }])
+    if (!values) return
+    const name = values.name.trim()
+    if (!name) return
+    const dir = currentDir.value
+    if (await nameExists(dir, name)) {
+        ElMessage.warning(`「${name}」已存在`)
+        return
+    }
+    const target = joinPath(dir, name, props.backend.sep)
+    try {
+        await props.backend.writeFile(target, '')
+        ElMessage.success('已创建')
+        await reloadDir(dir)
+    } catch (e: any) {
+        ElMessage.error(`创建文件失败：${e?.message || e}`)
+    }
+}
+
+async function mkdir() {
+    const values = await showInputDialog('新建目录', [{ key: 'name', label: '目录名称' }])
+    if (!values) return
+    const name = values.name.trim()
+    if (!name) return
+    const dir = currentDir.value
+    if (await nameExists(dir, name)) {
+        ElMessage.warning(`「${name}」已存在`)
+        return
+    }
+    const target = joinPath(dir, name, props.backend.sep)
+    try {
+        await props.backend.mkdir(target)
+        ElMessage.success('已创建')
+        await reloadDir(dir)
+    } catch (e: any) {
+        ElMessage.error(`创建目录失败：${e?.message || e}`)
+    }
+}
+
+async function renameNode() {
+    const n = selectedNode.value
+    if (!n || n.path === props.rootPath) {
+        ElMessage.warning('请先选择要重命名的文件或目录')
+        return
+    }
+    const values = await showInputDialog('重命名', [{ key: 'name', label: '新名称', initial: n.name }])
+    if (!values) return
+    const name = values.name.trim()
+    if (!name || name === n.name) return
+    const dir = parentDir(n.path, props.backend.sep)
+    const target = joinPath(dir, name, props.backend.sep)
+    try {
+        await props.backend.rename(n.path, target)
+        // 若被重命名的文件正打开着，同步更新标签与编辑器实例的 key
+        const open = openFiles.value.find((f) => f.key === n.path)
+        if (open) {
+            editorRefs.value[target] = editorRefs.value[n.path]
+            delete editorRefs.value[n.path]
+            open.key = target
+            open.path = target
+            open.name = name
+            if (activeKey.value === n.path) activeKey.value = target
+        }
+        selectedNode.value = { path: target, name, isDir: n.isDir }
+        ElMessage.success('已重命名')
+        await reloadDir(dir)
+    } catch (e: any) {
+        ElMessage.error(`重命名失败：${e?.message || e}`)
+    }
+}
+
+async function removeNode() {
+    const n = selectedNode.value
+    if (!n || n.path === props.rootPath) {
+        ElMessage.warning('请先选择要删除的文件或目录')
+        return
+    }
+    const tip = n.isDir
+        ? `确定删除目录「${n.name}」及其全部内容？`
+        : `确定删除文件「${n.name}」？`
+    const ok = await showConfirmDialog('删除', tip, true, '删除')
+    if (!ok) return
+    try {
+        await props.backend.remove(n.path, n.isDir)
+        // 关闭已删除文件的标签（不询问未保存）
+        const idx = openFiles.value.findIndex((f) => f.key === n.path)
+        if (idx >= 0) {
+            const f = openFiles.value[idx]
+            openFiles.value.splice(idx, 1)
+            delete editorRefs.value[f.key]
+            if (activeKey.value === f.key) {
+                activeKey.value = openFiles.value[idx]?.key ?? openFiles.value[idx - 1]?.key ?? null
+            }
+        }
+        selectedNode.value = null
+        ElMessage.success('已删除')
+        await reloadDir(parentDir(n.path, props.backend.sep))
+    } catch (e: any) {
+        ElMessage.error(`删除失败：${e?.message || e}`)
+    }
+}
+
+async function chmodNode() {
+    const n = selectedNode.value
+    if (!n || n.path === props.rootPath) {
+        ElMessage.warning('请先选择要修改权限的文件或目录')
+        return
+    }
+    if (!props.backend.chmod) return
+    const values = await showInputDialog('修改权限', [
+        { key: 'mode', label: '八进制权限（如 755）', initial: '755' },
+    ])
+    if (!values) return
+    const mode = parseInt(values.mode.trim(), 8)
+    if (isNaN(mode)) {
+        ElMessage.error('权限格式不正确')
+        return
+    }
+    try {
+        await props.backend.chmod!(n.path, mode)
+        ElMessage.success('已修改')
+        await reloadDir(parentDir(n.path, props.backend.sep))
+    } catch (e: any) {
+        ElMessage.error(`修改权限失败：${e?.message || e}`)
+    }
+}
+
+// ---------- 目录树右键菜单 ----------
+
+function openCtx(e: MouseEvent) {
+    ctxX.value = e.clientX
+    ctxY.value = e.clientY
+    ctxVisible.value = false
+    requestAnimationFrame(() => {
+        ctxVisible.value = true
+    })
+}
+
+function buildMenu(data: TreeNode | null): (CtxItem | 'divider')[] {
+    const isRoot = !data || (data.isDir && data.path === props.rootPath)
+    const items: (CtxItem | 'divider')[] = [
+        { key: 'create-file', label: '新建文件', icon: DocumentAdd },
+        { key: 'mkdir', label: '新建目录', icon: FolderAdd },
+        'divider',
+    ]
+    if (!isRoot) {
+        items.push({ key: 'rename', label: '重命名', icon: Edit })
+        if (props.backend.chmod) {
+            items.push({ key: 'chmod', label: '修改权限', icon: Lock })
+        }
+        items.push({ key: 'remove', label: '删除', icon: Delete, danger: true })
+    } else {
+        items.push({ key: 'refresh', label: '刷新', icon: Refresh })
+    }
+    return items
+}
+
+function onNodeContextMenu(event: MouseEvent, data: any) {
+    event.preventDefault()
+    event.stopPropagation()
+    selectedNode.value = { path: data.path, name: data.name, isDir: data.isDir }
+    ctxItems.value = buildMenu(selectedNode.value)
+    openCtx(event)
+}
+
+function onBlankContextMenu(event: MouseEvent) {
+    event.preventDefault()
+    selectedNode.value = null
+    ctxItems.value = buildMenu(null)
+    openCtx(event)
+}
+
+async function onCtxPick(item: CtxItem) {
+    switch (item.key) {
+        case 'create-file':
+            await createFile()
+            break
+        case 'mkdir':
+            await mkdir()
+            break
+        case 'rename':
+            await renameNode()
+            break
+        case 'chmod':
+            await chmodNode()
+            break
+        case 'remove':
+            await removeNode()
+            break
+        case 'refresh':
+            refreshRoot()
+            break
     }
 }
 
@@ -330,7 +611,8 @@ defineExpose({ openPath, confirmClose, hasDirty: () => openFiles.value.some((f) 
 .rep-tree-head {
     display: flex;
     align-items: center;
-    gap: 4px;
+    flex-wrap: wrap;
+    gap: 2px;
     padding: 4px 6px;
     border-bottom: 1px solid var(--border-color);
     flex-shrink: 0;
