@@ -7,6 +7,9 @@ vars:
   APP_ID: '{{.APP_ID | default "com.wails.app"}}'
   MIN_SDK: '21'
   TARGET_SDK: '35'
+  # 应用版本：通过 `task android:package VERSION=x.y.z` 注入到 Go 端
+  # （设置 → 关于 显示），GitHub Release 构建时由工作流传入 tag 版本。
+  VERSION: '{{.VERSION | default "dev"}}'
   # The emulator runs the host architecture; physical devices are arm64
   HOST_ARCH:
     sh: '[ "$(uname -m)" = "x86_64" ] && echo "amd64" || echo "arm64"'
@@ -110,7 +113,7 @@ tasks:
         go build -buildmode=c-shared -overlay build/android/overlay.json {{.BUILD_FLAGS}} \
           -o build/android/app/src/main/jniLibs/$JNI_DIR/libwails.so
     vars:
-      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,android -trimpath -buildvcs=false -ldflags="-w -s"{{else}}-tags android,debug -buildvcs=false -gcflags=all="-l"{{end}}'
+      BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,android -trimpath -buildvcs=false -ldflags="-w -s -X changeme/app/service/version.Version={{.VERSION}}"{{else}}-tags android,debug -buildvcs=false -gcflags=all="-l"{{end}}'
 
   compile:go:all-archs:
     summary: Compile Go code for all Android architectures (fat APK)

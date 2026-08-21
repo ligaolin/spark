@@ -22,6 +22,7 @@ import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.util.Log;
+import android.view.View;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -31,6 +32,9 @@ import android.webkit.WebViewClient;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.webkit.WebViewAssetLoader;
 
 import org.json.JSONObject;
@@ -92,8 +96,26 @@ public class MainActivity extends AppCompatActivity {
         // Set up WebView
         setupWebView();
 
+        // Inset the WebView container by the system-bar insets so the UI never
+        // renders underneath the status bar / navigation bar / display cutout.
+        applySystemBarInsets();
+
         // Load the application
         loadApplication();
+    }
+
+    /**
+     * targetSdk 35 forces edge-to-edge on Android 15+, which draws the app
+     * behind the status/navigation bars. Pad the root container by the actual
+     * system-bar insets so the WebView content sits inside the safe area.
+     */
+    private void applySystemBarInsets() {
+        final View root = findViewById(R.id.main_container);
+        ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
+            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return WindowInsetsCompat.CONSUMED;
+        });
     }
 
     @SuppressLint("SetJavaScriptEnabled")

@@ -213,3 +213,8 @@ body {
 .el-tree{
     background: none !important;
 }
+
+.el-tabs__content{
+    overflow: auto !important;
+    padding: 10px 5px;
+}

@@ -92,7 +92,7 @@ jobs:
           echo "ANDROID_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}" >> "$GITHUB_ENV"
 
       - name: Build Android APK (arm64)
-        run: task android:package
+        run: task android:package VERSION=${{ env.VERSION }}
 
       - name: Rename artifact
         run: mv bin/spark.apk "Spark-${{ env.VERSION }}-android-arm64.apk"
