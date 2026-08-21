@@ -72,6 +72,7 @@ import { useShortcutsStore, eventToCombo } from './stores/shortcuts'
 import { useSettingsStore } from './stores/settings'
 import { applyTheme, cacheTheme } from './utils/theme'
 import { emit } from './utils/bus'
+import { isAndroidApp } from './utils/platform'
 import { checkForUpdates } from './utils/updateCheck'
 
 const route = useRoute()
@@ -158,10 +159,13 @@ onMounted(() => {
     cacheTheme(settings.theme)
   })
   window.addEventListener('keydown', onKeyDown)
-  // 启动后延迟检查 GitHub 新版本：有新版时弹窗提示可点击下载更新
-  setTimeout(() => {
-    void checkForUpdates(true)
-  }, 1500)
+  // 启动后延迟检查 GitHub 新版本：有新版时弹窗提示可点击下载更新。
+  // 安卓端无此功能（下载的是 Windows 安装包），跳过。
+  if (!isAndroidApp()) {
+    setTimeout(() => {
+      void checkForUpdates(true)
+    }, 1500)
+  }
 })
 
 onBeforeUnmount(() => {

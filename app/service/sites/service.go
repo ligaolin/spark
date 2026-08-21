@@ -303,6 +303,11 @@ func (s *SiteService) OpenInBrowser(url string) error {
 	if url == "" {
 		return errors.New("链接地址不能为空")
 	}
+	// 移动端没有桌面浏览器辅助命令（xdg-open / open），用原生 intent/scheme 打开。
+	if application.System.IsMobile() {
+		application.Mobile.OpenURL(url)
+		return nil
+	}
 	return application.Get().Browser.OpenURL(url)
 }
 

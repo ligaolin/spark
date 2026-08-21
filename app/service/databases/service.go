@@ -17,6 +17,7 @@ import (
 	"changeme/app/service/db"
 	"changeme/app/service/secure"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -99,8 +100,14 @@ func (c DatabaseConfig) DSN() string {
 }
 
 func configPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
+	// On mobile the OS user-config/home dirs (e.g. /sdcard) are not writable;
+	// use the app's private files directory instead (mirrors db.dataSourcePath).
+	var dir string
+	if mobile := application.Mobile.StoragePath(); mobile != "" {
+		dir = mobile
+	} else if d, err := os.UserConfigDir(); err == nil {
+		dir = d
+	} else {
 		home, _ := os.UserHomeDir()
 		dir = home
 	}

@@ -14,6 +14,7 @@ import (
 
 	"changeme/app/service/types"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
 	xssh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -48,8 +49,14 @@ func (e *HostKeyRevokedError) Error() string {
 
 // KnownHostsPath returns the path of the app's known_hosts file.
 func KnownHostsPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
+	// On mobile the OS user-config/home dirs (e.g. /sdcard) are not writable;
+	// use the app's private files directory instead.
+	var dir string
+	if mobile := application.Mobile.StoragePath(); mobile != "" {
+		dir = mobile
+	} else if d, err := os.UserConfigDir(); err == nil {
+		dir = d
+	} else {
 		home, _ := os.UserHomeDir()
 		dir = home
 	}
