@@ -125,6 +125,21 @@ func (l *LocalService) PickDirectory() (string, error) {
 		PromptForSingleSelection()
 }
 
+// DefaultDownloadDir returns the user's Downloads folder (falls back to the
+// home directory). Used as the save location when the user cancels the
+// directory picker during a download.
+func (l *LocalService) DefaultDownloadDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, "Downloads")
+	if st, err := os.Stat(dir); err == nil && st.IsDir() {
+		return dir, nil
+	}
+	return home, nil
+}
+
 // PickSaveFile opens a native save dialog with a suggested filename.
 func (l *LocalService) PickSaveFile(defaultName string) (string, error) {
 	return application.Get().Dialog.SaveFile().

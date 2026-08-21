@@ -40,7 +40,7 @@
     <div v-else class="re-empty">
       <el-icon :size="40"><EditPen /></el-icon>
       <p>还没有打开的编辑器板块</p>
-      <p class="sub">在「SFTP 文件」或「FTP 文件」页：右键目录选「用编辑器打开目录」，或双击文件</p>
+      <p class="sub">在「FTP 文件」页（或 /sftp 独立页）：右键目录选「用编辑器打开目录」，或双击文件</p>
     </div>
   </div>
 </template>

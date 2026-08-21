@@ -13,7 +13,7 @@ export interface ShortcutAction {
 export const SHORTCUT_DEFAULTS: ShortcutAction[] = [
   { id: 'nav.connections', label: '打开连接管理', hint: '切换到连接管理页', defaultKey: 'Ctrl+1', key: 'Ctrl+1' },
   { id: 'nav.terminal', label: '打开 SSH 终端', hint: '切换到 SSH 终端页', defaultKey: 'Ctrl+2', key: 'Ctrl+2' },
-  { id: 'nav.sftp', label: '打开 SFTP 文件', hint: '切换到 SFTP 文件页', defaultKey: 'Ctrl+3', key: 'Ctrl+3' },
+  { id: 'nav.sftp', label: '打开 SFTP 面板', hint: '在 SSH 终端右侧打开 SFTP 文件面板', defaultKey: 'Ctrl+3', key: 'Ctrl+3' },
   { id: 'nav.ftp', label: '打开 FTP 文件', hint: '切换到 FTP 文件页', defaultKey: 'Ctrl+4', key: 'Ctrl+4' },
   { id: 'nav.documents', label: '打开文档管理', hint: '切换到文档管理页', defaultKey: 'Ctrl+5', key: 'Ctrl+5' },
   { id: 'nav.sites', label: '打开站点管理', hint: '切换到站点管理页', defaultKey: 'Ctrl+6', key: 'Ctrl+6' },

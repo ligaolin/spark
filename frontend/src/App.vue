@@ -36,6 +36,8 @@
     </div>
     <!-- 页面内弹窗宿主（InputDialog / ConfirmDialog） -->
     <DialogHost />
+    <!-- 新版本检查 / 下载弹窗 -->
+    <UpdateDialog />
   </el-config-provider>
 </template>
 
@@ -44,11 +46,13 @@ import { onBeforeUnmount, onMounted } from 'vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { useRoute, useRouter } from 'vue-router'
 import { Window } from '@wailsio/runtime'
-import { Monitor, FolderOpened, Connection, Link, Setting, Notebook, Collection, EditPen } from '@element-plus/icons-vue'
+import { Monitor, Connection, Link, Setting, Notebook, Collection, EditPen } from '@element-plus/icons-vue'
 import DialogHost from './components/DialogHost.vue'
+import UpdateDialog from './components/UpdateDialog.vue'
 import { useShortcutsStore, eventToCombo } from './stores/shortcuts'
 import { useSettingsStore } from './stores/settings'
 import { emit } from './utils/bus'
+import { checkForUpdates } from './utils/updateCheck'
 
 const route = useRoute()
 const router = useRouter()
@@ -58,7 +62,7 @@ const settings = useSettingsStore()
 const menu = [
   { path: '/connections', label: '连接管理', icon: Connection },
   { path: '/terminal', label: 'SSH 终端', icon: Monitor },
-  { path: '/sftp', label: 'SFTP 文件', icon: FolderOpened },
+  // SFTP 已并入 SSH 终端右侧面板（SFTP 文件页），不再单独列在侧边栏
   { path: '/ftp', label: 'FTP 文件', icon: Link },
   { path: '/documents', label: '文档管理', icon: Notebook },
   { path: '/sites', label: '站点管理', icon: Collection },
@@ -85,7 +89,8 @@ function onKeyDown(e: KeyboardEvent) {
       router.push('/terminal')
       break
     case 'nav.sftp':
-      router.push('/sftp')
+      router.push('/terminal')
+      emit('terminal:show-sftp')
       break
     case 'nav.ftp':
       router.push('/ftp')
@@ -116,6 +121,10 @@ onMounted(() => {
   shortcuts.load()
   settings.load()
   window.addEventListener('keydown', onKeyDown)
+  // 启动后延迟检查 GitHub 新版本：有新版时弹窗提示可点击下载更新
+  setTimeout(() => {
+    void checkForUpdates(true)
+  }, 1500)
 })
 
 onBeforeUnmount(() => {

@@ -118,14 +118,11 @@
                             <el-tag v-else size="small" type="info" effect="plain">密码</el-tag>
                         </template>
                     </el-table-column>
-                    <el-table-column label="操作" align="right" width="260">
+                    <el-table-column label="操作" align="right" width="180">
                         <template #default="{ row }">
                             <div class="conn-actions">
-                                <template v-if="row.type === 'ssh'">
-                                    <el-button size="small" type="primary" plain
-                                        @click="openTerminal(row)">终端</el-button>
-                                    <el-button size="small" @click="openSftp(row)">SFTP</el-button>
-                                </template>
+                                <el-button v-if="row.type === 'ssh'" size="small" type="primary" plain
+                                    @click="openTerminal(row)">ssh</el-button>
                                 <el-button v-else size="small" @click="openFtp(row)">FTP</el-button>
                                 <el-button size="small" @click="openEdit(row)">编辑</el-button>
                                 <el-button size="small" type="danger" plain @click="remove(row)">删除</el-button>
@@ -415,14 +412,10 @@ function connToOpts(conn: SavedConnection): ConnectOptions {
 }
 
 function openTerminal(conn: SavedConnection) {
-    termStore.addTab(connToOpts(conn))
+    termStore.addTab(connToOpts(conn), conn.id ?? undefined)
+    // 通知终端页：展开右侧面板并切到 SFTP 页（打开 SSH 默认两个都打开）
+    sessionStorage.setItem('spark:open-terminal-panel', '1')
     router.push('/terminal')
-}
-
-function openSftp(conn: SavedConnection) {
-    // 通过 sessionStorage 传递“打开即连接”的意图，由 SFTP 视图消费
-    sessionStorage.setItem('spark:auto-connect', JSON.stringify({ mode: 'sftp', conn }))
-    router.push('/sftp')
 }
 
 function openFtp(conn: SavedConnection) {

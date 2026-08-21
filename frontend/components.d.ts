@@ -54,9 +54,11 @@ declare module 'vue' {
     RouterView: typeof import('vue-router')['RouterView']
     SearchDialog: typeof import('./src/components/SearchDialog.vue')['default']
     ServerInfoView: typeof import('./src/components/ServerInfoView.vue')['default']
+    SftpPanel: typeof import('./src/components/SftpPanel.vue')['default']
     SshConfigImport: typeof import('./src/components/SshConfigImport.vue')['default']
     TerminalPane: typeof import('./src/components/TerminalPane.vue')['default']
     TextEditor: typeof import('./src/components/TextEditor.vue')['default']
     TransferDock: typeof import('./src/components/TransferDock.vue')['default']
+    UpdateDialog: typeof import('./src/components/UpdateDialog.vue')['default']
   }
 }

@@ -178,7 +178,20 @@
                             <div class="browser-frames">
                                 <div v-for="tab in browserTabs" :key="tab.key" v-show="tab.key === activeTabKey"
                                     class="frame-wrap">
-                                    <iframe :src="iframeSrc(tab.url)" class="browser-frame" />
+                                    <!-- 忽略证书时：代理地址解析完成前不挂载 iframe，
+                                         避免先用原始地址加载（证书错误）再切换导致空白/残留错误页 -->
+                                    <iframe v-if="frameSrc(tab.url)" :src="frameSrc(tab.url)" class="browser-frame" />
+                                    <div v-else-if="ignoreCert && !proxyError[tab.url]" class="frame-loading">
+                                        <el-icon class="is-loading" :size="22"><Loading /></el-icon>
+                                        <span>正在通过本地代理打开（忽略证书）…</span>
+                                    </div>
+                                    <div v-else-if="ignoreCert && proxyError[tab.url]" class="frame-loading">
+                                        <el-icon :size="22" color="#f56c6c"><CircleCloseFilled /></el-icon>
+                                        <span>代理打开失败：{{ proxyError[tab.url] }}</span>
+                                        <el-button size="small" type="primary" @click="openInSystemBrowser(tab.url)">
+                                            在系统浏览器打开
+                                        </el-button>
+                                    </div>
                                 </div>
                             </div>
                             <div v-if="ignoreCert" class="proxy-badge">
@@ -195,7 +208,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Clipboard } from '@wailsio/runtime'
 import {
@@ -212,6 +225,8 @@ import {
     Close,
     TopRight,
     FullScreen,
+    Loading,
+    CircleCloseFilled,
 } from '@element-plus/icons-vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
@@ -251,22 +266,37 @@ let tabSeq = 0
 // 忽略证书：开启后内嵌浏览器走本地代理（后端忽略 TLS 证书校验抓取页面），
 // SSL 证书无效 / 自签名 / 过期的站点也能打开。
 const ignoreCert = ref(false)
-// 原始 URL -> 代理 URL 缓存（ProxyUrl 为异步调用）
+// 原始 URL -> 代理 URL 缓存（ProxyUrl 为异步调用，解析前不挂载 iframe）
 const proxyCache = reactive<Record<string, string>>({})
+// 原始 URL -> 代理启动失败原因（打开失败时给出错误提示与浏览器打开兜底）
+const proxyError = reactive<Record<string, string>>({})
 
-function iframeSrc(raw: string): string {
+// 代理地址解析完成后才返回（未就绪返回 ''，模板据此不渲染 iframe）
+function frameSrc(raw: string): string {
     if (!ignoreCert.value) return raw
-    const cached = proxyCache[raw]
-    if (cached) return cached
+    return proxyCache[raw] || ''
+}
+
+// 主动解析代理地址（开启忽略证书后立即解析所有已打开标签，切换标签即时可用）
+function resolveProxy(raw: string) {
+    if (!ignoreCert.value || proxyCache[raw] || proxyError[raw]) return
     SiteService.ProxyUrl(raw)
         .then((u) => {
             if (u) proxyCache[raw] = u
         })
         .catch((e: any) => {
-            ElMessage.error(`开启忽略证书失败：${e?.message || e}`)
+            proxyError[raw] = e?.message || String(e)
         })
-    return raw
 }
+
+watch(
+    () => [ignoreCert.value, browserTabs.value.map((t) => t.url)] as [boolean, string[]],
+    () => {
+        if (!ignoreCert.value) return
+        for (const url of browserTabs.value.map((t) => t.url)) resolveProxy(url)
+    },
+    { immediate: true },
+)
 
 const showPass = reactive<Record<number, boolean>>({})
 
@@ -1144,6 +1174,19 @@ async function openInSystemBrowser(url?: string) {
 .frame-wrap {
     position: absolute;
     inset: 0;
+}
+
+.frame-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: #1b1f27;
+    color: var(--text-secondary);
+    font-size: 12.5px;
 }
 
 .browser-frame {

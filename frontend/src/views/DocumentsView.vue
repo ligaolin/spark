@@ -103,11 +103,14 @@
                         </div>
 
                         <div class="editor-area">
+                            <!-- 编辑器按文档类型（kind）选择：md → Markdown 编辑器，
+                                 其余类型默认走代码编辑器。以后新增类型在 utils/fileKind.ts
+                                 加扩展名映射，并在此增加对应编辑器的渲染分支 -->
                             <div v-for="t in tabs" v-show="t.key === activeKey" :key="t.key" class="doc-pane">
-                                <CodeEditor v-if="t.kind !== 'md'" :filename="t.name" :wrap="settings.editorWordWrap"
-                                    :ref="(el: any) => setEditorRef(t.key, el)" @change="(v: string) => onChange(t, v)"
-                                    @save="save" />
-                                <MarkdownEditor v-else :ref="(el: any) => setEditorRef(t.key, el)"
+                                <MarkdownEditor v-if="t.kind === 'md'" :ref="(el: any) => setEditorRef(t.key, el)"
+                                    @change="(v: string) => onChange(t, v)" @save="save" />
+                                <CodeEditor v-else :filename="t.name" :wrap="settings.editorWordWrap"
+                                    :ref="(el: any) => setEditorRef(t.key, el)"
                                     @change="(v: string) => onChange(t, v)" @save="save" />
                             </div>
                             <div v-if="!tabs.length" class="editor-empty">
@@ -146,6 +149,7 @@ import MarkdownEditor from '../components/MarkdownEditor.vue'
 import { DocumentService } from '../utils/wails'
 import type { DocNode } from '../utils/wails'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
+import { kindForName } from '../utils/fileKind'
 import { useSettingsStore } from '../stores/settings'
 import type { SearchResult } from '../types'
 
@@ -172,7 +176,8 @@ interface DocTab {
     id: number
     name: string
     path: string
-    kind: 'text' | 'md'
+    // 文档类型（'text' | 'md'，未来可扩展）：决定用哪个编辑器渲染
+    kind: string
     original: string
     dirty: boolean
 }
@@ -236,7 +241,7 @@ const treeData = computed<TreeNode[]>(() => {
             parentId: n.parentId,
             name: n.name,
             type: n.type,
-            kind: n.kind === 'md' ? 'md' : 'text',
+            kind: n.kind || kindForName(n.name),
             children: [],
         })
     }
@@ -293,29 +298,14 @@ function toolbarCreate(type: 'file' | 'folder') {
 
 async function createNode(type: 'file' | 'folder', parentId = 0) {
     const label = type === 'file' ? '新建文件' : '新建文件夹'
-    const values = await showInputDialog(label, [
-        { key: 'name', label: '名称' },
-        ...(type === 'file'
-            ? [
-                  {
-                      key: 'kind',
-                      label: '文件类型',
-                      type: 'select' as const,
-                      options: [
-                          { label: '文本文件', value: 'text' },
-                          { label: 'Markdown 文档（可排版预览）', value: 'md' },
-                      ],
-                      initial: 'text',
-                  },
-              ]
-            : []),
-    ])
+    // 文件类型无需专门选择：由文件名扩展名决定（.md → Markdown 编辑器）
+    const values = await showInputDialog(label, [{ key: 'name', label: '名称' }])
     if (!values) return
     const name = values.name.trim()
     if (!name) return
-    const kind = values.kind || 'text'
     try {
-        const created = await DocumentService.Create(parentId, name, type, kind)
+        // 文件类型由后端按扩展名自动判定（.md → Markdown），无需前端传类型
+        const created = await DocumentService.Create(parentId, name, type)
         await reload()
         if (created.type === 'file') {
             await openDocument(created)
@@ -349,7 +339,7 @@ async function renameNode(node: { id: number; name: string; type: string }) {
             if (fresh) {
                 const old = tabs.value[tabIdx]
                 const content = editorRefs.value[old.key]?.getContent() ?? old.original
-                const newKind = fresh.kind === 'md' ? 'md' : 'text'
+                const newKind = fresh.kind || kindForName(fresh.name)
                 const key = String(fresh.id)
                 tabs.value.splice(tabIdx, 1, {
                     ...old,
@@ -515,7 +505,8 @@ async function openDocument(
     }
     try {
         const content = await DocumentService.GetContent(node.id)
-        const kind = node.kind === 'md' ? 'md' : 'text'
+        // 类型以后端存储为准，缺失时按扩展名兜底判定（.md → Markdown 编辑器）
+        const kind = node.kind || kindForName(node.name)
         const tab: DocTab = {
             key,
             id: node.id,

@@ -13,6 +13,7 @@ import { DatabaseService } from '../../bindings/changeme/app/service/databases'
 import { LocalService } from '../../bindings/changeme/app/service/local'
 import { HostKeyService } from '../../bindings/changeme/app/service/hostkeys'
 import { SshConfigService } from '../../bindings/changeme/app/service/sshconfig'
+import { UpdateService } from '../../bindings/changeme/app/service/update'
 
 import type {
   ConnectOptions,
@@ -50,6 +51,7 @@ export {
   LocalService,
   HostKeyService,
   SshConfigService,
+  UpdateService,
 }
 export type {
   ConnectOptions,

@@ -22,8 +22,10 @@ import (
 	"changeme/app/service/terminal"
 	"changeme/app/service/tray"
 	"changeme/app/service/types"
+	"changeme/app/service/update"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
@@ -77,6 +79,7 @@ func main() {
 			application.NewService(&local.LocalService{}),
 			application.NewService(&hostkeys.HostKeyService{}),
 			application.NewService(&sshconfig.SshConfigService{}),
+			application.NewService(&update.UpdateService{}),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -98,6 +101,8 @@ func main() {
 		},
 		BackgroundColour:           application.NewRGB(18, 18, 24),
 		DefaultContextMenuDisabled: true,
+		// 允许从资源管理器拖入文件/目录（配合前端 files:dropped 事件实现面板上传）
+		EnableFileDrop: true,
 		// F12 打开调试工具：注册到原生层，内嵌站点 iframe 获得焦点时同样生效，
 		// 便于调试「站点管理」中打开的内嵌页面。
 		KeyBindings: map[string]func(window application.Window){
@@ -110,6 +115,29 @@ func main() {
 
 	// 托盘图标 + 关闭按钮行为（缩小到托盘 / 直接退出，见 设置 → 通用）
 	tray.Setup(app, win, appIcon)
+
+	// 外部拖拽上传：Wails 原生文件拖放（EnableFileDrop）把拖入的绝对路径
+	// 通过窗口事件送达这里，转发给前端（files:dropped），由前端按落点
+	// 坐标找到对应的远程面板并上传。
+	win.OnWindowEvent(events.Common.WindowFilesDropped, func(event *application.WindowEvent) {
+		ctx := event.Context()
+		if ctx == nil {
+			return
+		}
+		files := ctx.DroppedFiles()
+		if len(files) == 0 {
+			return
+		}
+		x, y := 0, 0
+		if d := ctx.DropTargetDetails(); d != nil {
+			x, y = d.X, d.Y
+		}
+		app.Event.Emit("files:dropped", map[string]any{
+			"filenames": files,
+			"x":         x,
+			"y":         y,
+		})
+	})
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

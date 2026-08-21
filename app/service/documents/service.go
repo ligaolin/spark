@@ -27,10 +27,28 @@ func (s *DocumentService) List() ([]model.DocNode, error) {
 	return list, err
 }
 
+// fileKindByExt 按扩展名判定文档类型（大小写不敏感）。新增类型时在这里加一条，
+// 并在前端 utils/fileKind.ts 同步（两侧保持一致），然后在 DocumentsView 增加
+// 对应编辑器的渲染分支。
+var fileKindByExt = map[string]string{
+	".md":       "md",
+	".markdown": "md",
+}
+
+// kindForName 根据文件名的扩展名返回文档类型；无匹配时返回 "text"。
+func kindForName(name string) string {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	for ext, kind := range fileKindByExt {
+		if strings.HasSuffix(lower, ext) {
+			return kind
+		}
+	}
+	return "text"
+}
+
 // Create adds a new folder or file under parentID (0 = root) and returns it.
-// kind 仅对文件有效："text"（默认）或 "md"（Markdown，可排版编辑）；名称以
-// .md 结尾时自动视为 Markdown。
-func (s *DocumentService) Create(parentID uint, name, nodeType, kind string) (model.DocNode, error) {
+// 文件类型由文件名扩展名决定（如 .md → Markdown），新建时无需专门选择类型。
+func (s *DocumentService) Create(parentID uint, name, nodeType string) (model.DocNode, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return model.DocNode{}, errors.New("名称不能为空")
@@ -48,14 +66,7 @@ func (s *DocumentService) Create(parentID uint, name, nodeType, kind string) (mo
 		Sort:     nextSort(parentID),
 	}
 	if nodeType == "file" {
-		k := strings.ToLower(strings.TrimSpace(kind))
-		if k != "md" {
-			k = "text"
-		}
-		if strings.HasSuffix(strings.ToLower(name), ".md") {
-			k = "md"
-		}
-		n.Kind = k
+		n.Kind = kindForName(name)
 	}
 	if err := db.GetDB().Create(&n).Error; err != nil {
 		return n, err
@@ -82,16 +93,8 @@ func (s *DocumentService) Rename(id uint, name string) error {
 		}
 	}
 	if n.Type != "folder" {
-		// 重命名时按扩展名同步文件类型（.md → Markdown）
-		newKind := n.Kind
-		if newKind != "md" {
-			newKind = "text"
-		}
-		if strings.HasSuffix(strings.ToLower(name), ".md") {
-			newKind = "md"
-		} else if strings.HasSuffix(strings.ToLower(n.Name), ".md") {
-			newKind = "text"
-		}
+		// 重命名时按新扩展名同步文件类型（如 .txt → .md 切换 Markdown 编辑器）
+		newKind := kindForName(name)
 		if newKind != n.Kind {
 			_ = db.GetDB().Model(&model.DocNode{}).Where("id = ?", id).Update("kind", newKind).Error
 		}

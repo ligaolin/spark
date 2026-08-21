@@ -15,6 +15,15 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as types$0 from "../types/models.js";
 
 /**
+ * DefaultDownloadDir returns the user's Downloads folder (falls back to the
+ * home directory). Used as the save location when the user cancels the
+ * directory picker during a download.
+ */
+export function DefaultDownloadDir(): $CancellablePromise<string> {
+    return $Call.ByID(2915207369);
+}
+
+/**
  * Home returns the current user's home directory.
  */
 export function Home(): $CancellablePromise<string> {

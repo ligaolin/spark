@@ -40,40 +40,43 @@ export function makeLocalBackend(): FileBackend {
   }
 }
 
-export function makeSftpBackend(sessionId: string): FileBackend {
+// 远程后端适配器：把 SFTP / FTP 文件操作统一成同一个接口，供 FilePanel 复用。
+// sessionId 用「getter」而不是固定值：连接成功后再调用面板方法（如 goHome）
+// 时能读到最新的会话 id，避免"先拿到旧后端对象再连上新会话"的竞态。
+export function makeSftpBackend(getSessionId: () => string): FileBackend {
   return {
     kind: 'remote',
     label: 'SFTP',
     sep: '/',
-    home: async () => (await SFTPFileService.Home(sessionId)) || '/',
-    list: async (p) => (await SFTPFileService.List(sessionId, p)) ?? [],
-    mkdir: (p) => SFTPFileService.Mkdir(sessionId, p),
-    rename: (a, b) => SFTPFileService.Rename(sessionId, a, b),
-    remove: (p) => SFTPFileService.Remove(sessionId, p),
-    chmod: (p, m) => SFTPFileService.Chmod(sessionId, p, m),
-    upload: (l, r) => SFTPFileService.Upload(sessionId, l, r),
-    download: (r, l) => SFTPFileService.Download(sessionId, r, l),
-    readFile: (p) => SFTPFileService.ReadFile(sessionId, p),
-    writeFile: (p, c) => SFTPFileService.WriteFile(sessionId, p, c),
-    search: async (d, p, m) => (await SFTPFileService.Search(sessionId, d, p, m)) ?? [],
+    home: async () => (await SFTPFileService.Home(getSessionId())) || '/',
+    list: async (p) => (await SFTPFileService.List(getSessionId(), p)) ?? [],
+    mkdir: (p) => SFTPFileService.Mkdir(getSessionId(), p),
+    rename: (a, b) => SFTPFileService.Rename(getSessionId(), a, b),
+    remove: (p) => SFTPFileService.Remove(getSessionId(), p),
+    chmod: (p, m) => SFTPFileService.Chmod(getSessionId(), p, m),
+    upload: (l, r) => SFTPFileService.Upload(getSessionId(), l, r),
+    download: (r, l) => SFTPFileService.Download(getSessionId(), r, l),
+    readFile: (p) => SFTPFileService.ReadFile(getSessionId(), p),
+    writeFile: (p, c) => SFTPFileService.WriteFile(getSessionId(), p, c),
+    search: async (d, p, m) => (await SFTPFileService.Search(getSessionId(), d, p, m)) ?? [],
   }
 }
 
-export function makeFtpBackend(sessionId: string): FileBackend {
+export function makeFtpBackend(getSessionId: () => string): FileBackend {
   return {
     kind: 'remote',
     label: 'FTP',
     sep: '/',
-    home: async () => (await FTPFileService.Home(sessionId)) || '/',
-    list: async (p) => (await FTPFileService.List(sessionId, p)) ?? [],
-    mkdir: (p) => FTPFileService.Mkdir(sessionId, p),
-    rename: (a, b) => FTPFileService.Rename(sessionId, a, b),
-    remove: (p, isDir) => FTPFileService.Remove(sessionId, p, isDir),
-    upload: (l, r) => FTPFileService.Upload(sessionId, l, r),
-    download: (r, l, isDir) => FTPFileService.Download(sessionId, r, l, !!isDir),
-    readFile: (p) => FTPFileService.ReadFile(sessionId, p),
-    writeFile: (p, c) => FTPFileService.WriteFile(sessionId, p, c),
-    search: async (d, p, m) => (await FTPFileService.Search(sessionId, d, p, m)) ?? [],
+    home: async () => (await FTPFileService.Home(getSessionId())) || '/',
+    list: async (p) => (await FTPFileService.List(getSessionId(), p)) ?? [],
+    mkdir: (p) => FTPFileService.Mkdir(getSessionId(), p),
+    rename: (a, b) => FTPFileService.Rename(getSessionId(), a, b),
+    remove: (p, isDir) => FTPFileService.Remove(getSessionId(), p, isDir),
+    upload: (l, r) => FTPFileService.Upload(getSessionId(), l, r),
+    download: (r, l, isDir) => FTPFileService.Download(getSessionId(), r, l, !!isDir),
+    readFile: (p) => FTPFileService.ReadFile(getSessionId(), p),
+    writeFile: (p, c) => FTPFileService.WriteFile(getSessionId(), p, c),
+    search: async (d, p, m) => (await FTPFileService.Search(getSessionId(), d, p, m)) ?? [],
   }
 }
 

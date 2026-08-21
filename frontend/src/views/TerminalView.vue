@@ -27,7 +27,8 @@
                     </div>
                 </div>
                 <div class="tab-add" :class="{ active: panelVisible }"
-                    :title="panelVisible ? '收起信息面板' : '展开信息面板（服务器信息 / 自定义命令）'" @click="panelVisible = !panelVisible">
+                    :title="panelVisible ? '收起信息面板' : '展开信息面板（SFTP 文件 / 服务器信息 / 进程管理 / 自定义命令）'"
+                    @click="panelVisible = !panelVisible">
                     <el-icon>
                         <InfoFilled />
                     </el-icon>
@@ -40,11 +41,14 @@
                         :tab="tab" />
                 </div>
 
-                <aside v-if="panelVisible" class="side-panel" :class="{ resizing: resizingPanel }"
+                <!-- v-show（而非 v-if）：收起面板时 SFTP 面板保持挂载、连接不断 -->
+                <aside v-show="panelVisible" class="side-panel" :class="{ resizing: resizingPanel }"
                     :style="{ width: panelWidth + 'px' }">
                     <div class="resize-handle" title="拖拽调整宽度" @mousedown="startResize" />
                     <div class="side-head">
                         <el-radio-group v-model="panelTab" size="small">
+                            <!-- SFTP 文件放在最左侧（服务信息切换的左边）：打开 SSH 默认两个都打开 -->
+                            <el-radio-button value="sftp">SFTP 文件</el-radio-button>
                             <el-radio-button value="info">服务器信息</el-radio-button>
                             <el-radio-button value="processes">进程管理</el-radio-button>
                             <el-radio-button value="commands">自定义命令</el-radio-button>
@@ -54,6 +58,7 @@
                         </el-icon>
                     </div>
                     <div class="side-body">
+                        <SftpPanel v-show="panelTab === 'sftp'" :opts="activeTabOpts" :fav-key="activeTabConnId" />
                         <ServerInfoView v-show="panelTab === 'info'" :session-id="activeSessionId" />
                         <ProcessManagerView v-show="panelTab === 'processes'" :session-id="activeSessionId"
                             :active="processActive" />
@@ -68,11 +73,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Monitor, Close, Plus, InfoFilled } from '@element-plus/icons-vue'
 import { on as busOn } from '../utils/bus'
 import TerminalPane from '../components/TerminalPane.vue'
+import SftpPanel from '../components/SftpPanel.vue'
 import ServerInfoView from '../components/ServerInfoView.vue'
 import ProcessManagerView from '../components/ProcessManagerView.vue'
 import CustomCommandsView from '../components/CustomCommandsView.vue'
@@ -86,17 +92,31 @@ const store = useTerminalStore()
 const connStore = useConnectionsStore()
 const dialogVisible = ref(false)
 
-// 右侧信息面板
+// 右侧信息面板：SFTP 文件为默认页（打开 SSH 终端即同时打开 SFTP）
 const panelVisible = ref(true)
-const panelTab = ref<'info' | 'processes' | 'commands'>('info')
+const panelTab = ref<'sftp' | 'info' | 'processes' | 'commands'>('sftp')
 const activeSessionId = computed(() => store.activeTab?.sessionId || '')
+// SFTP 面板跟随当前活动标签的连接参数
+const activeTabOpts = computed(() => store.activeTab?.opts ?? null)
+// SFTP 面板的目录收藏按来源连接 id 区分（快速连接无 id → 不展示收藏入口）
+const activeTabConnId = computed(() => store.activeTab?.connId ?? undefined)
 // 进程管理页激活时才会自动刷新
 const processActive = computed(() => panelVisible.value && panelTab.value === 'processes')
+
+// 从连接管理页「打开」SSH 进入时，确保右侧面板展开并显示 SFTP 页
+onActivated(() => {
+    const raw = sessionStorage.getItem('spark:open-terminal-panel')
+    if (!raw) return
+    sessionStorage.removeItem('spark:open-terminal-panel')
+    panelVisible.value = true
+    panelTab.value = 'sftp'
+})
 
 // 全局快捷键触发的动作（由 App.vue 通过事件总线转发）
 let offNew: (() => void) | null = null
 let offClose: (() => void) | null = null
 let offPanel: (() => void) | null = null
+let offShowSftp: (() => void) | null = null
 
 onMounted(() => {
     offNew = busOn('terminal:new', () => {
@@ -109,16 +129,22 @@ onMounted(() => {
     offPanel = busOn('terminal:toggle-panel', () => {
         panelVisible.value = !panelVisible.value
     })
+    // 快捷键 / 其他页面请求打开 SFTP 面板
+    offShowSftp = busOn('terminal:show-sftp', () => {
+        panelVisible.value = true
+        panelTab.value = 'sftp'
+    })
 })
 
 onBeforeUnmount(() => {
     offNew?.()
     offClose?.()
     offPanel?.()
+    offShowSftp?.()
 })
 
 // 面板宽度：可拖拽调整，记住上次宽度
-const panelWidth = ref(Number(localStorage.getItem('spark:panelWidth')) || 340)
+const panelWidth = ref(Number(localStorage.getItem('spark:panelWidth')) || 420)
 const resizingPanel = ref(false)
 
 function startResize(e: MouseEvent) {
@@ -151,6 +177,9 @@ function onMiddleClick(key: string, e: MouseEvent) {
 async function onConnect(opts: ConnectOptions, save: boolean) {
     dialogVisible.value = false
     store.addTab(opts)
+    // 打开 SSH 即默认同时打开 SFTP（右侧面板切到 SFTP 页并保持展开）
+    panelVisible.value = true
+    panelTab.value = 'sftp'
     if (save) {
         try {
             await connStore.create(
@@ -351,9 +380,17 @@ async function onConnect(opts: ConnectOptions, save: boolean) {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 6px;
     padding: 6px 8px;
     border-bottom: 1px solid var(--border-color);
     flex-shrink: 0;
+}
+
+.side-head :deep(.el-radio-group) {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
 }
 
 .side-close {

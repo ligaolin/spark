@@ -1,5 +1,6 @@
 <template>
-    <div class="file-panel" :class="{ 'drop-target': dragDepth > 0 }" @dragenter="onDragEnter" @dragover="onDragOver"
+    <div ref="rootRef" class="file-panel" :class="{ 'drop-target': dragDepth > 0 }" data-file-drop-target="1"
+        :data-file-panel-id="panelId" @dragenter="onDragEnter" @dragover="onDragOver"
         @dragleave="onDragLeave" @drop="onDrop" @contextmenu.prevent="onBlankContext">
         <div class="panel-head">
             <span class="panel-title">{{ title }}</span>
@@ -141,6 +142,7 @@ import {
     Link,
     FolderAdd,
     Upload,
+    Download,
     Edit,
     EditPen,
     Delete,
@@ -157,6 +159,7 @@ import SearchDialog from './SearchDialog.vue'
 import { FavoriteService, makeFavorite } from '../utils/wails'
 import type { Favorite } from '../utils/wails'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
+import { registerDropPanel } from '../utils/externalDrop'
 import type { DropPayload, FileEntry, PanelAction, SearchResult } from '../types'
 import { formatSize, formatTime } from '../types'
 import { joinPath, parentDir, type FileBackend } from '../utils/fileBackend'
@@ -181,6 +184,17 @@ const emit = defineEmits<{
     (e: 'drop', payload: DropPayload): void
     (e: 'action', payload: PanelAction): void
 }>()
+
+// 面板唯一 id：用于外部拖放（files:dropped 事件）定位落点所在的面板
+let panelSeq = 0
+const panelId = `fp-${Date.now()}-${++panelSeq}`
+let unregisterDrop: (() => void) | null = null
+
+// 外部拖入（资源管理器文件 / 目录，绝对路径由 Wails 原生层转发）
+function handleExternalFiles(paths: string[]) {
+    if (!paths.length) return
+    emit('drop', { source: 'files', paths })
+}
 
 // 收藏（本面板对应：本地 = 本机目录，远程 = 服务器目录）
 const favorites = ref<Favorite[]>([])
@@ -251,6 +265,7 @@ const entries = ref<FileEntry[]>([])
 const loading = ref(false)
 const selected = ref<FileEntry | null>(null)
 const selectedRows = ref<FileEntry[]>([])
+const rootRef = ref<HTMLElement>()
 
 // 编辑器 / 搜索
 const editorRef = ref<InstanceType<typeof TextEditor>>()
@@ -521,7 +536,8 @@ function handleDrop(e: DragEvent, targetDir?: string) {
         emit('drop', { source: 'local', entries: localEntries, targetDir })
         return
     }
-    // 操作系统文件（资源管理器拖入）
+    // 操作系统文件（资源管理器拖入）：HTML5 拿不到路径时静默等待 Wails 原生
+    // 拖放（EnableFileDrop）通过 files:dropped 事件补送绝对路径（见 externalDrop）
     const paths: string[] = []
     const files = dt.files
     for (let i = 0; i < files.length; i++) {
@@ -532,8 +548,6 @@ function handleDrop(e: DragEvent, targetDir?: string) {
     }
     if (paths.length > 0) {
         emit('drop', { source: 'files', paths, targetDir })
-    } else if (files.length > 0) {
-        ElMessage.warning('无法获取文件路径，请使用「上传」按钮选择文件')
     }
 }
 
@@ -762,10 +776,14 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
 
     if (multi) {
         const n = selectedRows.value.length
-        // 单栏远程模式下多选仅支持删除
-        return [
-            { key: 'remove', label: `删除选中（${n}）`, icon: Delete, danger: true },
-        ]
+        // 单栏远程模式下多选支持下载与删除
+        const items: (CtxItem | 'divider')[] = []
+        if (!isLocal) {
+            items.push({ key: 'download-multi', label: `下载选中（${n}）`, icon: Download, disabled: !linked.value })
+            items.push('divider')
+        }
+        items.push({ key: 'remove', label: `删除选中（${n}）`, icon: Delete, danger: true })
+        return items
     }
 
     // 文件/目录：操作条目
@@ -775,6 +793,14 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
         label: entry.isDir ? '打开 / 进入' : '打开（编辑）',
         icon: FolderOpened,
     })
+    if (!isLocal) {
+        items.push(
+            'divider',
+            entry.isDir
+                ? { key: 'download-entry', label: '下载目录（含全部内容）', icon: Download, disabled: !linked.value }
+                : { key: 'download-entry', label: '下载', icon: Download, disabled: !linked.value },
+        )
+    }
     if (props.dockEditor && !isLocal) {
         items.push(
             'divider',
@@ -832,6 +858,17 @@ async function onCtxPick(item: CtxItem) {
             break
         case 'rename':
             await rename()
+            break
+        case 'download-entry':
+            if (entry) {
+                emit('action', {
+                    action: 'download-entry',
+                    entry: { path: entry.path, name: entry.name, isDir: entry.isDir },
+                })
+            }
+            break
+        case 'download-multi':
+            emit('action', { action: 'download-multi' })
             break
         case 'chmod':
             await chmod()
@@ -1029,6 +1066,27 @@ function clear() {
     pathInput.value = ''
 }
 
+// 工具栏「下载」入口：多选时批量下载，否则下载单选条目（交给父组件选择保存目录）
+function download() {
+    if (props.backend.kind === 'local') {
+        ElMessage.warning('本地面板无需下载')
+        return
+    }
+    if (props.multiSelect && selectedRows.value.length > 0) {
+        emit('action', { action: 'download-multi' })
+        return
+    }
+    const entry = selected.value
+    if (!entry) {
+        ElMessage.warning('请先选择文件或目录')
+        return
+    }
+    emit('action', {
+        action: 'download-entry',
+        entry: { path: entry.path, name: entry.name, isDir: entry.isDir },
+    })
+}
+
 defineExpose({
     currentPath,
     selected,
@@ -1040,6 +1098,7 @@ defineExpose({
     rename,
     remove,
     chmod,
+    download,
     clear,
 })
 
@@ -1048,10 +1107,15 @@ onMounted(() => {
     if (props.backend.kind === 'local') {
         goHome()
     }
+    // 注册外部文件拖放（Wails 原生层解析绝对路径后按坐标转发到这里）
+    if (rootRef.value) {
+        unregisterDrop = registerDropPanel(rootRef.value, handleExternalFiles)
+    }
 })
 
 onBeforeUnmount(() => {
     clearBoxSelect()
+    unregisterDrop?.()
 })
 </script>
 

@@ -13,12 +13,16 @@
         github.com/ligaolin/spark
       </el-link>
     </div>
+    <div class="about-actions">
+      <el-button size="small" type="primary" plain @click="checkUpdate">检查更新</el-button>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { SettingsService } from '../utils/wails'
+import { checkForUpdatesManual } from '../utils/updateCheck'
 
 const version = ref('dev')
 
@@ -29,6 +33,10 @@ onMounted(async () => {
     /* 忽略 */
   }
 })
+
+function checkUpdate() {
+  void checkForUpdatesManual()
+}
 </script>
 
 <style scoped>
@@ -67,5 +75,9 @@ onMounted(async () => {
 
 .about-links {
   margin-top: 8px;
+}
+
+.about-actions {
+  margin-top: 12px;
 }
 </style>

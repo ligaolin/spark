@@ -50,6 +50,9 @@
             <el-button size="small" :disabled="!connected" @click="pickDirAndUpload">
               上传目录
             </el-button>
+            <el-button size="small" :disabled="!connected" @click="remotePanel?.download()">
+              下载
+            </el-button>
             <el-button size="small" :disabled="!connected" @click="remotePanel?.mkdir()">
               新建目录
             </el-button>
@@ -62,7 +65,7 @@
             <el-button v-if="mode === 'sftp'" size="small" :disabled="!connected" @click="remotePanel?.chmod()">
               权限
             </el-button>
-            <span class="upload-hint">支持「上传」按钮选文件 / 「上传目录」选文件夹，也可直接从资源管理器拖文件到面板上传；右键目录可用编辑器打开</span>
+            <span class="upload-hint">上传/上传目录选择本地内容，下载可保存到指定目录（未选择则用系统下载目录）；也可直接从资源管理器拖文件/文件夹到面板上传</span>
           </template>
         </FilePanel>
       </div>
@@ -375,6 +378,60 @@ async function pickDirAndUpload() {
   await remotePanel.value?.refresh()
 }
 
+// ---------- 下载 ----------
+
+// 选择保存目录；用户取消时回退到系统默认下载目录
+async function pickDownloadDir(): Promise<string | null> {
+  try {
+    const dir = await LocalService.PickDirectory()
+    if (dir) return dir
+  } catch (e: any) {
+    ElMessage.error(`选择目录失败：${e?.message || e}`)
+  }
+  try {
+    const def = await LocalService.DefaultDownloadDir()
+    if (def) {
+      ElMessage.info(`未选择保存目录，使用系统下载目录：${def}`)
+      return def
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+// 批量下载（文件或目录，目录递归）：全部结束后统一提示
+async function downloadBatch(items: { path: string; name: string; isDir: boolean }[]) {
+  if (!items.length) return
+  if (!currentSessionId.value) {
+    ElMessage.warning('请先连接远程服务器')
+    return
+  }
+  const dir = await pickDownloadDir()
+  if (!dir) return
+  let ok = 0
+  const failed: string[] = []
+  for (const it of items) {
+    const target = joinPath(dir, it.name, '/')
+    const label = it.isDir ? `${it.name}/ (目录)` : it.name
+    try {
+      await remoteBackend.download(it.path, target, it.isDir)
+      transfers.complete(currentSessionId.value, 'download', label)
+      ok++
+    } catch (e: any) {
+      transfers.fail(currentSessionId.value, 'download', label, e?.message || String(e))
+      failed.push(it.name)
+    }
+  }
+  if (failed.length === 0) {
+    ElMessage.success(`全部下载完成（${ok} 项），保存位置：${dir}`)
+  } else {
+    ElMessage.error(
+      `下载完成：成功 ${ok} 项，失败 ${failed.length} 项（${failed.slice(0, 3).join('、')}${failed.length > 3 ? '…' : ''}）`,
+    )
+  }
+}
+
 // 拖到远程面板：操作系统文件 / 内部条目都走批量上传
 async function onRemoteDrop(payload: DropPayload) {
   if (!currentSessionId.value) {
@@ -409,10 +466,18 @@ async function onPanelAction(payload: PanelAction) {
     case 'open-file':
       if (payload.entry) openFileInEditorView(payload.entry)
       break
-    case 'upload-entry':
     case 'download-entry':
+      if (payload.entry) await downloadBatch([payload.entry])
+      break
+    case 'download-multi': {
+      const rows = remotePanel.value?.selectedRows ?? []
+      if (rows.length) {
+        await downloadBatch(rows.map((r) => ({ path: r.path, name: r.name, isDir: r.isDir })))
+      }
+      break
+    }
+    case 'upload-entry':
     case 'upload-multi':
-    case 'download-multi':
       // 单栏模式下不再有跨面板操作
       break
   }

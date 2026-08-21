@@ -7,6 +7,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { basicSetup } from 'codemirror'
 import { EditorView, keymap } from '@codemirror/view'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
+import { indentWithTab } from '@codemirror/commands'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { languages } from '@codemirror/language-data'
 import { LanguageDescription } from '@codemirror/language'
@@ -74,6 +75,9 @@ onMounted(() => {
         if (u.docChanged) emit('change', u.state.doc.toString())
       }),
       keymap.of([
+        // Tab 缩进 / Shift+Tab 反缩进（indentWithTab 绑定在 Mod-s 之前，
+        // 输入框中按 Tab 时插入缩进，而不是把焦点移出编辑器）
+        indentWithTab,
         {
           key: 'Mod-s',
           run: () => {

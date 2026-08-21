@@ -9,6 +9,8 @@ export interface TerminalTab {
   status: 'connecting' | 'connected' | 'closed' | 'error'
   error?: string
   opts: ConnectOptions
+  // 来源已保存连接的 id（从连接管理打开时有值）：用于 SFTP 面板的目录收藏
+  connId?: number
   exitCode?: number
 }
 
@@ -27,13 +29,14 @@ export const useTerminalStore = defineStore('terminal', {
   },
 
   actions: {
-    addTab(opts: ConnectOptions): TerminalTab {
+    addTab(opts: ConnectOptions, connId?: number): TerminalTab {
       const tab: TerminalTab = {
         key: `tab-${tabSeq++}`,
         sessionId: '',
         title: opts.host ? `${opts.username}@${opts.host}:${opts.port || 22}` : '新会话',
         status: 'connecting',
         opts: { ...opts },
+        ...(connId ? { connId } : {}),
       }
       this.tabs.push(tab)
       this.activeKey = tab.key
