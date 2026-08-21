@@ -7,7 +7,8 @@ export interface DialogField {
   label: string
   placeholder?: string
   initial?: string
-  type?: 'text' | 'password'
+  type?: 'text' | 'password' | 'select'
+  options?: { label: string; value: string }[] // type 为 select 时的选项
   optional?: boolean // 为 true 时允许留空
 }
 

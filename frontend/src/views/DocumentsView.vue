@@ -26,7 +26,7 @@
             <el-button size="small" type="primary" :loading="searching" @click="runSearch">搜索</el-button>
         </div>
 
-        <!-- 主体：左树 + 右编辑器 -->
+        <!-- 主体：左树 + 右多标签编辑器 -->
         <div class="doc-body">
             <el-splitter>
                 <el-splitter-panel size="26%" :min="200">
@@ -47,11 +47,13 @@
                                 empty-text="暂无文档，点击上方「新建文件」开始">
                                 <template #default="{ data }">
                                     <span class="tree-node">
-                                        <el-icon :color="data.type === 'folder' ? '#e6c06c' : '#8b90a0'">
+                                        <el-icon :color="data.type === 'folder' ? '#e6c06c' : data.kind === 'md' ? '#67c23a' : '#8b90a0'">
                                             <Folder v-if="data.type === 'folder'" />
                                             <Document v-else />
                                         </el-icon>
                                         <span class="tree-node-name" :title="data.name">{{ data.name }}</span>
+                                        <el-tag v-if="data.type === 'file' && data.kind === 'md'" size="small"
+                                            type="success" class="md-tag">MD</el-tag>
                                     </span>
                                 </template>
                             </el-tree>
@@ -82,24 +84,38 @@
 
                 <el-splitter-panel :min="200">
                     <div class="doc-right">
-                        <div class="doc-editor-head">
-                            <span class="doc-title" :title="currentPath">{{ currentPath || '未打开文档' }}</span>
-                            <span v-if="dirty" class="dirty-tag">● 未保存</span>
-                            <div class="head-spacer" />
-                            <el-button size="small" type="primary" :loading="saving" :disabled="!currentFile"
-                                @click="save">
-                                保存
-                            </el-button>
+                        <!-- 多标签：同时打开多个文档 -->
+                        <div class="doc-tabbar">
+                            <div v-for="t in tabs" :key="t.key" class="doc-tab"
+                                :class="{ active: t.key === activeKey }" @click="activeKey = t.key">
+                                <span class="doc-tab-title" :title="t.path">{{ t.name }}</span>
+                                <span v-if="t.dirty" class="doc-tab-dirty" title="未保存">●</span>
+                                <el-icon class="doc-tab-close" title="关闭" @click.stop="closeTab(t)">
+                                    <Close />
+                                </el-icon>
+                            </div>
+                            <div class="doc-tab-actions">
+                                <el-button size="small" type="primary" :disabled="!activeTab" :loading="saving"
+                                    @click="save">
+                                    保存
+                                </el-button>
+                            </div>
                         </div>
 
                         <div class="editor-area">
-                            <CodeEditor ref="editorRef" :filename="currentName" @change="onChange" @save="save" />
-                            <div v-if="!currentFile" class="editor-empty">
+                            <div v-for="t in tabs" v-show="t.key === activeKey" :key="t.key" class="doc-pane">
+                                <CodeEditor v-if="t.kind !== 'md'" :filename="t.name" :wrap="settings.editorWordWrap"
+                                    :ref="(el: any) => setEditorRef(t.key, el)" @change="(v: string) => onChange(t, v)"
+                                    @save="save" />
+                                <MarkdownEditor v-else :ref="(el: any) => setEditorRef(t.key, el)"
+                                    @change="(v: string) => onChange(t, v)" @save="save" />
+                            </div>
+                            <div v-if="!tabs.length" class="editor-empty">
                                 <el-icon :size="40">
                                     <Document />
                                 </el-icon>
                                 <p>在左侧选择或新建一个文档开始编辑</p>
-                                <p class="sub">支持语法高亮、搜索（Ctrl+F）、Ctrl+S 保存</p>
+                                <p class="sub">支持多标签同时编辑、语法高亮、搜索（Ctrl+F）、Ctrl+S 保存；新建 Markdown 文档可排版预览</p>
                             </div>
                         </div>
                     </div>
@@ -121,13 +137,16 @@ import {
     DocumentAdd,
     Edit,
     Delete,
+    Close,
 } from '@element-plus/icons-vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
 import CodeEditor from '../components/CodeEditor.vue'
+import MarkdownEditor from '../components/MarkdownEditor.vue'
 import { DocumentService } from '../utils/wails'
 import type { DocNode } from '../utils/wails'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
+import { useSettingsStore } from '../stores/settings'
 import type { SearchResult } from '../types'
 
 interface TreeNode {
@@ -135,21 +154,41 @@ interface TreeNode {
     parentId: number
     name: string
     type: string
+    kind: string
     children?: TreeNode[]
+}
+
+// 两个编辑器组件暴露同一套操作方法，统一为一个接口
+interface EditorApi {
+    setContent(v: string): void
+    getContent(): string
+    focus(): void
+    jumpToLine(n?: number): void
+}
+
+// 一个打开的文档标签
+interface DocTab {
+    key: string
+    id: number
+    name: string
+    path: string
+    kind: 'text' | 'md'
+    original: string
+    dirty: boolean
 }
 
 const nodes = ref<DocNode[]>([])
 const treeRef = ref()
-const editorRef = ref<InstanceType<typeof CodeEditor>>()
+const settings = useSettingsStore()
 
-const selectedId = ref<number | null>(null)
-const currentFile = ref<{ id: number; name: string } | null>(null)
-const currentName = ref('')
-const currentPath = ref('')
-const dirty = ref(false)
+const tabs = ref<DocTab[]>([])
+const activeKey = ref<string | null>(null)
+const editorRefs = ref<Record<string, EditorApi | null>>({})
 const saving = ref(false)
 
-let originalContent = ''
+const activeTab = computed(() => tabs.value.find((t) => t.key === activeKey.value) ?? null)
+
+const selectedId = ref<number | null>(null)
 
 // 搜索
 const keyword = ref('')
@@ -192,7 +231,14 @@ const pathMap = computed(() => {
 const treeData = computed<TreeNode[]>(() => {
     const map = new Map<number, TreeNode>()
     for (const n of nodes.value) {
-        map.set(n.id, { id: n.id, parentId: n.parentId, name: n.name, type: n.type, children: [] })
+        map.set(n.id, {
+            id: n.id,
+            parentId: n.parentId,
+            name: n.name,
+            type: n.type,
+            kind: n.kind === 'md' ? 'md' : 'text',
+            children: [],
+        })
     }
     const roots: TreeNode[] = []
     for (const n of nodes.value) {
@@ -247,12 +293,29 @@ function toolbarCreate(type: 'file' | 'folder') {
 
 async function createNode(type: 'file' | 'folder', parentId = 0) {
     const label = type === 'file' ? '新建文件' : '新建文件夹'
-    const values = await showInputDialog(label, [{ key: 'name', label: '名称' }])
+    const values = await showInputDialog(label, [
+        { key: 'name', label: '名称' },
+        ...(type === 'file'
+            ? [
+                  {
+                      key: 'kind',
+                      label: '文件类型',
+                      type: 'select' as const,
+                      options: [
+                          { label: '文本文件', value: 'text' },
+                          { label: 'Markdown 文档（可排版预览）', value: 'md' },
+                      ],
+                      initial: 'text',
+                  },
+              ]
+            : []),
+    ])
     if (!values) return
     const name = values.name.trim()
     if (!name) return
+    const kind = values.kind || 'text'
     try {
-        const created = await DocumentService.Create(parentId, name, type)
+        const created = await DocumentService.Create(parentId, name, type, kind)
         await reload()
         if (created.type === 'file') {
             await openDocument(created)
@@ -279,6 +342,29 @@ async function renameNode(node: { id: number; name: string; type: string }) {
     try {
         await DocumentService.Rename(node.id, name)
         await reload()
+        // 打开的标签被重命名时同步名称 / 类型（如 .txt → .md 切换编辑器类型）
+        const tabIdx = tabs.value.findIndex((t) => t.id === node.id)
+        if (tabIdx >= 0) {
+            const fresh = nodes.value.find((n) => n.id === node.id)
+            if (fresh) {
+                const old = tabs.value[tabIdx]
+                const content = editorRefs.value[old.key]?.getContent() ?? old.original
+                const newKind = fresh.kind === 'md' ? 'md' : 'text'
+                const key = String(fresh.id)
+                tabs.value.splice(tabIdx, 1, {
+                    ...old,
+                    key,
+                    name: fresh.name,
+                    path: fullPathOf(fresh),
+                    kind: newKind,
+                    original: content,
+                })
+                delete editorRefs.value[old.key]
+                activeKey.value = key
+                await nextTick()
+                editorRefs.value[key]?.setContent(content)
+            }
+        }
     } catch (e: any) {
         ElMessage.error(`重命名失败：${e?.message || e}`)
     }
@@ -299,7 +385,7 @@ async function deleteNode(node: { id: number; name: string; type: string }) {
     if (!ok) return
     try {
         await DocumentService.Delete(node.id)
-        if (currentFile.value?.id === node.id) closeDocument()
+        removeTabByDocId(node.id) // 删除后标签一并关闭
         if (selectedId.value === node.id) selectedId.value = null
         await reload()
     } catch (e: any) {
@@ -402,26 +488,50 @@ function onNodeDrop(dragging: any, drop: any, dropType: string) {
     void moveNode(id, newParentId)
 }
 
-// ---------- 编辑器 ----------
+// ---------- 多标签编辑器 ----------
+
+function setEditorRef(key: string, el: EditorApi | null) {
+    editorRefs.value[key] = el
+}
 
 async function openDocument(
-    node: { id: number; name: string; type: string; parentId: number },
+    node: { id: number; name: string; type: string; parentId: number; kind?: string },
     lineNo?: number,
 ) {
     if (node.type !== 'file') return
-    if (currentFile.value && currentFile.value.id !== node.id) {
-        const proceed = await ensureSaved()
-        if (!proceed) return
+    const key = String(node.id)
+    const existing = tabs.value.find((t) => t.key === key)
+    if (existing) {
+        // 已打开：激活并定位
+        activeKey.value = key
+        selectedId.value = node.id
+        treeRef.value?.setCurrentKey(node.id)
+        leftTab.value = 'tree'
+        if (lineNo) {
+            await nextTick()
+            ;(editorRefs.value[key] as any)?.jumpToLine?.(lineNo)
+        }
+        return
     }
     try {
         const content = await DocumentService.GetContent(node.id)
-        currentFile.value = { id: node.id, name: node.name }
-        currentName.value = node.name
-        currentPath.value = fullPathOf(node)
-        originalContent = content
-        editorRef.value?.setContent(content)
-        if (lineNo) editorRef.value?.jumpToLine(lineNo)
-        else editorRef.value?.focus()
+        const kind = node.kind === 'md' ? 'md' : 'text'
+        const tab: DocTab = {
+            key,
+            id: node.id,
+            name: node.name,
+            path: fullPathOf(node),
+            kind,
+            original: content,
+            dirty: false,
+        }
+        tabs.value.push(tab)
+        activeKey.value = key
+        // 等编辑器组件挂载完成后再写入内容
+        await nextTick()
+        editorRefs.value[key]?.setContent(content)
+        if (lineNo) (editorRefs.value[key] as any)?.jumpToLine?.(lineNo)
+        else editorRefs.value[key]?.focus()
         selectedId.value = node.id
         treeRef.value?.setCurrentKey(node.id)
         leftTab.value = 'tree'
@@ -430,28 +540,45 @@ async function openDocument(
     }
 }
 
-function closeDocument() {
-    currentFile.value = null
-    currentName.value = ''
-    currentPath.value = ''
-    dirty.value = false
-    editorRef.value?.setContent('')
+async function closeTab(tab: DocTab) {
+    if (tab.dirty) {
+        const ok = await showConfirmDialog('关闭文档', `「${tab.name}」有未保存的更改，确定关闭？`, true, '不保存并关闭')
+        if (!ok) return
+    }
+    removeTabByKey(tab.key)
 }
 
-function onChange(value: string) {
-    if (currentFile.value) {
-        dirty.value = value !== originalContent
+// 关闭标签并释放对应编辑器实例
+function removeTabByKey(key: string) {
+    const idx = tabs.value.findIndex((t) => t.key === key)
+    if (idx < 0) return
+    tabs.value.splice(idx, 1)
+    delete editorRefs.value[key]
+    if (activeKey.value === key) {
+        activeKey.value = tabs.value[idx]?.key ?? tabs.value[idx - 1]?.key ?? null
     }
 }
 
+function removeTabByDocId(id: number) {
+    const tab = tabs.value.find((t) => t.id === id)
+    if (tab) removeTabByKey(tab.key)
+}
+
+function onChange(tab: DocTab, value: string) {
+    tab.dirty = value !== tab.original
+}
+
 async function save(): Promise<boolean> {
-    if (!currentFile.value || !editorRef.value) return true
-    const content = editorRef.value.getContent()
+    const tab = activeTab.value
+    if (!tab) return true
+    const ed = editorRefs.value[tab.key]
+    if (!ed) return true
+    const content = ed.getContent()
     saving.value = true
     try {
-        await DocumentService.SaveContent(currentFile.value.id, content)
-        originalContent = content
-        dirty.value = false
+        await DocumentService.SaveContent(tab.id, content)
+        tab.original = content
+        tab.dirty = false
         ElMessage.success('已保存')
         return true
     } catch (e: any) {
@@ -460,13 +587,6 @@ async function save(): Promise<boolean> {
     } finally {
         saving.value = false
     }
-}
-
-async function ensureSaved(): Promise<boolean> {
-    if (!dirty.value || !currentFile.value) return true
-    const ok = await showConfirmDialog('未保存的更改', '当前文档有未保存的更改，是否先保存？', false, '保存')
-    if (ok) return save()
-    return true // 不保存，丢弃更改
 }
 
 // ---------- 搜索 ----------
@@ -607,6 +727,12 @@ function openResult(row: SearchResult) {
     white-space: nowrap;
 }
 
+.md-tag {
+    transform: scale(0.8);
+    margin-left: 2px;
+    flex-shrink: 0;
+}
+
 .res-name {
     margin-left: 6px;
     overflow: hidden;
@@ -629,39 +755,77 @@ function openResult(row: SearchResult) {
     overflow: hidden;
 }
 
-.doc-editor-head {
+/* 多标签栏 */
+.doc-tabbar {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
+    gap: 2px;
+    padding: 4px 6px 0;
     border-bottom: 1px solid var(--border-color);
     flex-shrink: 0;
+    overflow-x: auto;
 }
 
-.doc-title {
-    font-family: var(--term-font);
+.doc-tab {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 10px;
     font-size: 12.5px;
-    color: var(--text-primary);
+    color: var(--text-secondary);
+    background: #1b1f27;
+    border: 1px solid var(--border-color);
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    cursor: pointer;
+    max-width: 200px;
+    flex-shrink: 0;
+    user-select: none;
+}
+
+.doc-tab.active {
+    background: #233049;
+    color: #7fb0ff;
+}
+
+.doc-tab-title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    min-width: 0;
 }
 
-.dirty-tag {
-    font-size: 12px;
+.doc-tab-dirty {
+    font-size: 10px;
     color: #e6c06c;
     flex-shrink: 0;
 }
 
-.head-spacer {
-    flex: 1;
+.doc-tab-close {
+    color: var(--text-secondary);
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.doc-tab-close:hover {
+    color: #f56c6c;
+    background: rgba(245, 108, 108, 0.15);
+}
+
+.doc-tab-actions {
+    margin-left: auto;
+    padding: 0 2px 4px;
+    flex-shrink: 0;
 }
 
 .editor-area {
     flex: 1;
     min-height: 0;
     position: relative;
+}
+
+.doc-pane {
+    position: absolute;
+    inset: 0;
 }
 
 .editor-empty {

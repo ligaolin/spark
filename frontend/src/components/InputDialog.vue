@@ -9,7 +9,16 @@
     <div class="input-dialog-body">
       <div v-for="f in fields" :key="f.key" class="id-field">
         <div class="id-label">{{ f.label }}</div>
+        <el-select
+          v-if="f.type === 'select'"
+          v-model="values[f.key]"
+          style="width: 100%"
+          @keyup.enter="confirm"
+        >
+          <el-option v-for="o in f.options || []" :key="o.value" :label="o.label" :value="o.value" />
+        </el-select>
         <el-input
+          v-else
           v-model="values[f.key]"
           :placeholder="f.placeholder"
           :type="f.type || 'text'"

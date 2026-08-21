@@ -19,9 +19,11 @@ import * as types$0 from "../types/models.js";
 
 /**
  * Create adds a new folder or file under parentID (0 = root) and returns it.
+ * kind 仅对文件有效："text"（默认）或 "md"（Markdown，可排版编辑）；名称以
+ * .md 结尾时自动视为 Markdown。
  */
-export function Create(parentID: number, name: string, nodeType: string): $CancellablePromise<model$0.DocNode> {
-    return $Call.ByID(3893971686, parentID, name, nodeType);
+export function Create(parentID: number, name: string, nodeType: string, kind: string): $CancellablePromise<model$0.DocNode> {
+    return $Call.ByID(3893971686, parentID, name, nodeType, kind);
 }
 
 /**

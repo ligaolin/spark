@@ -13,6 +13,11 @@
                 </el-icon><span>新建站点</span>
             </el-button>
             <span class="hint">站点可在文件夹间拖拽；点击链接右侧 ↗ 在右侧内嵌打开，多站点标签切换</span>
+            <div class="toolbar-spacer" />
+            <el-switch v-model="ignoreCert" size="small" />
+            <span class="ignore-cert-label" :class="{ active: ignoreCert }" title="开启后，SSL 证书无效 / 自签名 / 过期的站点也能在内嵌浏览器中打开（走本地代理，绕过证书校验）">
+                忽略证书
+            </span>
         </div>
 
         <div class="sites-body">
@@ -173,8 +178,11 @@
                             <div class="browser-frames">
                                 <div v-for="tab in browserTabs" :key="tab.key" v-show="tab.key === activeTabKey"
                                     class="frame-wrap">
-                                    <iframe :src="tab.url" class="browser-frame" />
+                                    <iframe :src="iframeSrc(tab.url)" class="browser-frame" />
                                 </div>
+                            </div>
+                            <div v-if="ignoreCert" class="proxy-badge">
+                                已开启「忽略证书」：内嵌页面经本地代理打开，可访问 SSL 有问题的站点
                             </div>
                         </div>
                     </div>
@@ -239,6 +247,26 @@ const browserTabs = ref<BrowserTab[]>([])
 const activeTabKey = ref<string | null>(null)
 const browserFullscreen = ref(false)
 let tabSeq = 0
+
+// 忽略证书：开启后内嵌浏览器走本地代理（后端忽略 TLS 证书校验抓取页面），
+// SSL 证书无效 / 自签名 / 过期的站点也能打开。
+const ignoreCert = ref(false)
+// 原始 URL -> 代理 URL 缓存（ProxyUrl 为异步调用）
+const proxyCache = reactive<Record<string, string>>({})
+
+function iframeSrc(raw: string): string {
+    if (!ignoreCert.value) return raw
+    const cached = proxyCache[raw]
+    if (cached) return cached
+    SiteService.ProxyUrl(raw)
+        .then((u) => {
+            if (u) proxyCache[raw] = u
+        })
+        .catch((e: any) => {
+            ElMessage.error(`开启忽略证书失败：${e?.message || e}`)
+        })
+    return raw
+}
 
 const showPass = reactive<Record<number, boolean>>({})
 
@@ -753,6 +781,38 @@ async function openInSystemBrowser(url?: string) {
 
 .sites-toolbar .el-button+span {
     margin-left: 4px;
+}
+
+.toolbar-spacer {
+    flex: 1;
+}
+
+.ignore-cert-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.ignore-cert-label.active {
+    color: #e6a23c;
+}
+
+.proxy-badge {
+    position: absolute;
+    left: 12px;
+    bottom: 10px;
+    z-index: 10;
+    font-size: 11.5px;
+    color: #e6a23c;
+    background: rgba(230, 162, 60, 0.12);
+    border: 1px solid rgba(230, 162, 60, 0.4);
+    border-radius: 4px;
+    padding: 3px 8px;
+    pointer-events: none;
+}
+
+.browser-area {
+    position: relative;
 }
 
 .hint {

@@ -28,6 +28,10 @@ export const useSettingsStore = defineStore('settings', {
     windowCloseAction(state): 'minimize' | 'exit' {
       return state.values['window.closeAction'] === 'exit' ? 'exit' : 'minimize'
     },
+    // 编辑器是否自动换行（长行折行显示）
+    editorWordWrap(state): boolean {
+      return state.values['editor.wordWrap'] !== '0'
+    },
   },
 
   actions: {

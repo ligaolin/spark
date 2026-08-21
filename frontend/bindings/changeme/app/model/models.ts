@@ -41,6 +41,11 @@ export interface DocNode {
      * "folder" | "file"
      */
     "type": string;
+
+    /**
+     * 文件类型："text" 纯文本 | "md" Markdown（可排版预览）
+     */
+    "kind": string;
     "content": string;
 
     /**

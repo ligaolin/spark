@@ -37,8 +37,12 @@ type ftpSession struct {
 	id   string
 	conn *ftp.ServerConn
 
-	stopKA chan struct{}
-	kaOnce sync.Once
+	// mu 串行化对 FTP 控制连接的所有操作：jlaffaye/ftp 的 ServerConn 不是并发
+	// 安全的，保活 NOOP 与列表/传输并发读写同一个 bufio 会崩溃（slice bounds
+	// out of range panic）。
+	mu      sync.Mutex
+	stopKA  chan struct{}
+	kaOnce  sync.Once
 }
 
 // ServiceName implements application.ServiceName.
@@ -91,8 +95,13 @@ func (s *FTPFileService) Connect(opts types.ConnectOptions) (string, error) {
 	s.mu.Unlock()
 
 	// 保活：定期发送 NOOP，防止服务器空闲超时断开；连接死亡时通知前端并清理（间隔可在设置中调整）
+	// 注意：控制连接忙（列表/传输进行中）时跳过本轮 NOOP，避免与传输并发读写同一连接
 	if ka := settings.GetInt("keepalive.interval", 20); ka > 0 {
 		go sshlib.KeepAliveLoop(sess.stopKA, func() error {
+			if !sess.mu.TryLock() {
+				return nil // 连接正忙，本轮跳过；操作本身也在保活
+			}
+			defer sess.mu.Unlock()
 			return conn.NoOp()
 		}, time.Duration(ka)*time.Second, 10*time.Second, 3, func() {
 			application.Get().Event.Emit("session:closed", types.SessionClosed{
@@ -122,6 +131,8 @@ func (s *FTPFileService) Disconnect(id string) error {
 		return nil
 	}
 	sess.kaOnce.Do(func() { close(sess.stopKA) })
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	return sess.conn.Quit()
 }
 
@@ -131,6 +142,8 @@ func (s *FTPFileService) Home(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	return sess.conn.CurrentDir()
 }
 
@@ -140,6 +153,8 @@ func (s *FTPFileService) List(id, remotePath string) ([]types.FileEntry, error) 
 	if err != nil {
 		return nil, err
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	if remotePath == "" {
 		remotePath, err = sess.conn.CurrentDir()
 		if err != nil {
@@ -172,6 +187,8 @@ func (s *FTPFileService) Mkdir(id, remotePath string) error {
 	if err != nil {
 		return err
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	return ensureRemoteDir(sess.conn, remotePath)
 }
 
@@ -181,6 +198,8 @@ func (s *FTPFileService) Rename(id, oldPath, newPath string) error {
 	if err != nil {
 		return err
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	return sess.conn.Rename(oldPath, newPath)
 }
 
@@ -190,6 +209,8 @@ func (s *FTPFileService) Remove(id, remotePath string, isDir bool) error {
 	if err != nil {
 		return err
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	if isDir {
 		return sess.conn.RemoveDirRecur(remotePath)
 	}
@@ -203,6 +224,8 @@ func (s *FTPFileService) Search(id, dir, pattern, mode string) ([]types.SearchRe
 	if err != nil {
 		return nil, err
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
 		return nil, errors.New("请输入搜索关键字")
@@ -280,14 +303,16 @@ func (s *FTPFileService) ReadFile(id, remotePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	rc, err := sess.conn.Retr(remotePath)
 	if err != nil {
-		return "", err
+		return "", ftpErrHint(err)
 	}
 	defer rc.Close()
 	data, err := io.ReadAll(io.LimitReader(rc, fileutil.MaxEditSize+1))
 	if err != nil {
-		return "", err
+		return "", ftpErrHint(err)
 	}
 	if int64(len(data)) > fileutil.MaxEditSize {
 		return "", fmt.Errorf("文件过大（超过 %d MB），无法在编辑器中打开", fileutil.MaxEditSize>>20)
@@ -304,7 +329,9 @@ func (s *FTPFileService) WriteFile(id, remotePath, content string) error {
 	if err != nil {
 		return err
 	}
-	return sess.conn.Stor(remotePath, strings.NewReader(content))
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	return ftpErrHint(sess.conn.Stor(remotePath, strings.NewReader(content)))
 }
 
 // Upload copies a local file or directory (recursively) to the remote path.
@@ -314,14 +341,16 @@ func (s *FTPFileService) Upload(id, localPath, remotePath string) error {
 	if err != nil {
 		return err
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	fi, err := os.Stat(localPath)
 	if err != nil {
 		return err
 	}
 	if fi.IsDir() {
-		return s.uploadDir(sess.conn, id, localPath, remotePath)
+		return ftpErrHint(s.uploadDir(sess.conn, id, localPath, remotePath))
 	}
-	return s.uploadFile(sess.conn, id, localPath, remotePath)
+	return ftpErrHint(s.uploadFile(sess.conn, id, localPath, remotePath))
 }
 
 func (s *FTPFileService) uploadDir(conn *ftp.ServerConn, id, localDir, remoteDir string) error {
@@ -403,10 +432,12 @@ func (s *FTPFileService) Download(id, remotePath, localPath string, isDir bool) 
 	if err != nil {
 		return err
 	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
 	if isDir {
-		return s.downloadDir(sess.conn, id, remotePath, localPath)
+		return ftpErrHint(s.downloadDir(sess.conn, id, remotePath, localPath))
 	}
-	return s.downloadFile(sess.conn, id, remotePath, localPath)
+	return ftpErrHint(s.downloadFile(sess.conn, id, remotePath, localPath))
 }
 
 func (s *FTPFileService) downloadDir(conn *ftp.ServerConn, id, remoteDir, localDir string) error {
@@ -501,6 +532,20 @@ func joinRemote(dir, name string) string {
 		return "/" + name
 	}
 	return dir + "/" + name
+}
+
+// ftpErrHint 在数据连接相关错误上补充被动端口提示（常见原因：服务器防火墙/
+// 安全组未放行 FTP 被动端口范围，或服务器被动端口配置错误）。
+func ftpErrHint(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "dial tcp") || strings.Contains(msg, "refused") ||
+		strings.Contains(msg, "no route") || strings.Contains(msg, "timed out") {
+		return fmt.Errorf("%w（无法连接 FTP 数据端口——通常是服务器防火墙/安全组未放行被动端口范围，或服务器被动模式配置错误，请在服务器 FTP 设置中检查被动端口并放行）", err)
+	}
+	return err
 }
 
 func entryTypeName(t ftp.EntryType) string {

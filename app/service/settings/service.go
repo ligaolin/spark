@@ -45,7 +45,8 @@ func (s *SettingsService) Set(key, value string) error {
 // GetString reads a setting, returning def when absent.
 func GetString(key, def string) string {
 	var it model.Setting
-	if err := db.GetDB().First(&it, "key = ?", key).Error; err != nil {
+	// 用 Find（而非 First）避免不存在的键每次都打 "record not found" 日志
+	if err := db.GetDB().Model(&model.Setting{}).Where("key = ?", key).Limit(1).Find(&it).Error; err != nil {
 		return def
 	}
 	return it.Value

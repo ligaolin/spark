@@ -44,14 +44,16 @@ import { onBeforeUnmount, onMounted } from 'vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { useRoute, useRouter } from 'vue-router'
 import { Window } from '@wailsio/runtime'
-import { Monitor, FolderOpened, Connection, Link, Setting, Notebook, Collection } from '@element-plus/icons-vue'
+import { Monitor, FolderOpened, Connection, Link, Setting, Notebook, Collection, EditPen } from '@element-plus/icons-vue'
 import DialogHost from './components/DialogHost.vue'
 import { useShortcutsStore, eventToCombo } from './stores/shortcuts'
+import { useSettingsStore } from './stores/settings'
 import { emit } from './utils/bus'
 
 const route = useRoute()
 const router = useRouter()
 const shortcuts = useShortcutsStore()
+const settings = useSettingsStore()
 
 const menu = [
   { path: '/connections', label: '连接管理', icon: Connection },
@@ -60,6 +62,7 @@ const menu = [
   { path: '/ftp', label: 'FTP 文件', icon: Link },
   { path: '/documents', label: '文档管理', icon: Notebook },
   { path: '/sites', label: '站点管理', icon: Collection },
+  { path: '/remote-editor', label: '远程编辑器', icon: EditPen },
 ]
 
 // 全局快捷键分发（输入框/终端等可输入区域不拦截；纯功能键 F1~F12 除外）
@@ -111,6 +114,7 @@ function onKeyDown(e: KeyboardEvent) {
 
 onMounted(() => {
   shortcuts.load()
+  settings.load()
   window.addEventListener('keydown', onKeyDown)
 })
 

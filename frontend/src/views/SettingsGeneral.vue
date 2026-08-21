@@ -41,6 +41,19 @@
 
     <div class="cfg-row">
       <div class="cfg-info">
+        <div class="cfg-label">编辑器自动换行</div>
+        <div class="cfg-desc">代码 / 文本编辑器（文档管理、远程文件编辑）中长行是否折行显示；关闭时出现横向滚动条。保存后立即对已打开的编辑器生效</div>
+      </div>
+      <div class="cfg-ctrl">
+        <el-switch v-model="wordWrapVal" />
+        <el-button size="small" type="primary" :loading="savingWordWrap" @click="saveWordWrap">
+          保存
+        </el-button>
+      </div>
+    </div>
+
+    <div class="cfg-row">
+      <div class="cfg-info">
         <div class="cfg-label">点击窗口关闭按钮时</div>
         <div class="cfg-desc">
           「缩小到托盘」会把窗口隐藏到任务栏右下角的托盘区，程序继续在后台运行（连接保持不断）；
@@ -72,10 +85,12 @@ const settings = useSettingsStore()
 const keepaliveVal = ref(20)
 const processVal = ref(5)
 const fontVal = ref(13)
+const wordWrapVal = ref(true)
 const closeActionVal = ref<'minimize' | 'exit'>('minimize')
 const savingKeepalive = ref(false)
 const savingProcess = ref(false)
 const savingFont = ref(false)
+const savingWordWrap = ref(false)
 const savingCloseAction = ref(false)
 
 onMounted(async () => {
@@ -83,6 +98,7 @@ onMounted(async () => {
   keepaliveVal.value = settings.keepaliveInterval
   processVal.value = settings.processRefreshInterval
   fontVal.value = settings.terminalFontSize
+  wordWrapVal.value = settings.editorWordWrap
   closeActionVal.value = settings.windowCloseAction
 })
 
@@ -133,6 +149,18 @@ async function saveCloseAction() {
     ElMessage.error(`保存失败：${e?.message || e}`)
   } finally {
     savingCloseAction.value = false
+  }
+}
+
+async function saveWordWrap() {
+  savingWordWrap.value = true
+  try {
+    await settings.set('editor.wordWrap', wordWrapVal.value ? '1' : '0')
+    ElMessage.success('已保存（已打开的编辑器立即生效）')
+  } catch (e: any) {
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  } finally {
+    savingWordWrap.value = false
   }
 }
 </script>

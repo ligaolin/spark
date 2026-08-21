@@ -14,6 +14,8 @@ import { LanguageDescription } from '@codemirror/language'
 const props = defineProps<{
   // 用于根据文件扩展名自动匹配语法高亮
   filename?: string
+  // 是否自动换行（长行折行显示，默认关闭）
+  wrap?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -54,6 +56,7 @@ const hostRef = ref<HTMLElement>()
 let view: EditorView | null = null
 const languageConf = new Compartment()
 const editableConf = new Compartment()
+const wrapConf = new Compartment()
 
 onMounted(() => {
   const host = hostRef.value
@@ -66,6 +69,7 @@ onMounted(() => {
       EditorState.phrases.of(zhCNPhrases),
       languageConf.of([]),
       editableConf.of(EditorView.editable.of(true)),
+      wrapConf.of(props.wrap ? EditorView.lineWrapping : []),
       EditorView.updateListener.of((u) => {
         if (u.docChanged) emit('change', u.state.doc.toString())
       }),
@@ -87,6 +91,14 @@ onMounted(() => {
 watch(
   () => props.filename,
   (f) => void applyLanguage(f),
+)
+
+watch(
+  () => props.wrap,
+  (w) => {
+    if (!view) return
+    view.dispatch({ effects: wrapConf.reconfigure(w ? EditorView.lineWrapping : []) })
+  },
 )
 
 async function applyLanguage(filename?: string) {

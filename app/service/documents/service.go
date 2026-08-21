@@ -28,7 +28,9 @@ func (s *DocumentService) List() ([]model.DocNode, error) {
 }
 
 // Create adds a new folder or file under parentID (0 = root) and returns it.
-func (s *DocumentService) Create(parentID uint, name, nodeType string) (model.DocNode, error) {
+// kind 仅对文件有效："text"（默认）或 "md"（Markdown，可排版编辑）；名称以
+// .md 结尾时自动视为 Markdown。
+func (s *DocumentService) Create(parentID uint, name, nodeType, kind string) (model.DocNode, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return model.DocNode{}, errors.New("名称不能为空")
@@ -44,6 +46,16 @@ func (s *DocumentService) Create(parentID uint, name, nodeType string) (model.Do
 		Name:     name,
 		Type:     nodeType,
 		Sort:     nextSort(parentID),
+	}
+	if nodeType == "file" {
+		k := strings.ToLower(strings.TrimSpace(kind))
+		if k != "md" {
+			k = "text"
+		}
+		if strings.HasSuffix(strings.ToLower(name), ".md") {
+			k = "md"
+		}
+		n.Kind = k
 	}
 	if err := db.GetDB().Create(&n).Error; err != nil {
 		return n, err
@@ -67,6 +79,21 @@ func (s *DocumentService) Rename(id uint, name string) error {
 	if name != n.Name {
 		if err := checkNameConflict(n.ParentID, name); err != nil {
 			return err
+		}
+	}
+	if n.Type != "folder" {
+		// 重命名时按扩展名同步文件类型（.md → Markdown）
+		newKind := n.Kind
+		if newKind != "md" {
+			newKind = "text"
+		}
+		if strings.HasSuffix(strings.ToLower(name), ".md") {
+			newKind = "md"
+		} else if strings.HasSuffix(strings.ToLower(n.Name), ".md") {
+			newKind = "text"
+		}
+		if newKind != n.Kind {
+			_ = db.GetDB().Model(&model.DocNode{}).Where("id = ?", id).Update("kind", newKind).Error
 		}
 	}
 	return db.GetDB().Model(&model.DocNode{}).Where("id = ?", id).Update("name", name).Error

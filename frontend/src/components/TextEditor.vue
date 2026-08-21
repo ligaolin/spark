@@ -27,7 +27,7 @@
     </div>
 
     <div class="editor-wrap">
-      <CodeEditor ref="editorRef" :filename="fileName" @change="onChange" @save="save" />
+      <CodeEditor ref="editorRef" :filename="fileName" :wrap="wrap" @change="onChange" @save="save" />
       <div v-if="loading" class="editor-loading-overlay">
         <el-icon class="is-loading"><Loading /></el-icon>
         <span>正在读取文件…</span>
@@ -42,7 +42,11 @@ import { ElMessage } from 'element-plus'
 import { EditPen, Loading } from '@element-plus/icons-vue'
 import CodeEditor from './CodeEditor.vue'
 import { showConfirmDialog } from '../utils/dialog'
+import { useSettingsStore } from '../stores/settings'
 import type { FileBackend } from '../utils/fileBackend'
+
+const settings = useSettingsStore()
+const wrap = ref(true)
 
 const visible = ref(false)
 const fileName = ref('')
@@ -73,6 +77,7 @@ async function open(
   originalContent = ''
   ready.value = false
   dirty.value = false
+  wrap.value = settings.editorWordWrap
   if (visible.value) {
     await init()
   } else {

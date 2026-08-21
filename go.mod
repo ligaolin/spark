@@ -12,6 +12,10 @@ require (
 	gorm.io/gorm v1.31.2
 )
 
+// 本地补丁：部分 FTP 服务器对数据命令回复 200 而非标准 125/150/226，
+// 上游 jlaffaye/ftp 会报错（如打开文件失败: 200 "Ready to proceed"）。
+replace github.com/jlaffaye/ftp => ./third_party/jlaffaye/ftp
+
 require (
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/sijms/go-ora/v2 v2.9.0 // indirect

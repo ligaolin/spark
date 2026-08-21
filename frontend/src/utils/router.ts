@@ -21,6 +21,10 @@ const routes = [
     path: '/sites',
     component: () => import('../views/SitesView.vue'),
   },
+  {
+    path: '/remote-editor',
+    component: () => import('../views/RemoteEditorView.vue'),
+  },
   { path: '/:pathMatch(.*)*', redirect: '/terminal' },
 ]
 

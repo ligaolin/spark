@@ -121,8 +121,8 @@
 
         <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
 
-        <!-- 文本编辑器：双击文件打开 -->
-        <TextEditor ref="editorRef" />
+        <!-- 弹出式文本编辑器：仅非文档式（dockEditor=false）时使用 -->
+        <TextEditor v-if="!props.dockEditor" ref="editorRef" />
         <!-- 搜索：文件名 / 文件内容，递归搜索 -->
         <SearchDialog ref="searchRef" :backend="backend" @pick="onSearchPick" />
     </div>
@@ -141,8 +141,8 @@ import {
     Link,
     FolderAdd,
     Upload,
-    Download,
     Edit,
+    EditPen,
     Delete,
     Lock,
     FolderOpened,
@@ -172,6 +172,9 @@ const props = defineProps<{
     favKey?: number
     // 启用复选框多选（用于批量上传）
     multiSelect?: boolean
+    // 文档式编辑器：开启后文件不在弹出窗中编辑，改为发 action（open-file /
+    // open-in-editor）交给父组件的编辑板块处理
+    dockEditor?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -254,6 +257,13 @@ const editorRef = ref<InstanceType<typeof TextEditor>>()
 const searchRef = ref<InstanceType<typeof SearchDialog>>()
 
 function openEditor(file: { path: string; name: string }, lineNo?: number) {
+  if (props.dockEditor) {
+    emit('action', {
+      action: 'open-file',
+      entry: { path: file.path, name: file.name, isDir: false },
+    })
+    return
+  }
   editorRef.value?.open(props.backend, file, lineNo)
 }
 
@@ -726,6 +736,18 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
             { key: 'pick-upload', label: '上传文件…', icon: Upload, disabled: !linked.value },
             { key: 'pick-upload-dir', label: '上传目录…', icon: FolderAdd, disabled: !linked.value },
             'divider',
+            // 文档式编辑板块：打开当前目录
+            ...(props.dockEditor
+                ? [
+                      {
+                          key: 'open-in-editor',
+                          label: '用编辑器打开当前目录',
+                          icon: EditPen,
+                          disabled: !linked.value || !currentPath.value,
+                      } as CtxItem,
+                      'divider' as const,
+                  ]
+                : []),
             { key: 'mkdir', label: '新建目录', icon: FolderAdd },
             { key: 'refresh', label: '刷新', icon: Refresh },
             { key: 'up', label: '返回上级', icon: Top, disabled: isRoot.value },
@@ -740,40 +762,28 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
 
     if (multi) {
         const n = selectedRows.value.length
+        // 单栏远程模式下多选仅支持删除
         return [
-            isLocal
-                ? { key: 'upload-multi', label: `上传选中（${n}）`, icon: Upload, disabled: !linked.value }
-                : { key: 'download-multi', label: `下载选中（${n}）`, icon: Download, disabled: !linked.value },
             { key: 'remove', label: `删除选中（${n}）`, icon: Delete, danger: true },
         ]
     }
 
     // 文件/目录：操作条目
     const items: (CtxItem | 'divider')[] = []
-    if (isLocal) {
-        items.push({
-            key: 'upload-entry',
-            label: entry.isDir ? '上传此目录' : '上传此文件',
-            icon: Upload,
-            disabled: !linked.value,
-        })
-    } else {
-        items.push({
-            key: 'download-entry',
-            label: entry.isDir ? '下载此目录' : '下载此文件',
-            icon: Download,
-            disabled: !linked.value,
-        })
+    items.push({
+        key: 'open',
+        label: entry.isDir ? '打开 / 进入' : '打开（编辑）',
+        icon: FolderOpened,
+    })
+    if (props.dockEditor && !isLocal) {
+        items.push(
+            'divider',
+            entry.isDir
+                ? { key: 'open-in-editor', label: '用编辑器打开目录', icon: EditPen, disabled: !linked.value }
+                : { key: 'open-in-editor', label: '用编辑器打开当前目录', icon: EditPen, disabled: !linked.value },
+        )
     }
-    items.push(
-        {
-            key: 'open',
-            label: entry.isDir ? '打开 / 进入' : '打开（编辑）',
-            icon: FolderOpened,
-        },
-        'divider',
-        { key: 'rename', label: '重命名', icon: Edit },
-    )
+    items.push('divider', { key: 'rename', label: '重命名', icon: Edit })
     if (!isLocal && props.backend.chmod) {
         items.push({ key: 'chmod', label: '修改权限', icon: Lock })
     }
@@ -790,18 +800,6 @@ async function onCtxPick(item: CtxItem) {
         case 'pick-upload-dir':
             emit('action', { action: 'pick-upload-dir' })
             break
-        case 'upload-entry':
-            if (entry) emit('action', { action: 'upload-entry', entry: { path: entry.path, name: entry.name, isDir: entry.isDir } })
-            break
-        case 'download-entry':
-            if (entry) emit('action', { action: 'download-entry', entry: { path: entry.path, name: entry.name, isDir: entry.isDir } })
-            break
-        case 'upload-multi':
-            emit('action', { action: 'upload-multi' })
-            break
-        case 'download-multi':
-            emit('action', { action: 'download-multi' })
-            break
         case 'mkdir':
             await mkdir()
             break
@@ -817,6 +815,20 @@ async function onCtxPick(item: CtxItem) {
         case 'open':
             if (entry?.isDir) await cd(entry.path)
             else if (entry) openEditor(entry)
+            break
+        case 'open-in-editor':
+            // 目录 → 该目录；文件 / 空白 → 当前目录
+            if (entry && entry.isDir) {
+                emit('action', {
+                    action: 'open-in-editor',
+                    entry: { path: entry.path, name: entry.name, isDir: true },
+                })
+            } else if (currentPath.value) {
+                emit('action', {
+                    action: 'open-in-editor',
+                    entry: { path: currentPath.value, name: '', isDir: true },
+                })
+            }
             break
         case 'rename':
             await rename()

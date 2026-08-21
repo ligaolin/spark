@@ -130,6 +130,20 @@ export function OpenInBrowser(url: string): $CancellablePromise<void> {
 }
 
 /**
+ * ProxyBase returns the local proxy base URL, starting the proxy on first use.
+ */
+export function ProxyBase(): $CancellablePromise<string> {
+    return $Call.ByID(12053995);
+}
+
+/**
+ * ProxyUrl converts a raw URL into a proxy URL for the embedded iframe.
+ */
+export function ProxyUrl(raw: string): $CancellablePromise<string> {
+    return $Call.ByID(1087667095, raw);
+}
+
+/**
  * RenameFolder renames a folder.
  */
 export function RenameFolder(id: number, name: string): $CancellablePromise<void> {

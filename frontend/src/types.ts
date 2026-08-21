@@ -62,6 +62,9 @@ export interface PanelAction {
     | 'download-entry'
     | 'upload-multi'
     | 'download-multi'
+    // 用编辑器打开（文档式编辑板块）：文件 / 目录
+    | 'open-file'
+    | 'open-in-editor'
   entry?: { path: string; name: string; isDir: boolean }
 }
 
