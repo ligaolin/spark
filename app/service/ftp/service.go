@@ -167,6 +167,11 @@ func (s *FTPFileService) List(id, remotePath string) ([]types.FileEntry, error) 
 	}
 	out := make([]types.FileEntry, 0, len(entries))
 	for _, e := range entries {
+		// 部分 FTP 服务器的 LIST 会返回 . 和 ..（当前目录/上级目录），
+		// 展示层过滤掉，避免出现在文件列表中。
+		if e.Name == "." || e.Name == ".." {
+			continue
+		}
 		out = append(out, types.FileEntry{
 			Name:       e.Name,
 			Path:       joinRemote(remotePath, e.Name),
