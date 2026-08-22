@@ -74,7 +74,7 @@ import { openDirInEditor, openFileInEditor, closeAllPanels } from '../stores/rem
 import { SFTPFileService, EVENTS, LocalService } from '../utils/wails'
 import type { ConnectOptions } from '../utils/wails'
 import type { DropPayload, PanelAction } from '../types'
-import { joinPath, makeSftpBackend } from '../utils/fileBackend'
+import { joinPath, makeSftpBackend, type FileBackend } from '../utils/fileBackend'
 import { resolveHostKeyIssue } from '../utils/hostkey'
 
 const props = defineProps<{
@@ -97,7 +97,69 @@ const connected = computed(() => !!sessionId.value)
 
 // 远程后端：方法在调用时读取 sessionId.value（getter 形式），
 // 连接成功后再调用 goHome 等也能拿到最新会话 id，避免旧后端对象竞态
-const remoteBackend = makeSftpBackend(() => sessionId.value)
+const rawBackend = makeSftpBackend(() => sessionId.value)
+
+// ---------- 会话丢失自动重连 ----------
+// 移动端网络不稳时 SFTP 会话可能被保活判定死亡而清理，但前端可能尚未
+// 收到 session:closed；在「会话不存在/已关闭」类错误时自动重连并重试一次。
+
+function isSessionGone(e: any): boolean {
+    const m = String(e?.message || e)
+    return m.includes('会话') && (m.includes('不存在') || m.includes('已关闭'))
+}
+
+let reconnectPromise: Promise<boolean> | null = null
+let reconnectingNow = false
+async function reconnectAndWait(): Promise<boolean> {
+    if (!props.opts) return false
+    if (reconnectPromise) {
+        // 就是本次重连内部（如 connect 的 goHome）再次触发时直接放弃，
+        // 避免自等待死锁。
+        if (reconnectingNow) return false
+        return reconnectPromise
+    }
+    if (sessionId.value) {
+        SFTPFileService.Disconnect(sessionId.value).catch(() => undefined)
+        sessionId.value = ''
+    }
+    remotePanel.value?.clear()
+    reconnectingNow = true
+    reconnectPromise = connect()
+        .then(() => !!sessionId.value)
+        .finally(() => {
+            reconnectPromise = null
+            reconnectingNow = false
+        })
+    return reconnectPromise
+}
+
+function withReconnect(fn: (...args: any[]) => Promise<any>) {
+    return async (...args: any[]) => {
+        try {
+            return await fn(...args)
+        } catch (e) {
+            if (isSessionGone(e) && (await reconnectAndWait())) {
+                return await fn(...args)
+            }
+            throw e
+        }
+    }
+}
+
+const remoteBackend: FileBackend = {
+    ...rawBackend,
+    home: withReconnect(rawBackend.home),
+    list: withReconnect(rawBackend.list),
+    mkdir: withReconnect(rawBackend.mkdir),
+    rename: withReconnect(rawBackend.rename),
+    remove: withReconnect(rawBackend.remove),
+    chmod: withReconnect(rawBackend.chmod!),
+    upload: withReconnect(rawBackend.upload),
+    download: withReconnect(rawBackend.download),
+    readFile: withReconnect(rawBackend.readFile),
+    writeFile: withReconnect(rawBackend.writeFile),
+    search: withReconnect(rawBackend.search),
+}
 
 function basename(p: string): string {
     const parts = p.split(/[\\/]/)
@@ -106,17 +168,28 @@ function basename(p: string): string {
 
 // ---------- 连接生命周期 ----------
 
+// 连接序号：每次连接请求递增，用于丢弃「过期」的在途连接结果，
+// 避免切标签/重连时旧的连接回写覆盖新会话（竞态导致"会话不存在"）。
+let connectSeq = 0
+
 async function connect(hostKeyRetry = 0) {
     const opts = props.opts
     if (!opts) return
+    const seq = ++connectSeq
     connecting.value = true
     error.value = ''
     try {
         const id = await SFTPFileService.Connect(opts)
+        if (seq !== connectSeq) {
+            // 期间有更新的连接请求，本次结果作废并清理掉这个多余会话
+            SFTPFileService.Disconnect(id).catch(() => undefined)
+            return
+        }
         sessionId.value = id
         sessionLabel.value = `${opts.username}@${opts.host}:${opts.port || 22}`
         await remotePanel.value?.goHome()
     } catch (e: any) {
+        if (seq !== connectSeq) return
         if (hostKeyRetry === 0) {
             const accepted = await resolveHostKeyIssue(e, opts)
             if (accepted) {
@@ -127,11 +200,12 @@ async function connect(hostKeyRetry = 0) {
         sessionId.value = ''
         error.value = e?.message || String(e)
     } finally {
-        connecting.value = false
+        if (seq === connectSeq) connecting.value = false
     }
 }
 
 function disconnect() {
+    connectSeq++ // 使在途连接失效
     const id = sessionId.value
     sessionId.value = ''
     if (id) {
