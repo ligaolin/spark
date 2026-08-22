@@ -65,7 +65,7 @@
             <el-button v-if="mode === 'sftp'" size="small" :disabled="!connected" @click="remotePanel?.chmod()">
               权限
             </el-button>
-            <span class="upload-hint">上传/上传目录选择本地内容，下载可保存到指定目录（未选择则用系统下载目录）；也可直接从资源管理器拖文件/文件夹到面板上传</span>
+            <span class="upload-hint">可从资源管理器拖文件/文件夹到面板上传</span>
           </template>
         </FilePanel>
       </div>
@@ -212,6 +212,7 @@ function optsFromConn(conn: SavedConnection): ConnectOptions {
     useKey: conn.useKey,
     privateKey: conn.privateKey,
     passphrase: conn.passphrase,
+    forwardAgent: conn.forwardAgent,
     defaultDir: conn.defaultDir,
     tls: conn.tls,
     insecure: false,
@@ -241,6 +242,7 @@ async function onQuickConnect(opts: ConnectOptions, save: boolean) {
           useKey: opts.useKey,
           privateKey: opts.privateKey,
           passphrase: opts.passphrase,
+          forwardAgent: opts.forwardAgent,
           defaultDir: opts.defaultDir || '',
           tls: !!opts.tls,
         }),

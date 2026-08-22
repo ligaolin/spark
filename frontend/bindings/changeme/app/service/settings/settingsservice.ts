@@ -25,8 +25,24 @@ export function GetVersion(): $CancellablePromise<string> {
 }
 
 /**
+ * IsAutoStart reports whether the app is registered to start at login/boot.
+ */
+export function IsAutoStart(): $CancellablePromise<boolean> {
+    return $Call.ByID(156769008);
+}
+
+/**
  * Set stores (or updates) a setting value.
  */
 export function Set(key: string, value: string): $CancellablePromise<void> {
     return $Call.ByID(4140224569, key, value);
+}
+
+/**
+ * SetAutoStart enables or disables launching the app at login/boot.
+ * 复用 Wails v3 内置的 AutostartManager（Windows 注册表 Run 键 / macOS
+ * SMAppService 或 LaunchAgent / Linux autostart）。
+ */
+export function SetAutoStart(enabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3466416522, enabled);
 }

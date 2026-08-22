@@ -29,7 +29,7 @@
         <div class="tab-bar">
           <div v-for="tab in store.tabs" :key="tab.key" class="tab"
             :class="{ active: tab.key === store.activeKey }" @click="store.setActive(tab.key)"
-            @auxclick="onMiddleClick(tab.key, $event)">
+            @auxclick="onMiddleClick(tab.key, $event)" @contextmenu.prevent="onTabContext($event, tab)">
             <span class="tab-dot" :class="tab.status"></span>
             <span class="tab-title">{{ tab.title }}<template v-if="tab.shell">（{{ shellLabel(tab.shell) }}）</template></span>
             <el-icon class="tab-close" @click.stop="store.removeTab(tab.key)">
@@ -53,18 +53,30 @@
         </div>
       </template>
     </template>
+
+    <ContextMenu v-model="tabCtxVisible" :x="tabCtxX" :y="tabCtxY" :items="tabCtxItems" @pick="onTabCtxPick" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Platform, Close, Plus } from '@element-plus/icons-vue'
+import { Platform, Close, Plus, CloseBold, DArrowRight, CircleClose } from '@element-plus/icons-vue'
 import LocalTerminalPane from '../components/LocalTerminalPane.vue'
-import { useLocalTerminalStore } from '../stores/localTerminal'
+import ContextMenu from '../components/ContextMenu.vue'
+import type { CtxItem } from '../components/ContextMenu.vue'
+import { useLocalTerminalStore, type LocalTerminalTab } from '../stores/localTerminal'
 import { isAndroidApp } from '../utils/platform'
 
 const store = useLocalTerminalStore()
 const android = isAndroidApp()
+
+// 标签页右键菜单
+const tabCtxVisible = ref(false)
+const tabCtxX = ref(0)
+const tabCtxY = ref(0)
+const tabCtxItems = ref<(CtxItem | 'divider')[]>([])
+const tabCtxTab = ref<LocalTerminalTab | null>(null)
+const tabCtxIndex = ref(-1)
 
 // 新建终端使用的 shell（'' = 平台默认，Windows 为 cmd.exe）
 const shellChoice = ref('')
@@ -79,6 +91,56 @@ function newTerminal() {
 
 function onMiddleClick(key: string, e: MouseEvent) {
   if (e.button === 1) store.removeTab(key)
+}
+
+// ---------- 标签页右键 ----------
+
+function onTabContext(event: MouseEvent, tab: LocalTerminalTab) {
+  event.preventDefault()
+  tabCtxTab.value = tab
+  tabCtxIndex.value = store.tabs.findIndex((t) => t.key === tab.key)
+  tabCtxItems.value = buildTabCtx()
+  tabCtxX.value = event.clientX
+  tabCtxY.value = event.clientY
+  tabCtxVisible.value = false
+  requestAnimationFrame(() => {
+    tabCtxVisible.value = true
+  })
+}
+
+function buildTabCtx(): (CtxItem | 'divider')[] {
+  const total = store.tabs.length
+  const idx = tabCtxIndex.value
+  return [
+    { key: 'close-current', label: '关闭当前', icon: Close, disabled: total === 0 },
+    { key: 'close-others', label: '关闭其他', icon: CloseBold, disabled: total <= 1 },
+    { key: 'close-right', label: '关闭右边', icon: DArrowRight, disabled: idx < 0 || idx >= total - 1 },
+    { key: 'close-all', label: '关闭全部', icon: CircleClose, disabled: total === 0 },
+  ]
+}
+
+function onTabCtxPick(item: CtxItem) {
+  const tab = tabCtxTab.value
+  if (!tab) return
+  const idx = store.tabs.findIndex((t) => t.key === tab.key)
+  switch (item.key) {
+    case 'close-current':
+      store.removeTab(tab.key)
+      break
+    case 'close-others':
+      closeTabs(store.tabs.filter((t) => t.key !== tab.key))
+      break
+    case 'close-right':
+      closeTabs(idx >= 0 ? store.tabs.slice(idx + 1) : [])
+      break
+    case 'close-all':
+      closeTabs([...store.tabs])
+      break
+  }
+}
+
+function closeTabs(list: LocalTerminalTab[]) {
+  for (const t of list) store.removeTab(t.key)
 }
 </script>
 

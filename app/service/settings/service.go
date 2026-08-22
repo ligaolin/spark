@@ -10,6 +10,8 @@ import (
 	"changeme/app/model"
 	"changeme/app/service/db"
 	"changeme/app/service/version"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // SettingsService exposes the configuration store to the frontend.
@@ -63,4 +65,24 @@ func GetInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// SetAutoStart enables or disables launching the app at login/boot.
+// 复用 Wails v3 内置的 AutostartManager（Windows 注册表 Run 键 / macOS
+// SMAppService 或 LaunchAgent / Linux autostart）。
+func (s *SettingsService) SetAutoStart(enabled bool) error {
+	am := application.Get().Autostart
+	if enabled {
+		return am.Enable()
+	}
+	return am.Disable()
+}
+
+// IsAutoStart reports whether the app is registered to start at login/boot.
+func (s *SettingsService) IsAutoStart() bool {
+	enabled, err := application.Get().Autostart.IsEnabled()
+	if err != nil {
+		return false
+	}
+	return enabled
 }

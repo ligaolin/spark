@@ -19,6 +19,7 @@
           class="re-tab"
           :class="{ active: remoteEditor.activeId === p.id }"
           @click="remoteEditor.activeId = p.id"
+          @contextmenu.prevent="onTabContext($event, p)"
         >
           <el-icon class="re-tab-icon"><EditPen /></el-icon>
           <span class="re-tab-title" :title="p.rootPath">{{ p.title }}</span>
@@ -45,19 +46,36 @@
       <p>还没有打开的编辑器板块</p>
       <p class="sub">点击上方「打开本地文件夹」浏览本机文件，或在 FTP / SFTP 页右键目录选「用编辑器打开目录」</p>
     </div>
+
+    <ContextMenu v-model="tabCtxVisible" :x="tabCtxX" :y="tabCtxY" :items="tabCtxItems" @pick="onTabCtxPick" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { EditPen, Close, FolderOpened } from '@element-plus/icons-vue'
+import { EditPen, Close, FolderOpened, CloseBold, DArrowRight, CircleClose } from '@element-plus/icons-vue'
 import RemoteEditorPanel from '../components/RemoteEditorPanel.vue'
-import { remoteEditor, openDirInEditor, closePanel as closePanelStore } from '../stores/remoteEditor'
+import ContextMenu from '../components/ContextMenu.vue'
+import type { CtxItem } from '../components/ContextMenu.vue'
+import {
+  remoteEditor,
+  openDirInEditor,
+  closePanel as closePanelStore,
+  type RemotePanelInfo,
+} from '../stores/remoteEditor'
 import { makeLocalBackend } from '../utils/fileBackend'
 import { LocalService } from '../utils/wails'
 
 const panelRefs = ref<Record<number, InstanceType<typeof RemoteEditorPanel> | null>>({})
+
+// 标签页右键菜单
+const tabCtxVisible = ref(false)
+const tabCtxX = ref(0)
+const tabCtxY = ref(0)
+const tabCtxItems = ref<(CtxItem | 'divider')[]>([])
+const tabCtxTab = ref<RemotePanelInfo | null>(null)
+const tabCtxIndex = ref(-1)
 
 // 选择本机目录并在编辑器里打开（本地文件后端，复用同一套编辑器）
 async function openLocalFolder() {
@@ -82,11 +100,62 @@ async function closePanel(id: number) {
 }
 
 async function closeAll() {
-  for (const p of [...remoteEditor.panels]) {
+  await closePanels([...remoteEditor.panels])
+}
+
+// 批量关闭：逐个询问（有未保存内容时 confirmClose 会拦截）
+async function closePanels(list: RemotePanelInfo[]) {
+  for (const p of list) {
     const inst = panelRefs.value[p.id]
     if (inst && !(await inst.confirmClose())) continue
     closePanelStore(p.id)
     delete panelRefs.value[p.id]
+  }
+}
+
+// ---------- 标签页右键 ----------
+
+function onTabContext(event: MouseEvent, p: RemotePanelInfo) {
+  event.preventDefault()
+  tabCtxTab.value = p
+  tabCtxIndex.value = remoteEditor.panels.findIndex((x) => x.id === p.id)
+  tabCtxItems.value = buildTabCtx()
+  tabCtxX.value = event.clientX
+  tabCtxY.value = event.clientY
+  tabCtxVisible.value = false
+  requestAnimationFrame(() => {
+    tabCtxVisible.value = true
+  })
+}
+
+function buildTabCtx(): (CtxItem | 'divider')[] {
+  const total = remoteEditor.panels.length
+  const idx = tabCtxIndex.value
+  return [
+    { key: 'close-current', label: '关闭当前', icon: Close, disabled: total === 0 },
+    { key: 'close-others', label: '关闭其他', icon: CloseBold, disabled: total <= 1 },
+    { key: 'close-right', label: '关闭右边', icon: DArrowRight, disabled: idx < 0 || idx >= total - 1 },
+    { key: 'close-all', label: '关闭全部', icon: CircleClose, disabled: total === 0 },
+  ]
+}
+
+async function onTabCtxPick(item: CtxItem) {
+  const p = tabCtxTab.value
+  if (!p) return
+  const idx = remoteEditor.panels.findIndex((x) => x.id === p.id)
+  switch (item.key) {
+    case 'close-current':
+      await closePanel(p.id)
+      break
+    case 'close-others':
+      await closePanels(remoteEditor.panels.filter((x) => x.id !== p.id))
+      break
+    case 'close-right':
+      await closePanels(idx >= 0 ? remoteEditor.panels.slice(idx + 1) : [])
+      break
+    case 'close-all':
+      await closeAll()
+      break
   }
 }
 
@@ -161,8 +230,8 @@ watch(
   padding: 6px 10px;
   font-size: 12.5px;
   color: var(--text-secondary);
-  background: var(--panel-soft);
-  border: 1px solid var(--border-color);
+  /* background: var(--panel-soft);
+  border: 1px solid var(--border-color); */
   border-bottom: none;
   border-radius: 6px 6px 0 0;
   cursor: pointer;

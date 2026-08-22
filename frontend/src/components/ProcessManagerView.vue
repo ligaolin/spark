@@ -14,18 +14,18 @@
 
     <div class="pm-table">
       <el-table :data="filtered" size="small" height="100%" empty-text="暂无进程数据" @row-click="select">
-        <el-table-column label="PID" width="64">
+        <el-table-column label="PID" width="70">
           <template #default="{ row }">
             <span class="mono">{{ row.pid }}</span>
           </template>
         </el-table-column>
         <el-table-column label="用户" width="70" prop="user" show-overflow-tooltip />
-        <el-table-column label="CPU%" width="64" align="right">
+        <el-table-column label="CPU%" width="50" align="right">
           <template #default="{ row }">
             <span class="mono" :class="{ hot: row.cpu > 50 }">{{ row.cpu.toFixed(1) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="MEM%" width="64" align="right">
+        <el-table-column label="MEM%" width="55" align="right">
           <template #default="{ row }">
             <span class="mono">{{ row.mem.toFixed(1) }}</span>
           </template>
@@ -35,7 +35,7 @@
             <span class="mono dim">{{ formatSize((row.rss || 0) * 1024) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="56">
+        <el-table-column label="状态" width="50">
           <template #default="{ row }">
             <span class="mono dim">{{ row.stat }}</span>
           </template>

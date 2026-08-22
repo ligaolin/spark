@@ -24,11 +24,12 @@ type SavedConnection struct {
 	Port       int       `gorm:"column:port" json:"port"`
 	Username   string    `gorm:"column:username" json:"username"`
 	Password   string    `gorm:"column:password" json:"password"`
-	UseKey     bool      `gorm:"column:use_key" json:"useKey"`
-	PrivateKey string    `gorm:"column:private_key" json:"privateKey"` // PEM content
-	Passphrase string    `gorm:"column:passphrase" json:"passphrase"`
-	DefaultDir string    `gorm:"column:default_dir" json:"defaultDir"`
-	TLS        bool      `gorm:"column:tls" json:"tls"` // FTP explicit TLS
+	UseKey       bool      `gorm:"column:use_key" json:"useKey"`
+	PrivateKey   string    `gorm:"column:private_key" json:"privateKey"` // PEM content
+	Passphrase   string    `gorm:"column:passphrase" json:"passphrase"`
+	ForwardAgent bool      `gorm:"column:forward_agent" json:"forwardAgent"` // SSH agent forwarding
+	DefaultDir   string    `gorm:"column:default_dir" json:"defaultDir"`
+	TLS          bool      `gorm:"column:tls" json:"tls"` // FTP explicit TLS
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
 }

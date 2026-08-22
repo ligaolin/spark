@@ -21,6 +21,10 @@ type ConnectOptions struct {
 	PrivateKey string `json:"privateKey"`
 	Passphrase string `json:"passphrase"`
 
+	// ForwardAgent enables SSH agent forwarding: the remote session can use the
+	// local machine's SSH agent identities (SSH-only).
+	ForwardAgent bool `json:"forwardAgent"`
+
 	// Terminal options (SSH only)
 	Rows  int    `json:"rows"`
 	Cols  int    `json:"cols"`
@@ -178,6 +182,11 @@ type NetworkInfo struct {
 	Routes     []NetRoute     `json:"routes"`
 	DNS        []string       `json:"dns"`
 	Error      string         `json:"error,omitempty"` // 非 Linux 等提示
+}
+
+// IpStatus reports the remote host's IPs for the terminal status bar.
+type IpStatus struct {
+	IPs []string `json:"ips"` // 服务器网卡上的全部 IPv4（去重，不含回环/链路本地）
 }
 
 // Tunnel describes one active SSH tunnel on a terminal session.

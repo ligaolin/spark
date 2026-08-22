@@ -87,7 +87,8 @@
                         <!-- 多标签：同时打开多个文档 -->
                         <div class="doc-tabbar">
                             <div v-for="t in tabs" :key="t.key" class="doc-tab"
-                                :class="{ active: t.key === activeKey }" @click="activeKey = t.key">
+                                :class="{ active: t.key === activeKey }" @click="activeKey = t.key"
+                                @contextmenu.prevent="onTabContext($event, t)">
                                 <span class="doc-tab-title" :title="t.path">{{ t.name }}</span>
                                 <span v-if="t.dirty" class="doc-tab-dirty" title="未保存">●</span>
                                 <el-icon class="doc-tab-close" title="关闭" @click.stop="closeTab(t)">
@@ -127,6 +128,7 @@
         </div>
 
         <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
+        <ContextMenu v-model="tabCtxVisible" :x="tabCtxX" :y="tabCtxY" :items="tabCtxItems" @pick="onTabCtxPick" />
     </div>
 </template>
 
@@ -141,6 +143,9 @@ import {
     Edit,
     Delete,
     Close,
+    CloseBold,
+    DArrowRight,
+    CircleClose,
 } from '@element-plus/icons-vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
@@ -159,6 +164,7 @@ interface TreeNode {
     name: string
     type: string
     kind: string
+    sort: number
     children?: TreeNode[]
 }
 
@@ -209,6 +215,14 @@ const ctxY = ref(0)
 const ctxItems = ref<(CtxItem | 'divider')[]>([])
 const ctxNode = ref<TreeNode | null>(null)
 
+// 标签页右键菜单
+const tabCtxVisible = ref(false)
+const tabCtxX = ref(0)
+const tabCtxY = ref(0)
+const tabCtxItems = ref<(CtxItem | 'divider')[]>([])
+const tabCtxTab = ref<DocTab | null>(null)
+const tabCtxIndex = ref(-1)
+
 // ---------- 数据加载 / 树构建 ----------
 
 const parentMap = computed(() => {
@@ -242,6 +256,7 @@ const treeData = computed<TreeNode[]>(() => {
             name: n.name,
             type: n.type,
             kind: n.kind || kindForName(n.name),
+            sort: n.sort || 0,
             children: [],
         })
     }
@@ -253,9 +268,11 @@ const treeData = computed<TreeNode[]>(() => {
         else roots.push(node)
     }
     const sortRec = (arr: TreeNode[]) => {
-        arr.sort((a, b) =>
-            a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1,
-        )
+        arr.sort((a, b) => {
+            if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+            if (a.sort !== b.sort) return a.sort - b.sort
+            return a.name.localeCompare(b.name)
+        })
         arr.forEach((c) => c.children && sortRec(c.children))
     }
     sortRec(roots)
@@ -383,9 +400,9 @@ async function deleteNode(node: { id: number; name: string; type: string }) {
     }
 }
 
-async function moveNode(id: number, newParentId: number) {
+async function reorderNode(id: number, newParentId: number, targetId: number, position: string) {
     try {
-        await DocumentService.Move(id, newParentId)
+        await DocumentService.Reorder(id, newParentId, targetId, position)
         await reload()
     } catch (e: any) {
         ElMessage.error(`移动失败：${e?.message || e}`)
@@ -462,20 +479,90 @@ async function onCtxPick(item: CtxItem) {
     }
 }
 
+// ---------- 标签页右键 ----------
+
+function onTabContext(event: MouseEvent, t: DocTab) {
+    event.preventDefault()
+    tabCtxTab.value = t
+    tabCtxIndex.value = tabs.value.findIndex((x) => x.key === t.key)
+    tabCtxItems.value = buildTabCtx()
+    tabCtxX.value = event.clientX
+    tabCtxY.value = event.clientY
+    tabCtxVisible.value = false
+    requestAnimationFrame(() => {
+        tabCtxVisible.value = true
+    })
+}
+
+function buildTabCtx(): (CtxItem | 'divider')[] {
+    const total = tabs.value.length
+    const idx = tabCtxIndex.value
+    return [
+        { key: 'close-current', label: '关闭当前', icon: Close, disabled: total === 0 },
+        { key: 'close-others', label: '关闭其他', icon: CloseBold, disabled: total <= 1 },
+        { key: 'close-right', label: '关闭右边', icon: DArrowRight, disabled: idx < 0 || idx >= total - 1 },
+        { key: 'close-all', label: '关闭全部', icon: CircleClose, disabled: total === 0 },
+    ]
+}
+
+async function onTabCtxPick(item: CtxItem) {
+    const t = tabCtxTab.value
+    if (!t) return
+    const idx = tabs.value.findIndex((x) => x.key === t.key)
+    switch (item.key) {
+        case 'close-current':
+            await closeTab(t)
+            break
+        case 'close-others':
+            await closeTabList(tabs.value.filter((x) => x.key !== t.key))
+            break
+        case 'close-right':
+            await closeTabList(idx >= 0 ? tabs.value.slice(idx + 1) : [])
+            break
+        case 'close-all':
+            await closeTabList([...tabs.value])
+            break
+    }
+}
+
+async function closeTabList(list: DocTab[]) {
+    if (!list.length) return
+    const dirtyCount = list.filter((t) => t.dirty).length
+    if (dirtyCount > 0) {
+        const ok = await showConfirmDialog(
+            '关闭文档',
+            `有 ${dirtyCount} 个标签存在未保存的更改，确定关闭？`,
+            true,
+            '不保存并关闭',
+        )
+        if (!ok) return
+    }
+    for (const t of list) removeTabByKey(t.key)
+}
+
 function allowDrop(dragging: any, drop: any, type: string): boolean {
     const dragId = dragging?.data?.id
     const dropId = drop?.data?.id
+    if (dropId === dragId) return false
     if (type === 'inner') {
-        return drop?.data?.type === 'folder' && dropId !== dragId
+        return drop?.data?.type === 'folder'
     }
-    return dropId !== dragId
+    // before / after：仅允许同类型节点之间排序（文件夹归文件夹、文件归文件）
+    return dragging?.data?.type === drop?.data?.type
 }
 
 function onNodeDrop(dragging: any, drop: any, dropType: string) {
     const id = dragging.data.id as number
-    const newParentId: number = dropType === 'inner' ? drop.data.id : drop.data.parentId ?? 0
-    if (newParentId === id) return
-    void moveNode(id, newParentId)
+    if (dropType === 'inner') {
+        const newParentId = drop.data.id as number
+        if (newParentId === id) return
+        void reorderNode(id, newParentId, 0, 'after')
+        return
+    }
+    const targetId = drop.data.id as number
+    if (targetId === id) return
+    const newParentId: number = drop.data.parentId ?? 0
+    void reorderNode(id, newParentId, targetId, dropType)
 }
 
 // ---------- 多标签编辑器 ----------
@@ -752,7 +839,7 @@ function openResult(row: SearchResult) {
     align-items: center;
     gap: 2px;
     padding: 4px 6px 0;
-    border-bottom: 1px solid var(--border-color);
+    /* border-bottom: 1px solid var(--border-color); */
     flex-shrink: 0;
     overflow-x: auto;
 }
@@ -764,14 +851,15 @@ function openResult(row: SearchResult) {
     padding: 6px 10px;
     font-size: 12.5px;
     color: var(--text-secondary);
-    background: var(--panel-soft);
-    border: 1px solid var(--border-color);
+    /* background: var(--panel-soft); */
+    /* border: 1px solid var(--border-color); */
     border-bottom: none;
     border-radius: 6px 6px 0 0;
     cursor: pointer;
     max-width: 200px;
     flex-shrink: 0;
     user-select: none;
+    margin-bottom: -1px;
 }
 
 .doc-tab.active {

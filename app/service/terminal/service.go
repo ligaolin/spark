@@ -79,16 +79,26 @@ func (t *TerminalService) Connect(opts types.ConnectOptions) (string, error) {
 		return "", fmt.Errorf("创建 SSH 会话失败: %w", err)
 	}
 
+	id := opts.SessionID
+	if id == "" {
+		id = types.NewID()
+	}
+
+	// SSH Agent 转发：转发失败（本地 agent 不可用 / 注册处理器失败）时快速失败，
+	// 避免用户以为已开启转发但实际没生效。
+	if opts.ForwardAgent {
+		if err := setupAgentForwarding(client, sess); err != nil {
+			sess.Close()
+			client.Close()
+			return "", err
+		}
+	}
+
 	stdin, err := sess.StdinPipe()
 	if err != nil {
 		sess.Close()
 		client.Close()
 		return "", fmt.Errorf("获取标准输入失败: %w", err)
-	}
-
-	id := opts.SessionID
-	if id == "" {
-		id = types.NewID()
 	}
 
 	s := &sshSession{id: id, client: client, sess: sess, stdin: stdin, stopKA: make(chan struct{})}
@@ -120,8 +130,7 @@ func (t *TerminalService) Connect(opts types.ConnectOptions) (string, error) {
 		xssh.TTY_OP_OSPEED: 14400,
 	}
 	if err := sess.RequestPty("xterm-256color", rows, cols, modes); err != nil {
-		sess.Close()
-		client.Close()
+		s.close()
 		return "", fmt.Errorf("申请 PTY 失败: %w", err)
 	}
 
@@ -131,8 +140,7 @@ func (t *TerminalService) Connect(opts types.ConnectOptions) (string, error) {
 		err = sess.Shell()
 	}
 	if err != nil {
-		sess.Close()
-		client.Close()
+		s.close()
 		return "", fmt.Errorf("启动远程 shell 失败: %w", err)
 	}
 
@@ -668,14 +676,103 @@ echo "@@ROUTE@@"
 // 不影响基础网络信息。
 const networkListenersScript = `(ss -tulnp 2>/dev/null || ss -tuln 2>/dev/null || netstat -tulnp 2>/dev/null || netstat -tuln 2>/dev/null)`
 
-// NetworkInfo gathers interfaces, routes and DNS.
+// ipListScript 采集服务器网卡上的全部 IPv4（ip / ifconfig / hostname -I 三级
+// 回退），原始输出在 Go 侧解析。不用 curl 探测公网 IP，避免外网不可达时拖慢。
+const ipListScript = `(ip -o addr show 2>/dev/null || ifconfig 2>/dev/null || hostname -I 2>/dev/null)`
+
+// NetworkInfo gathers interfaces, routes and DNS. 内置重试：首次失败或拿到空数据
+// 时短暂等待后重试一次，降低不稳定网络下偶尔采集失败导致的界面闪烁。
 func (t *TerminalService) NetworkInfo(id string) (*types.NetworkInfo, error) {
+	info, err := t.networkInfoOnce(id)
+	if err != nil || isNetworkInfoEmpty(info) {
+		time.Sleep(500 * time.Millisecond)
+		info2, err2 := t.networkInfoOnce(id)
+		if err2 == nil && !isNetworkInfoEmpty(info2) {
+			return info2, nil
+		}
+		if info != nil && !isNetworkInfoEmpty(info) {
+			return info, nil
+		}
+		if err2 != nil {
+			return info2, err2
+		}
+	}
+	return info, err
+}
+
+func (t *TerminalService) networkInfoOnce(id string) (*types.NetworkInfo, error) {
 	out, _, err := t.runCommandWithTimeout(id, "sh -c "+shQuote(networkInfoScript), 15*time.Second)
 	info := parseNetworkInfo(out)
-	if err != nil && len(info.Interfaces) == 0 && len(info.Routes) == 0 && len(info.DNS) == 0 {
+	if err != nil && isNetworkInfoEmpty(info) {
 		return nil, err
 	}
 	return info, nil
+}
+
+func isNetworkInfoEmpty(info *types.NetworkInfo) bool {
+	if info == nil {
+		return true
+	}
+	return len(info.Interfaces) == 0 && len(info.Routes) == 0 && len(info.DNS) == 0
+}
+
+// IpStatus gathers the remote host's IPv4 addresses (all, not just private),
+// for the terminal status bar.
+func (t *TerminalService) IpStatus(id string) (*types.IpStatus, error) {
+	out, _, err := t.runCommandWithTimeout(id, "sh -c "+shQuote(ipListScript), 10*time.Second)
+	ips := extractIPv4s(out)
+	if err != nil && len(ips) == 0 {
+		return nil, err
+	}
+	return &types.IpStatus{IPs: ips}, nil
+}
+
+// extractIPv4s pulls IPv4 addresses out of `ip -o addr show` / `ifconfig` /
+// `hostname -I` output. 只取关键字 inet / addr: 后面的地址（排除 netmask /
+// broadcast），hostname -I 这类纯 IP 行则整行解析；去重并过滤回环、链路本地。
+func extractIPv4s(out string) []string {
+	seen := map[string]bool{}
+	var ips []string
+	add := func(raw string) {
+		ip := raw
+		if i := strings.IndexByte(ip, '/'); i >= 0 {
+			ip = ip[:i]
+		}
+		ip = strings.TrimPrefix(ip, "addr:")
+		parsed := net.ParseIP(ip)
+		if parsed == nil || parsed.To4() == nil {
+			return
+		}
+		v4 := parsed.To4()
+		if v4[0] == 127 || (v4[0] == 169 && v4[1] == 254) {
+			return
+		}
+		if seen[ip] {
+			return
+		}
+		seen[ip] = true
+		ips = append(ips, ip)
+	}
+
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		hasInet := false
+		for i := 0; i < len(fields); i++ {
+			if fields[i] == "inet" {
+				hasInet = true
+				if i+1 < len(fields) {
+					add(fields[i+1])
+				}
+			}
+		}
+		// hostname -I 输出是纯空格分隔的 IP（无 inet 关键字）
+		if !hasInet {
+			for _, f := range fields {
+				add(f)
+			}
+		}
+	}
+	return ips
 }
 
 // NetworkListeners returns the remote listening sockets (ss / netstat).

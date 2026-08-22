@@ -103,18 +103,74 @@ func (s *DocumentService) Rename(id uint, name string) error {
 }
 
 // Move moves a node to a new parent (0 = root). Moving a folder into its own
-// descendant is rejected.
+// descendant is rejected. The node is appended to the end of the new parent.
 func (s *DocumentService) Move(id uint, newParentID uint) error {
+	return s.Reorder(id, newParentID, 0, "after")
+}
+
+// Reorder moves a node to newParentID and positions it before/after targetID
+// among its same-type siblings (targetID == 0 appends at the end). This is the
+// backend for the frontend drag-and-drop sort: folders reorder with folders,
+// files with files, and the frontend keeps folders grouped first. The siblings'
+// Sort values are rewritten to a contiguous 0..n range afterwards.
+func (s *DocumentService) Reorder(id uint, newParentID uint, targetID uint, position string) error {
 	if id == 0 {
 		return errors.New("节点 ID 不能为空")
 	}
-	if id == newParentID {
-		return errors.New("不能移动到自身")
+	var n model.DocNode
+	if err := db.GetDB().First(&n, id).Error; err != nil {
+		return err
 	}
-	if isDescendant(id, newParentID) {
-		return errors.New("不能移动到自己的子目录中")
+	if n.ParentID != newParentID {
+		if id == newParentID {
+			return errors.New("不能移动到自身")
+		}
+		if isDescendant(id, newParentID) {
+			return errors.New("不能移动到自己的子目录中")
+		}
+		if err := db.GetDB().Model(&model.DocNode{}).Where("id = ?", id).Update("parent_id", newParentID).Error; err != nil {
+			return err
+		}
 	}
-	return db.GetDB().Model(&model.DocNode{}).Where("id = ?", id).Update("parent_id", newParentID).Error
+
+	// 同级同类型节点（排除自身），按 sort,id 排序。
+	var siblings []model.DocNode
+	if err := db.GetDB().
+		Where("parent_id = ? AND type = ?", newParentID, n.Type).
+		Order("sort asc, id asc").
+		Find(&siblings).Error; err != nil {
+		return err
+	}
+	ids := make([]uint, 0, len(siblings))
+	for _, sib := range siblings {
+		if sib.ID == id {
+			continue
+		}
+		ids = append(ids, sib.ID)
+	}
+
+	pos := len(ids)
+	if targetID != 0 {
+		for i, sid := range ids {
+			if sid == targetID {
+				pos = i
+				if position == "after" {
+					pos = i + 1
+				}
+				break
+			}
+		}
+	}
+
+	ids = append(ids, 0)
+	copy(ids[pos+1:], ids[pos:])
+	ids[pos] = id
+	for i, sid := range ids {
+		if err := db.GetDB().Model(&model.DocNode{}).Where("id = ?", sid).Update("sort", i).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Delete removes a node and all of its descendants.

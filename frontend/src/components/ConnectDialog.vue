@@ -67,6 +67,11 @@
         </el-form-item>
       </template>
 
+      <el-form-item label="Agent 转发" v-if="form.type === 'ssh'">
+        <el-switch v-model="form.forwardAgent" active-text="转发本地 SSH Agent" />
+        <div class="field-tip">开启后，服务器内可复用本机 SSH Agent 的密钥（需本机运行 ssh-agent）</div>
+      </el-form-item>
+
       <el-form-item label="默认目录">
         <el-input v-model="form.defaultDir" placeholder="连接后进入的远程目录（可选）" />
       </el-form-item>
@@ -130,6 +135,7 @@ const form = reactive({
   useKey: false,
   privateKey: '',
   passphrase: '',
+  forwardAgent: false,
   defaultDir: '',
   tls: false,
   insecure: false,
@@ -164,6 +170,7 @@ watch(
         useKey: props.connection.useKey,
         privateKey: props.connection.privateKey,
         passphrase: props.connection.passphrase,
+        forwardAgent: props.connection.forwardAgent,
         defaultDir: props.connection.defaultDir,
         tls: props.connection.tls,
         insecure: false,
@@ -180,6 +187,7 @@ watch(
         useKey: false,
         privateKey: '',
         passphrase: '',
+        forwardAgent: false,
         defaultDir: '',
         tls: false,
         insecure: false,
@@ -198,6 +206,7 @@ function toConnectOptions(): ConnectOptions {
     useKey: form.useKey,
     privateKey: form.privateKey,
     passphrase: form.passphrase,
+    forwardAgent: form.type === 'ssh' ? form.forwardAgent : false,
     defaultDir: form.defaultDir.trim(),
     tls: form.tls,
     insecure: form.insecure,
@@ -217,6 +226,7 @@ function toSavedConnection(): SavedConnection {
     useKey: form.useKey,
     privateKey: form.privateKey,
     passphrase: form.passphrase,
+    forwardAgent: form.type === 'ssh' ? form.forwardAgent : false,
     defaultDir: form.defaultDir.trim(),
     tls: form.tls,
     // 编辑时保留原时间戳；新建时后端自动生成
@@ -264,5 +274,12 @@ async function submitSave() {
 }
 .row-port :deep(.el-input-number) {
   width: 100%;
+}
+.field-tip {
+  width: 100%;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-top: 4px;
 }
 </style>

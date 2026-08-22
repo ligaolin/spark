@@ -3,6 +3,7 @@ module changeme
 go 1.26.4
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/aymanbagabas/go-pty v0.2.3
 	github.com/glebarez/sqlite v1.11.0
 	github.com/jlaffaye/ftp v0.2.2

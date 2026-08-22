@@ -13,9 +13,9 @@
                 <div class="tab-bar">
                     <div v-for="tab in store.tabs" :key="tab.key" class="tab"
                         :class="{ active: tab.key === store.activeKey }" @click="store.setActive(tab.key)"
-                        @auxclick="onMiddleClick(tab.key, $event)">
+                        @auxclick="onMiddleClick(tab.key, $event)" @contextmenu.prevent="onTabContext($event, tab)">
                         <span class="tab-dot" :class="tab.status"></span>
-                        <span class="tab-title">{{ tab.title }}</span>
+                        <span class="tab-title" :title="tab.title">{{ tab.title }}</span>
                         <el-icon class="tab-close" @click.stop="store.removeTab(tab.key)">
                             <Close />
                         </el-icon>
@@ -27,7 +27,7 @@
                     </div>
                 </div>
                 <div class="tab-add" :class="{ active: panelVisible }"
-                    :title="panelVisible ? '收起信息面板' : '展开信息面板（SFTP 文件 / 服务器信息 / 进程管理 / 自定义命令 / 网络 / 转发代理）'"
+                    :title="panelVisible ? '收起信息面板' : '展开信息面板（SFTP / 信息 / 进程 / 命令 / 网络 / 转发代理）'"
                     @click="panelVisible = !panelVisible">
                     <el-icon>
                         <InfoFilled />
@@ -48,10 +48,10 @@
                     <div class="side-head">
                         <el-radio-group v-model="panelTab" size="small">
                             <!-- SFTP 文件放在最左侧（服务信息切换的左边）：打开 SSH 默认两个都打开 -->
-                            <el-radio-button value="sftp">SFTP 文件</el-radio-button>
-                            <el-radio-button value="info">服务器信息</el-radio-button>
-                            <el-radio-button value="processes">进程管理</el-radio-button>
-                            <el-radio-button value="commands">自定义命令</el-radio-button>
+                            <el-radio-button value="sftp">SFTP</el-radio-button>
+                            <el-radio-button value="info">信息</el-radio-button>
+                            <el-radio-button value="processes">进程</el-radio-button>
+                            <el-radio-button value="commands">命令</el-radio-button>
                             <el-radio-button value="network">网络</el-radio-button>
                             <el-radio-button value="tunnel">转发 / 代理</el-radio-button>
                         </el-radio-group>
@@ -75,6 +75,7 @@
             </div>
         </template>
 
+        <ContextMenu v-model="tabCtxVisible" :x="tabCtxX" :y="tabCtxY" :items="tabCtxItems" @pick="onTabCtxPick" />
         <ConnectDialog v-model="dialogVisible" mode="connect" conn-type="ssh" @connect="onConnect" />
     </div>
 </template>
@@ -82,8 +83,10 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Monitor, Close, Plus, InfoFilled } from '@element-plus/icons-vue'
+import { Monitor, Close, Plus, InfoFilled, CloseBold, DArrowRight, CircleClose } from '@element-plus/icons-vue'
 import { on as busOn } from '../utils/bus'
+import ContextMenu from '../components/ContextMenu.vue'
+import type { CtxItem } from '../components/ContextMenu.vue'
 import TerminalPane from '../components/TerminalPane.vue'
 import SftpPanel from '../components/SftpPanel.vue'
 import ServerInfoView from '../components/ServerInfoView.vue'
@@ -92,7 +95,7 @@ import CustomCommandsView from '../components/CustomCommandsView.vue'
 import NetworkView from '../components/NetworkView.vue'
 import TunnelView from '../components/TunnelView.vue'
 import ConnectDialog from '../components/ConnectDialog.vue'
-import { useTerminalStore } from '../stores/terminal'
+import { useTerminalStore, type TerminalTab } from '../stores/terminal'
 import { useConnectionsStore } from '../stores/connections'
 import { makeSavedConnection } from '../utils/wails'
 import type { ConnectOptions } from '../utils/wails'
@@ -100,6 +103,14 @@ import type { ConnectOptions } from '../utils/wails'
 const store = useTerminalStore()
 const connStore = useConnectionsStore()
 const dialogVisible = ref(false)
+
+// 标签页右键菜单
+const tabCtxVisible = ref(false)
+const tabCtxX = ref(0)
+const tabCtxY = ref(0)
+const tabCtxItems = ref<(CtxItem | 'divider')[]>([])
+const tabCtxTab = ref<TerminalTab | null>(null)
+const tabCtxIndex = ref(-1)
 
 // 右侧信息面板：SFTP 文件为默认页（打开 SSH 终端即同时打开 SFTP）
 const panelVisible = ref(true)
@@ -189,6 +200,56 @@ function onMiddleClick(key: string, e: MouseEvent) {
     if (e.button === 1) store.removeTab(key)
 }
 
+// ---------- 标签页右键 ----------
+
+function onTabContext(event: MouseEvent, tab: TerminalTab) {
+    event.preventDefault()
+    tabCtxTab.value = tab
+    tabCtxIndex.value = store.tabs.findIndex((t) => t.key === tab.key)
+    tabCtxItems.value = buildTabCtx()
+    tabCtxX.value = event.clientX
+    tabCtxY.value = event.clientY
+    tabCtxVisible.value = false
+    requestAnimationFrame(() => {
+        tabCtxVisible.value = true
+    })
+}
+
+function buildTabCtx(): (CtxItem | 'divider')[] {
+    const total = store.tabs.length
+    const idx = tabCtxIndex.value
+    return [
+        { key: 'close-current', label: '关闭当前', icon: Close, disabled: total === 0 },
+        { key: 'close-others', label: '关闭其他', icon: CloseBold, disabled: total <= 1 },
+        { key: 'close-right', label: '关闭右边', icon: DArrowRight, disabled: idx < 0 || idx >= total - 1 },
+        { key: 'close-all', label: '关闭全部', icon: CircleClose, disabled: total === 0 },
+    ]
+}
+
+function onTabCtxPick(item: CtxItem) {
+    const tab = tabCtxTab.value
+    if (!tab) return
+    const idx = store.tabs.findIndex((t) => t.key === tab.key)
+    switch (item.key) {
+        case 'close-current':
+            store.removeTab(tab.key)
+            break
+        case 'close-others':
+            closeTabs(store.tabs.filter((t) => t.key !== tab.key))
+            break
+        case 'close-right':
+            closeTabs(idx >= 0 ? store.tabs.slice(idx + 1) : [])
+            break
+        case 'close-all':
+            closeTabs([...store.tabs])
+            break
+    }
+}
+
+function closeTabs(list: TerminalTab[]) {
+    for (const t of list) store.removeTab(t.key)
+}
+
 async function onConnect(opts: ConnectOptions, save: boolean) {
     dialogVisible.value = false
     store.addTab(opts)
@@ -208,6 +269,7 @@ async function onConnect(opts: ConnectOptions, save: boolean) {
                     useKey: opts.useKey,
                     privateKey: opts.privateKey,
                     passphrase: opts.passphrase,
+                    forwardAgent: opts.forwardAgent,
                     defaultDir: opts.defaultDir || '',
                     tls: false,
                 }),

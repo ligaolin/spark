@@ -66,18 +66,67 @@ func (s *SiteService) RenameFolder(id uint, name string) error {
 	return db.GetDB().Model(&model.SiteFolder{}).Where("id = ?", id).Update("name", name).Error
 }
 
-// MoveFolder moves a folder to a new parent (cycle prevented).
+// MoveFolder moves a folder to a new parent (cycle prevented). The folder is
+// appended to the end of the new parent.
 func (s *SiteService) MoveFolder(id uint, newParentID uint) error {
+	return s.ReorderFolder(id, newParentID, 0, "after")
+}
+
+// ReorderFolder moves a folder to newParentID and positions it before/after
+// targetID among sibling folders (targetID == 0 appends at the end). Sibling
+// Sort values are rewritten to a contiguous 0..n range afterwards.
+func (s *SiteService) ReorderFolder(id uint, newParentID uint, targetID uint, position string) error {
 	if id == 0 {
 		return errors.New("文件夹 ID 不能为空")
 	}
-	if id == newParentID {
-		return errors.New("不能移动到自身")
+	var f model.SiteFolder
+	if err := db.GetDB().First(&f, id).Error; err != nil {
+		return err
 	}
-	if isFolderDescendant(id, newParentID) {
-		return errors.New("不能移动到自己的子目录中")
+	if f.ParentID != newParentID {
+		if id == newParentID {
+			return errors.New("不能移动到自身")
+		}
+		if isFolderDescendant(id, newParentID) {
+			return errors.New("不能移动到自己的子目录中")
+		}
+		if err := db.GetDB().Model(&model.SiteFolder{}).Where("id = ?", id).Update("parent_id", newParentID).Error; err != nil {
+			return err
+		}
 	}
-	return db.GetDB().Model(&model.SiteFolder{}).Where("id = ?", id).Update("parent_id", newParentID).Error
+
+	var siblings []model.SiteFolder
+	if err := db.GetDB().Where("parent_id = ?", newParentID).Order("sort asc, id asc").Find(&siblings).Error; err != nil {
+		return err
+	}
+	ids := make([]uint, 0, len(siblings))
+	for _, sib := range siblings {
+		if sib.ID == id {
+			continue
+		}
+		ids = append(ids, sib.ID)
+	}
+	pos := len(ids)
+	if targetID != 0 {
+		for i, sid := range ids {
+			if sid == targetID {
+				pos = i
+				if position == "after" {
+					pos = i + 1
+				}
+				break
+			}
+		}
+	}
+	ids = append(ids, 0)
+	copy(ids[pos+1:], ids[pos:])
+	ids[pos] = id
+	for i, sid := range ids {
+		if err := db.GetDB().Model(&model.SiteFolder{}).Where("id = ?", sid).Update("sort", i).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DeleteFolder removes a folder, its descendant folders, and the sites (with
@@ -152,12 +201,61 @@ func (s *SiteService) UpdateSite(id uint, name, note string) (model.Site, error)
 	return site, nil
 }
 
-// MoveSite moves a site to a different folder (0 = root).
+// MoveSite moves a site to a different folder (0 = root). The site is appended
+// to the end of the new folder.
 func (s *SiteService) MoveSite(id uint, newFolderID uint) error {
+	return s.ReorderSite(id, newFolderID, 0, "after")
+}
+
+// ReorderSite moves a site to newFolderID and positions it before/after
+// targetID among sibling sites (targetID == 0 appends at the end). Sibling Sort
+// values are rewritten to a contiguous 0..n range afterwards.
+func (s *SiteService) ReorderSite(id uint, newFolderID uint, targetID uint, position string) error {
 	if id == 0 {
 		return errors.New("站点 ID 不能为空")
 	}
-	return db.GetDB().Model(&model.Site{}).Where("id = ?", id).Update("folder_id", newFolderID).Error
+	var site model.Site
+	if err := db.GetDB().First(&site, id).Error; err != nil {
+		return err
+	}
+	if site.FolderID != newFolderID {
+		if err := db.GetDB().Model(&model.Site{}).Where("id = ?", id).Update("folder_id", newFolderID).Error; err != nil {
+			return err
+		}
+	}
+
+	var siblings []model.Site
+	if err := db.GetDB().Where("folder_id = ?", newFolderID).Order("sort asc, id asc").Find(&siblings).Error; err != nil {
+		return err
+	}
+	ids := make([]uint, 0, len(siblings))
+	for _, sib := range siblings {
+		if sib.ID == id {
+			continue
+		}
+		ids = append(ids, sib.ID)
+	}
+	pos := len(ids)
+	if targetID != 0 {
+		for i, sid := range ids {
+			if sid == targetID {
+				pos = i
+				if position == "after" {
+					pos = i + 1
+				}
+				break
+			}
+		}
+	}
+	ids = append(ids, 0)
+	copy(ids[pos+1:], ids[pos:])
+	ids[pos] = id
+	for i, sid := range ids {
+		if err := db.GetDB().Model(&model.Site{}).Where("id = ?", sid).Update("sort", i).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DeleteSite removes a site and its links and accounts.

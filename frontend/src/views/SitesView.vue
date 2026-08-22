@@ -53,7 +53,8 @@
                     <div class="right-pane">
                         <div v-if="browserTabs.length" class="tab-bar">
                             <div v-for="tab in browserTabs" :key="tab.key" class="tab"
-                                :class="{ active: tab.key === activeTabKey }" @click="activeTabKey = tab.key">
+                                :class="{ active: tab.key === activeTabKey }" @click="activeTabKey = tab.key"
+                                @contextmenu.prevent="onTabContext($event, tab)">
                                 <el-icon class="tab-action" @click.stop="copyText(tab.url, '链接')" title="复制链接">
                                     <Link />
                                 </el-icon>
@@ -210,6 +211,7 @@
         </div>
 
         <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
+        <ContextMenu v-model="tabCtxVisible" :x="tabCtxX" :y="tabCtxY" :items="tabCtxItems" @pick="onTabCtxPick" />
 
         <!-- 打开链接弹窗：URL + 打开方式 -->
         <el-dialog v-model="openUrlDialogVisible" title="打开链接" width="560px" :close-on-click-modal="false">
@@ -275,6 +277,9 @@ import {
     FullScreen,
     Position,
     Refresh,
+    CloseBold,
+    DArrowRight,
+    CircleClose,
 } from '@element-plus/icons-vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
@@ -288,6 +293,7 @@ interface SiteTreeNode {
     parentId: number // 所在文件夹 id（0 = 根）
     name: string
     type: 'folder' | 'site'
+    sort: number
     children?: SiteTreeNode[]
 }
 
@@ -335,6 +341,14 @@ const ctxY = ref(0)
 const ctxItems = ref<(CtxItem | 'divider')[]>([])
 const ctxNode = ref<SiteTreeNode | null>(null)
 
+// 标签页右键菜单
+const tabCtxVisible = ref(false)
+const tabCtxX = ref(0)
+const tabCtxY = ref(0)
+const tabCtxItems = ref<(CtxItem | 'divider')[]>([])
+const tabCtxTab = ref<BrowserTab | null>(null)
+const tabCtxIndex = ref(-1)
+
 const selectedSite = computed(() => sites.value.find((s) => s.id === selectedSiteId.value) ?? null)
 
 // ---------- 树构建 ----------
@@ -342,10 +356,10 @@ const selectedSite = computed(() => sites.value.find((s) => s.id === selectedSit
 const treeData = computed<SiteTreeNode[]>(() => {
     const map = new Map<string, SiteTreeNode>()
     for (const f of folders.value) {
-        map.set('f:' + f.id, { key: 'f:' + f.id, id: f.id, parentId: f.parentId, name: f.name, type: 'folder', children: [] })
+        map.set('f:' + f.id, { key: 'f:' + f.id, id: f.id, parentId: f.parentId, name: f.name, type: 'folder', sort: f.sort || 0, children: [] })
     }
     for (const s of sites.value) {
-        map.set('s:' + s.id, { key: 's:' + s.id, id: s.id, parentId: s.folderId, name: s.name, type: 'site', children: [] })
+        map.set('s:' + s.id, { key: 's:' + s.id, id: s.id, parentId: s.folderId, name: s.name, type: 'site', sort: s.sort || 0, children: [] })
     }
     const roots: SiteTreeNode[] = []
     for (const n of map.values()) {
@@ -355,9 +369,11 @@ const treeData = computed<SiteTreeNode[]>(() => {
         else roots.push(n)
     }
     const sortRec = (arr: SiteTreeNode[]) => {
-        arr.sort((a, b) =>
-            a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1,
-        )
+        arr.sort((a, b) => {
+            if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+            if (a.sort !== b.sort) return a.sort - b.sort
+            return a.name.localeCompare(b.name)
+        })
         arr.forEach((c) => c.children && sortRec(c.children))
     }
     sortRec(roots)
@@ -602,37 +618,36 @@ async function deleteNode(node: SiteTreeNode) {
 function allowDrop(dragging: any, drop: any, type: string): boolean {
     const dragId = dragging?.data?.id
     const dropId = drop?.data?.id
+    if (dropId === dragId) return false
     const dropType = drop?.data?.type
     if (type === 'inner') {
-        return dropType === 'folder' && dropId !== dragId
+        return dropType === 'folder'
     }
-    return dropId !== dragId
+    // before / after：仅允许同类型节点之间排序（文件夹归文件夹、站点归站点）
+    return dragging?.data?.type === drop?.data?.type
 }
 
 function onNodeDrop(dragging: any, drop: any, dropType: string) {
     const node = dragging.data as SiteTreeNode
-    const newFolderId: number = dropType === 'inner' ? drop.data.id : drop.data.parentId ?? 0
-    if (node.type === 'folder') {
+    if (dropType === 'inner') {
+        const newFolderId = drop.data.id as number
         if (newFolderId === node.id) return
-        void moveFolder(node.id, newFolderId)
-    } else {
-        void moveSite(node.id, newFolderId)
+        void reorderNode(node, newFolderId, 0, 'after')
+        return
     }
+    const targetId = drop.data.id as number
+    if (targetId === node.id) return
+    const newFolderId: number = drop.data.parentId ?? 0
+    void reorderNode(node, newFolderId, targetId, dropType)
 }
 
-async function moveFolder(id: number, newParentId: number) {
+async function reorderNode(node: SiteTreeNode, newFolderId: number, targetId: number, position: string) {
     try {
-        await SiteService.MoveFolder(id, newParentId)
-        await loadAll()
-    } catch (e: any) {
-        ElMessage.error(`移动失败：${e?.message || e}`)
-        await loadAll()
-    }
-}
-
-async function moveSite(id: number, newFolderId: number) {
-    try {
-        await SiteService.MoveSite(id, newFolderId)
+        if (node.type === 'folder') {
+            await SiteService.ReorderFolder(node.id, newFolderId, targetId, position)
+        } else {
+            await SiteService.ReorderSite(node.id, newFolderId, targetId, position)
+        }
         await loadAll()
     } catch (e: any) {
         ElMessage.error(`移动失败：${e?.message || e}`)
@@ -916,6 +931,67 @@ function closeTab(key: string) {
     }
 }
 
+// ---------- 标签页右键 ----------
+
+function onTabContext(event: MouseEvent, tab: BrowserTab) {
+    event.preventDefault()
+    tabCtxTab.value = tab
+    tabCtxIndex.value = browserTabs.value.findIndex((t) => t.key === tab.key)
+    tabCtxItems.value = buildTabCtx()
+    tabCtxX.value = event.clientX
+    tabCtxY.value = event.clientY
+    tabCtxVisible.value = false
+    requestAnimationFrame(() => {
+        tabCtxVisible.value = true
+    })
+}
+
+function buildTabCtx(): (CtxItem | 'divider')[] {
+    const total = browserTabs.value.length
+    const idx = tabCtxIndex.value
+    return [
+        { key: 'close-current', label: '关闭当前', icon: Close, disabled: total === 0 },
+        { key: 'close-others', label: '关闭其他', icon: CloseBold, disabled: total <= 1 },
+        { key: 'close-right', label: '关闭右边', icon: DArrowRight, disabled: idx < 0 || idx >= total - 1 },
+        { key: 'close-all', label: '关闭全部', icon: CircleClose, disabled: total === 0 },
+    ]
+}
+
+function onTabCtxPick(item: CtxItem) {
+    const tab = tabCtxTab.value
+    if (!tab) return
+    const idx = browserTabs.value.findIndex((t) => t.key === tab.key)
+    switch (item.key) {
+        case 'close-current':
+            closeTab(tab.key)
+            break
+        case 'close-others':
+            closeBrowserTabs(browserTabs.value.filter((t) => t.key !== tab.key), tab.key)
+            break
+        case 'close-right':
+            closeBrowserTabs(idx >= 0 ? browserTabs.value.slice(idx + 1) : [])
+            break
+        case 'close-all':
+            closeBrowserTabs([...browserTabs.value])
+            break
+    }
+}
+
+function closeBrowserTabs(list: BrowserTab[], activateKey?: string) {
+    if (!list.length) return
+    const keys = new Set(list.map((t) => t.key))
+    browserTabs.value = browserTabs.value.filter((t) => !keys.has(t.key))
+    if (keys.has(activeTabKey.value ?? '')) {
+        activeTabKey.value =
+            (activateKey && browserTabs.value.some((t) => t.key === activateKey) ? activateKey : undefined) ??
+            browserTabs.value[0]?.key ??
+            null
+    }
+    if (browserTabs.value.length === 0) {
+        browserFullscreen.value = false
+    }
+}
+
 function toggleFullscreen() {
     browserFullscreen.value = !browserFullscreen.value
 }
@@ -1083,8 +1159,8 @@ async function openInSystemBrowser(url?: string) {
     padding: 6px 10px;
     font-size: 12.5px;
     color: var(--text-secondary);
-    background: var(--panel-soft);
-    border: 1px solid var(--border-color);
+    /* background: var(--panel-soft); */
+    /* border: 1px solid var(--border-color); */
     border-bottom: none;
     border-radius: 6px 6px 0 0;
     cursor: pointer;

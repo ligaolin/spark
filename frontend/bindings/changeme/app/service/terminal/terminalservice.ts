@@ -39,6 +39,14 @@ export function Disconnect(id: string): $CancellablePromise<void> {
 }
 
 /**
+ * IpStatus gathers the remote host's IPv4 addresses (all, not just private),
+ * for the terminal status bar.
+ */
+export function IpStatus(id: string): $CancellablePromise<types$0.IpStatus | null> {
+    return $Call.ByID(929247022, id);
+}
+
+/**
  * IsConnected reports whether the session is still alive.
  */
 export function IsConnected(id: string): $CancellablePromise<boolean> {
@@ -53,7 +61,8 @@ export function KillProcess(id: string, pid: number): $CancellablePromise<void> 
 }
 
 /**
- * NetworkInfo gathers interfaces, routes and DNS.
+ * NetworkInfo gathers interfaces, routes and DNS. 内置重试：首次失败或拿到空数据
+ * 时短暂等待后重试一次，降低不稳定网络下偶尔采集失败导致的界面闪烁。
  */
 export function NetworkInfo(id: string): $CancellablePromise<types$0.NetworkInfo | null> {
     return $Call.ByID(2092821485, id);

@@ -690,14 +690,15 @@ defineExpose({ openPath, confirmClose, hasDirty: () => openFiles.value.some((f) 
     padding: 5px 9px;
     font-size: 12.5px;
     color: var(--text-secondary);
-    background: var(--panel-soft);
-    border: 1px solid var(--border-color);
+    /* background: var(--panel-soft);
+    border: 1px solid var(--border-color); */
     border-bottom: none;
     border-radius: 6px 6px 0 0;
     cursor: pointer;
     max-width: 200px;
     flex-shrink: 0;
     user-select: none;
+    margin-bottom: -3px;
 }
 
 .rep-tab.active {

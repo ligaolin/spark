@@ -49,7 +49,7 @@ export function List(): $CancellablePromise<model$0.DocNode[] | null> {
 
 /**
  * Move moves a node to a new parent (0 = root). Moving a folder into its own
- * descendant is rejected.
+ * descendant is rejected. The node is appended to the end of the new parent.
  */
 export function Move(id: number, newParentID: number): $CancellablePromise<void> {
     return $Call.ByID(3103455023, id, newParentID);
@@ -60,6 +60,17 @@ export function Move(id: number, newParentID: number): $CancellablePromise<void>
  */
 export function Rename(id: number, name: string): $CancellablePromise<void> {
     return $Call.ByID(398479548, id, name);
+}
+
+/**
+ * Reorder moves a node to newParentID and positions it before/after targetID
+ * among its same-type siblings (targetID == 0 appends at the end). This is the
+ * backend for the frontend drag-and-drop sort: folders reorder with folders,
+ * files with files, and the frontend keeps folders grouped first. The siblings'
+ * Sort values are rewritten to a contiguous 0..n range afterwards.
+ */
+export function Reorder(id: number, newParentID: number, targetID: number, position: string): $CancellablePromise<void> {
+    return $Call.ByID(1441652241, id, newParentID, targetID, position);
 }
 
 /**

@@ -18,7 +18,7 @@ body,
     --panel-bg: #ffffff;
     --border-color: #e3e6ee;
     --text-primary: #2b3040;
-    --text-secondary: #767e93;
+    --text-secondary: #000;
     --text-muted: #9aa1b2;
     --accent: #3b82f6;
 
@@ -210,15 +210,27 @@ body {
     background-color: #2e509300;
 }
 
-.el-tree{
+.el-tree {
     background: none !important;
 }
 
-.el-tabs__content{
+.el-tabs__content {
     overflow: auto !important;
     padding: 10px 5px;
 }
 
-.el-button--small{
+.el-button--small {
     padding: 5px 8px;
+}
+
+.md-editor-wrap .md-editor-toolbar {
+    border-bottom: none !important;
+}
+
+.md-editor,
+.ͼ1m,
+.md-editor-resize-operate,
+.el-splitter-bar__dragger:before,
+.el-splitter-bar__dragger:after {
+    background-color: rgba(0, 0, 0, 0) !important;
 }

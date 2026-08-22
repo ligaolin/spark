@@ -150,6 +150,7 @@ let prevAt = 0
 
 let timer: ReturnType<typeof setInterval> | null = null
 let inflight = false
+let listenersInflight = false
 
 // 监听端口变化慢，单独以更长间隔采集
 let lastListenersAt = 0
@@ -167,7 +168,8 @@ function routeDest(d: string): string {
 }
 
 function formatRate(bps: number | undefined): string {
-  if (!bps || bps <= 0) return '0 B/s'
+  if (bps === undefined) return '—'
+  if (bps <= 0) return '0 B/s'
   const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
   const i = Math.min(units.length - 1, Math.floor(Math.log(bps) / Math.log(1024)))
   const v = bps / Math.pow(1024, i)
@@ -175,14 +177,17 @@ function formatRate(bps: number | undefined): string {
 }
 
 async function loadListeners() {
-  if (!props.sessionId || disconnected.value) return
+  if (!props.sessionId || disconnected.value || listenersInflight) return
   const now = Date.now()
   if (lastListenersAt && now - lastListenersAt < LISTENERS_REFRESH_MS) return
+  listenersInflight = true
   try {
     listeners.value = (await TerminalService.NetworkListeners(props.sessionId)) ?? []
     lastListenersAt = now
   } catch {
     // 静默保留旧数据
+  } finally {
+    listenersInflight = false
   }
 }
 
@@ -251,7 +256,16 @@ function startTimer() {
   }
 }
 
-watch(() => props.active, startTimer)
+watch(() => props.active, (active) => {
+  if (!active) {
+    // 面板隐藏时重置速率基线：下次激活先采样一次作为基准，
+    // 避免用跨长间隔的差值算出忽高忽低的瞬时速率。
+    prev = {}
+    prevAt = 0
+    rates.value = {}
+  }
+  startTimer()
+})
 watch(
   () => props.sessionId,
   (v) => {

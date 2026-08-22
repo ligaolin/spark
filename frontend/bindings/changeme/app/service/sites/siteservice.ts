@@ -119,14 +119,16 @@ export function ListTunnels(): $CancellablePromise<$models.TunnelInfo[] | null> 
 }
 
 /**
- * MoveFolder moves a folder to a new parent (cycle prevented).
+ * MoveFolder moves a folder to a new parent (cycle prevented). The folder is
+ * appended to the end of the new parent.
  */
 export function MoveFolder(id: number, newParentID: number): $CancellablePromise<void> {
     return $Call.ByID(3392625395, id, newParentID);
 }
 
 /**
- * MoveSite moves a site to a different folder (0 = root).
+ * MoveSite moves a site to a different folder (0 = root). The site is appended
+ * to the end of the new folder.
  */
 export function MoveSite(id: number, newFolderID: number): $CancellablePromise<void> {
     return $Call.ByID(1144627372, id, newFolderID);
@@ -178,6 +180,24 @@ export function ProxyUrl(raw: string): $CancellablePromise<string> {
  */
 export function RenameFolder(id: number, name: string): $CancellablePromise<void> {
     return $Call.ByID(4056522784, id, name);
+}
+
+/**
+ * ReorderFolder moves a folder to newParentID and positions it before/after
+ * targetID among sibling folders (targetID == 0 appends at the end). Sibling
+ * Sort values are rewritten to a contiguous 0..n range afterwards.
+ */
+export function ReorderFolder(id: number, newParentID: number, targetID: number, position: string): $CancellablePromise<void> {
+    return $Call.ByID(621241993, id, newParentID, targetID, position);
+}
+
+/**
+ * ReorderSite moves a site to newFolderID and positions it before/after
+ * targetID among sibling sites (targetID == 0 appends at the end). Sibling Sort
+ * values are rewritten to a contiguous 0..n range afterwards.
+ */
+export function ReorderSite(id: number, newFolderID: number, targetID: number, position: string): $CancellablePromise<void> {
+    return $Call.ByID(2238436402, id, newFolderID, targetID, position);
 }
 
 /**

@@ -72,7 +72,7 @@
             <el-table :data="entries" height="100%" size="small" :highlight-current-row="!multiSelect"
                 :row-class-name="rowClassName" @current-change="onSelect" @row-click="onRowClick"
                 @row-dblclick="onDblClick" @row-contextmenu="onRowContext" empty-text="空目录">
-                <el-table-column label="名称" min-width="180">
+                <el-table-column label="名称">
                     <template #default="{ row }">
                         <span class="entry-name" draggable="true" :title="dragHint"
                             @dragstart="onDragStart($event, row)" @dragover="onRowDragOver($event, row)"
@@ -91,17 +91,17 @@
                         </span>
                     </template>
                 </el-table-column>
-                <el-table-column label="大小" width="90" align="right">
+                <el-table-column label="大小" width="80" align="right">
                     <template #default="{ row }">
                         <span class="mono dim">{{ row.isDir ? '-' : formatSize(row.size) }}</span>
                     </template>
                 </el-table-column>
-                <el-table-column label="修改时间" width="130">
+                <el-table-column label="修改时间" width="110">
                     <template #default="{ row }">
                         <span class="dim">{{ formatTime(row.modTime) }}</span>
                     </template>
                 </el-table-column>
-                <el-table-column v-if="showMode" label="权限" width="110">
+                <el-table-column v-if="showMode" label="权限" width="90">
                     <template #default="{ row }">
                         <span class="mono dim">{{ row.mode }}</span>
                     </template>

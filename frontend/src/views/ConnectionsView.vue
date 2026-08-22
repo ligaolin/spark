@@ -386,6 +386,7 @@ async function onQuickConnect(opts: ConnectOptions, save: boolean) {
                     useKey: opts.useKey,
                     privateKey: opts.privateKey,
                     passphrase: opts.passphrase,
+                    forwardAgent: opts.forwardAgent,
                     defaultDir: opts.defaultDir || '',
                     tls: !!opts.tls,
                 }),
@@ -406,6 +407,7 @@ function connToOpts(conn: SavedConnection): ConnectOptions {
         useKey: conn.useKey,
         privateKey: conn.privateKey,
         passphrase: conn.passphrase,
+        forwardAgent: conn.forwardAgent,
         defaultDir: conn.defaultDir,
         tls: conn.tls,
     })

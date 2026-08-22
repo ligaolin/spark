@@ -104,6 +104,11 @@ export interface SavedConnection {
      */
     "privateKey": string;
     "passphrase": string;
+
+    /**
+     * SSH agent forwarding
+     */
+    "forwardAgent": boolean;
     "defaultDir": string;
 
     /**

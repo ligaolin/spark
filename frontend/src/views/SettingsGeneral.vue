@@ -103,6 +103,16 @@
       </div>
     </div>
 
+    <div class="cfg-row">
+      <div class="cfg-info">
+        <div class="cfg-label">开机启动</div>
+        <!-- <div class="cfg-desc">登录系统后自动启动 Spark（Windows 写入注册表启动项，macOS 写入 LaunchAgent，Linux 写入 autostart）</div> -->
+      </div>
+      <div class="cfg-ctrl">
+        <el-switch v-model="autoStartVal" :loading="savingAutoStart" @change="saveAutoStart" />
+      </div>
+    </div>
+
     <div class="cfg-note">更多配置项会陆续加到这里（配置存于本地数据库 settings 表）。</div>
   </div>
 </template>
@@ -111,6 +121,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useSettingsStore } from '../stores/settings'
+import { SettingsService } from '../utils/wails'
 
 const settings = useSettingsStore()
 
@@ -121,6 +132,7 @@ const fontVal = ref(13)
 const wordWrapVal = ref(true)
 const wordSepVal = ref('')
 const closeActionVal = ref<'minimize' | 'exit'>('minimize')
+const autoStartVal = ref(false)
 const savingKeepalive = ref(false)
 const savingProcess = ref(false)
 const savingNetwork = ref(false)
@@ -128,6 +140,7 @@ const savingFont = ref(false)
 const savingWordWrap = ref(false)
 const savingWordSep = ref(false)
 const savingCloseAction = ref(false)
+const savingAutoStart = ref(false)
 
 onMounted(async () => {
   await settings.load()
@@ -138,6 +151,7 @@ onMounted(async () => {
   wordWrapVal.value = settings.editorWordWrap
   wordSepVal.value = settings.editorWordSeparators
   closeActionVal.value = settings.windowCloseAction
+  autoStartVal.value = await SettingsService.IsAutoStart()
 })
 
 async function saveKeepalive() {
@@ -223,6 +237,19 @@ async function saveWordSep() {
     ElMessage.error(`保存失败：${e?.message || e}`)
   } finally {
     savingWordSep.value = false
+  }
+}
+
+async function saveAutoStart(v: boolean) {
+  savingAutoStart.value = true
+  try {
+    await SettingsService.SetAutoStart(v)
+    ElMessage.success(v ? '已开启开机启动' : '已关闭开机启动')
+  } catch (e: any) {
+    autoStartVal.value = !v
+    ElMessage.error(`设置失败：${e?.message || e}`)
+  } finally {
+    savingAutoStart.value = false
   }
 }
 </script>

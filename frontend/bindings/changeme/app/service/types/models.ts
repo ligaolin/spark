@@ -19,6 +19,12 @@ export interface ConnectOptions {
     "passphrase": string;
 
     /**
+     * ForwardAgent enables SSH agent forwarding: the remote session can use the
+     * local machine's SSH agent identities (SSH-only).
+     */
+    "forwardAgent": boolean;
+
+    /**
      * Terminal options (SSH only)
      */
     "rows": number;
@@ -74,6 +80,16 @@ export interface FileEntry {
     "isDir": boolean;
     "symlink": boolean;
     "linkTarget"?: string;
+}
+
+/**
+ * IpStatus reports the remote host's IPs for the terminal status bar.
+ */
+export interface IpStatus {
+    /**
+     * 服务器网卡上的全部 IPv4（去重，不含回环/链路本地）
+     */
+    "ips": string[] | null;
 }
 
 /**

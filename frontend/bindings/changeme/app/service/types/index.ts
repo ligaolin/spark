@@ -5,6 +5,7 @@ export type {
     ConnectOptions,
     DiskInfo,
     FileEntry,
+    IpStatus,
     NetInterface,
     NetListener,
     NetRoute,
