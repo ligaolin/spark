@@ -49,6 +49,7 @@ declare module 'vue' {
     InputDialog: typeof import('./src/components/InputDialog.vue')['default']
     LocalTerminalPane: typeof import('./src/components/LocalTerminalPane.vue')['default']
     MarkdownEditor: typeof import('./src/components/MarkdownEditor.vue')['default']
+    NetworkView: typeof import('./src/components/NetworkView.vue')['default']
     ProcessManagerView: typeof import('./src/components/ProcessManagerView.vue')['default']
     RemoteEditorPanel: typeof import('./src/components/RemoteEditorPanel.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
@@ -60,6 +61,7 @@ declare module 'vue' {
     TerminalPane: typeof import('./src/components/TerminalPane.vue')['default']
     TextEditor: typeof import('./src/components/TextEditor.vue')['default']
     TransferDock: typeof import('./src/components/TransferDock.vue')['default']
+    TunnelView: typeof import('./src/components/TunnelView.vue')['default']
     UpdateDialog: typeof import('./src/components/UpdateDialog.vue')['default']
   }
 }

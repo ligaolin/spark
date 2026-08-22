@@ -2,6 +2,9 @@
   <div class="remote-editor-view">
     <!-- 顶部：编辑器板块标签（动态，可开多个、可关闭） -->
     <div class="re-toolbar">
+      <el-button size="small" type="primary" plain @click="openLocalFolder">
+        <el-icon><FolderOpened /></el-icon><span>打开本地文件夹</span>
+      </el-button>
       <el-button size="small" :disabled="!remoteEditor.panels.length" @click="closeAll">
         关闭全部
       </el-button>
@@ -40,7 +43,7 @@
     <div v-else class="re-empty">
       <el-icon :size="40"><EditPen /></el-icon>
       <p>还没有打开的编辑器板块</p>
-      <p class="sub">在「FTP 文件」页（或 /sftp 独立页）：右键目录选「用编辑器打开目录」，或双击文件</p>
+      <p class="sub">点击上方「打开本地文件夹」浏览本机文件，或在 FTP / SFTP 页右键目录选「用编辑器打开目录」</p>
     </div>
   </div>
 </template>
@@ -48,11 +51,24 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { EditPen, Close } from '@element-plus/icons-vue'
+import { EditPen, Close, FolderOpened } from '@element-plus/icons-vue'
 import RemoteEditorPanel from '../components/RemoteEditorPanel.vue'
-import { remoteEditor, closePanel as closePanelStore } from '../stores/remoteEditor'
+import { remoteEditor, openDirInEditor, closePanel as closePanelStore } from '../stores/remoteEditor'
+import { makeLocalBackend } from '../utils/fileBackend'
+import { LocalService } from '../utils/wails'
 
 const panelRefs = ref<Record<number, InstanceType<typeof RemoteEditorPanel> | null>>({})
+
+// 选择本机目录并在编辑器里打开（本地文件后端，复用同一套编辑器）
+async function openLocalFolder() {
+  try {
+    const dir = await LocalService.PickDirectory()
+    if (!dir) return
+    openDirInEditor(makeLocalBackend(), dir)
+  } catch (e: any) {
+    ElMessage.error(`打开本地文件夹失败：${e?.message || e}`)
+  }
+}
 
 function setPanelRef(id: number, el: any) {
   panelRefs.value[id] = el

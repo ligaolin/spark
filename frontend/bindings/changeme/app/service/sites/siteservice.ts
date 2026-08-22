@@ -14,6 +14,17 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as model$0 from "../../model/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
+/**
+ * CloseTunnel 关闭并释放一个隧道。
+ */
+export function CloseTunnel(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2286348880, id);
+}
+
 /**
  * CreateAccount creates an account under a link.
  */
@@ -101,6 +112,13 @@ export function ListSites(): $CancellablePromise<model$0.Site[] | null> {
 }
 
 /**
+ * ListTunnels 返回当前所有活动隧道。
+ */
+export function ListTunnels(): $CancellablePromise<$models.TunnelInfo[] | null> {
+    return $Call.ByID(1962510345);
+}
+
+/**
  * MoveFolder moves a folder to a new parent (cycle prevented).
  */
 export function MoveFolder(id: number, newParentID: number): $CancellablePromise<void> {
@@ -115,8 +133,12 @@ export function MoveSite(id: number, newFolderID: number): $CancellablePromise<v
 }
 
 /**
- * OpenInApp opens a URL in a new in-app window (its own WebView). Kept as an
- * alternative; the primary flow embeds the URL in the frontend instead.
+ * OpenInApp opens a URL in a new in-app window (its own top-level WebView).
+ * 顶层导航不受 iframe 反嵌入头（X-Frame-Options / CSP frame-ancestors）限制，
+ * 证书错误由全局 --ignore-certificate-errors 忽略，POST / WebSocket 等交互也都正常，
+ * 是打开宝塔面板等管理后台最可靠的方式。
+ * 同一链接只保留一个窗口：已存在时更新标题/地址并聚焦，避免重复开窗
+ * （Wails「Multiple Windows」文档的最佳实践：给窗口命名 + GetByName 去重）。
  */
 export function OpenInApp(url: string, title: string): $CancellablePromise<void> {
     return $Call.ByID(4175553076, url, title);
@@ -127,6 +149,14 @@ export function OpenInApp(url: string, title: string): $CancellablePromise<void>
  */
 export function OpenInBrowser(url: string): $CancellablePromise<void> {
     return $Call.ByID(4140775303, url);
+}
+
+/**
+ * OpenTunnel 通过已保存的 SSH 连接建立本地端口转发：随机占用一个本机端口，
+ * 把访问该端口的 TCP 流经 SSH 转发到 targetURL 指向的 host:port（在服务器侧解析）。
+ */
+export function OpenTunnel(connectionID: number, targetURL: string): $CancellablePromise<$models.TunnelInfo> {
+    return $Call.ByID(129566844, connectionID, targetURL);
 }
 
 /**

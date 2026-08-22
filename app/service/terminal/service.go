@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +29,9 @@ import (
 type TerminalService struct {
 	mu       sync.Mutex
 	sessions map[string]*sshSession
+
+	tunnelMu sync.Mutex
+	tunnels  map[string]*sshTunnel
 }
 
 type sshSession struct {
@@ -643,6 +648,438 @@ func humanUptime(sec int64) string {
 	return fmt.Sprintf("%d 分", mins)
 }
 
+// networkInfoScript 采集服务器网络基础信息。刻意只保留最快、最不会挂起的
+// 文件读取与 ip/ifconfig 命令（原始内容在 Go 侧解析）；较慢的监听端口
+// （ss/netstat）已拆到 networkListenersScript 单独采集，互不拖累。
+const networkInfoScript = `
+echo "@@DEV@@"
+cat /proc/net/dev 2>/dev/null
+echo "@@DNS@@"
+cat /etc/resolv.conf 2>/dev/null
+echo "@@LINK@@"
+(ip -o link show 2>/dev/null || ifconfig -a 2>/dev/null)
+echo "@@ADDR@@"
+(ip -o addr show 2>/dev/null || ifconfig -a 2>/dev/null)
+echo "@@ROUTE@@"
+(ip route 2>/dev/null || route -n 2>/dev/null || netstat -rn 2>/dev/null)
+`
+
+// networkListenersScript 只采集监听端口，带完整回退链；单独执行，超时/失败
+// 不影响基础网络信息。
+const networkListenersScript = `(ss -tulnp 2>/dev/null || ss -tuln 2>/dev/null || netstat -tulnp 2>/dev/null || netstat -tuln 2>/dev/null)`
+
+// NetworkInfo gathers interfaces, routes and DNS.
+func (t *TerminalService) NetworkInfo(id string) (*types.NetworkInfo, error) {
+	out, _, err := t.runCommandWithTimeout(id, "sh -c "+shQuote(networkInfoScript), 15*time.Second)
+	info := parseNetworkInfo(out)
+	if err != nil && len(info.Interfaces) == 0 && len(info.Routes) == 0 && len(info.DNS) == 0 {
+		return nil, err
+	}
+	return info, nil
+}
+
+// NetworkListeners returns the remote listening sockets (ss / netstat).
+func (t *TerminalService) NetworkListeners(id string) ([]types.NetListener, error) {
+	out, _, err := t.runCommandWithTimeout(id, networkListenersScript, 15*time.Second)
+	list := parseListeners(out)
+	if err != nil && len(list) == 0 {
+		return nil, err
+	}
+	return list, nil
+}
+
+// splitSections splits marker-delimited script output into section → content.
+func splitSections(out string) map[string]string {
+	m := map[string]string{}
+	section := ""
+	var b strings.Builder
+	flush := func() {
+		if section != "" {
+			m[section] = b.String()
+			b.Reset()
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "@@") && strings.HasSuffix(line, "@@") {
+			flush()
+			section = strings.Trim(line, "@")
+			continue
+		}
+		if section != "" {
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	}
+	flush()
+	return m
+}
+
+func parseNetworkInfo(out string) *types.NetworkInfo {
+	info := &types.NetworkInfo{}
+	sections := splitSections(out)
+
+	ifaces := parseNetDev(sections["DEV"])
+	linkLines := nonEmptyLines(sections["LINK"])
+	addrLines := nonEmptyLines(sections["ADDR"])
+
+	if isIPLinkFormat(linkLines) {
+		for _, l := range linkLines {
+			applyIPLinkLine(ifaces, l)
+		}
+		for _, l := range addrLines {
+			applyIPAddrLine(ifaces, l)
+		}
+	} else {
+		applyIfconfigLines(ifaces, linkLines)
+	}
+
+	for _, name := range sortedIfaceNames(ifaces) {
+		info.Interfaces = append(info.Interfaces, *ifaces[name])
+	}
+
+	info.Routes = parseRoutes(sections["ROUTE"])
+	info.DNS = parseDNS(sections["DNS"])
+
+	if len(info.Interfaces) == 0 && len(info.Routes) == 0 && len(info.DNS) == 0 {
+		info.Error = "未能获取网络信息（可能不是 Linux 服务器）"
+	}
+	return info
+}
+
+func nonEmptyLines(out string) []string {
+	var lines []string
+	for _, raw := range strings.Split(out, "\n") {
+		if strings.TrimSpace(raw) != "" {
+			lines = append(lines, raw)
+		}
+	}
+	return lines
+}
+
+func sortedIfaceNames(m map[string]*types.NetInterface) []string {
+	names := make([]string, 0, len(m))
+	for n := range m {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// parseNetDev parses /proc/net/dev into interface counters.
+func parseNetDev(out string) map[string]*types.NetInterface {
+	m := map[string]*types.NetInterface{}
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(raw)
+		idx := strings.Index(line, ":")
+		if idx < 0 {
+			continue
+		}
+		name := strings.TrimSpace(line[:idx])
+		if name == "" || strings.Contains(name, "|") {
+			continue
+		}
+		fields := strings.Fields(line[idx+1:])
+		// 8 个接收字段 + 8 个发送字段
+		if len(fields) < 16 {
+			continue
+		}
+		m[name] = &types.NetInterface{
+			Name:      name,
+			RxBytes:   atoi64(fields[0]),
+			RxPackets: atoi64(fields[1]),
+			TxBytes:   atoi64(fields[8]),
+			TxPackets: atoi64(fields[9]),
+			State:     "unknown",
+		}
+	}
+	return m
+}
+
+func isIPLinkFormat(lines []string) bool {
+	for _, l := range lines {
+		if strings.Contains(l, "link/") {
+			return true
+		}
+	}
+	return false
+}
+
+// ipIfaceName extracts the interface name from an `ip -o` line like
+// "2: eth0: <...>" or "2: eth0    inet ...".
+func ipIfaceName(line string) string {
+	i := strings.Index(line, ":")
+	if i < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(line[i+1:])
+	for k, c := range rest {
+		if c == ':' || c == ' ' || c == '\t' {
+			return rest[:k]
+		}
+	}
+	return rest
+}
+
+func ensureIface(m map[string]*types.NetInterface, name string) *types.NetInterface {
+	if m[name] == nil {
+		m[name] = &types.NetInterface{Name: name, State: "unknown"}
+	}
+	return m[name]
+}
+
+// fieldAfter returns the whitespace-separated token immediately after key.
+func fieldAfter(line, key string) (string, bool) {
+	i := strings.Index(line, key)
+	if i < 0 {
+		return "", false
+	}
+	fields := strings.Fields(line[i+len(key):])
+	if len(fields) == 0 {
+		return "", false
+	}
+	return fields[0], true
+}
+
+// applyIPLinkLine parses an `ip -o link show` line (state / mtu / mac).
+func applyIPLinkLine(ifaces map[string]*types.NetInterface, line string) {
+	name := ipIfaceName(line)
+	if name == "" {
+		return
+	}
+	iface := ensureIface(ifaces, name)
+	if v, ok := fieldAfter(line, "mtu"); ok {
+		iface.MTU, _ = strconv.Atoi(v)
+	}
+	if v, ok := fieldAfter(line, "state"); ok {
+		iface.State = strings.ToLower(v)
+	}
+	if i := strings.Index(line, "link/"); i >= 0 {
+		rest := strings.Fields(line[i+len("link/"):])
+		if len(rest) >= 2 && (rest[0] == "ether" || rest[0] == "loopback") {
+			iface.Mac = rest[1]
+		}
+	}
+}
+
+// applyIPAddrLine parses an `ip -o addr show` line (inet / inet6 addresses).
+func applyIPAddrLine(ifaces map[string]*types.NetInterface, line string) {
+	name := ipIfaceName(line)
+	if name == "" {
+		return
+	}
+	iface := ensureIface(ifaces, name)
+	fields := strings.Fields(line)
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] == "inet" || fields[i] == "inet6" {
+			iface.Addresses = append(iface.Addresses, fields[i+1])
+		}
+	}
+}
+
+// applyIfconfigLines parses `ifconfig -a` output (fallback when `ip` is absent).
+func applyIfconfigLines(ifaces map[string]*types.NetInterface, lines []string) {
+	var cur *types.NetInterface
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		indented := strings.HasPrefix(raw, " ") || strings.HasPrefix(raw, "\t")
+		if !indented && (strings.Contains(line, "flags=") || strings.Contains(line, "Link encap")) {
+			namePart := line
+			if i := strings.Index(line, "flags="); i >= 0 {
+				namePart = line[:i]
+			} else if i := strings.Index(line, "Link encap"); i >= 0 {
+				namePart = line[:i]
+			}
+			name := strings.TrimSpace(strings.TrimSuffix(namePart, ":"))
+			if name == "" {
+				continue
+			}
+			cur = ensureIface(ifaces, name)
+			if strings.Contains(line, "UP") {
+				cur.State = "up"
+			} else {
+				cur.State = "down"
+			}
+			if v, ok := fieldAfter(line, "mtu"); ok {
+				cur.MTU, _ = strconv.Atoi(v)
+			} else if v, ok := fieldAfter(line, "MTU:"); ok {
+				cur.MTU, _ = strconv.Atoi(v)
+			}
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		fields := strings.Fields(line)
+		for i := 0; i < len(fields); i++ {
+			switch fields[i] {
+			case "ether", "HWaddr":
+				if i+1 < len(fields) {
+					cur.Mac = fields[i+1]
+				}
+			case "inet", "inet6":
+				if i+1 < len(fields) {
+					cur.Addresses = append(cur.Addresses, fields[i+1])
+				}
+			default:
+				if strings.HasPrefix(fields[i], "addr:") {
+					cur.Addresses = append(cur.Addresses, strings.TrimPrefix(fields[i], "addr:"))
+				}
+			}
+		}
+	}
+}
+
+// parseListeners parses `ss -tulnp` or `netstat -tulnp` output.
+func parseListeners(out string) []types.NetListener {
+	var list []types.NetListener
+	format := ""
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "Netid") {
+			format = "ss"
+			continue
+		}
+		if strings.HasPrefix(line, "Proto") {
+			format = "netstat"
+			continue
+		}
+		if format == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		switch format {
+		case "ss":
+			if len(fields) < 5 {
+				continue
+			}
+			pid, proc := "", ""
+			if len(fields) >= 7 {
+				pid, proc = extractSSProcess(fields[6])
+			}
+			list = append(list, types.NetListener{
+				Proto:   fields[0],
+				Address: fields[4],
+				PID:     atoi(pid),
+				Process: proc,
+			})
+		case "netstat":
+			if len(fields) < 4 {
+				continue
+			}
+			pid, proc := "", ""
+			if len(fields) >= 7 {
+				pid, proc = splitPIDName(fields[6])
+			}
+			list = append(list, types.NetListener{
+				Proto:   fields[0],
+				Address: fields[3],
+				PID:     atoi(pid),
+				Process: proc,
+			})
+		}
+	}
+	return list
+}
+
+var ssProcessRe = regexp.MustCompile(`\(\(\s*"([^"]*)"\s*,\s*pid=(\d+)`)
+
+func extractSSProcess(s string) (pid, name string) {
+	m := ssProcessRe.FindStringSubmatch(s)
+	if m == nil {
+		return "", ""
+	}
+	return m[2], m[1]
+}
+
+func splitPIDName(s string) (pid, name string) {
+	if i := strings.Index(s, "/"); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	if _, err := strconv.Atoi(s); err == nil {
+		return s, ""
+	}
+	return "", ""
+}
+
+// parseRoutes parses `ip route` or `route -n` / `netstat -rn` output.
+func parseRoutes(out string) []types.NetRoute {
+	var routes []types.NetRoute
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if fields[0] == "Destination" || strings.HasPrefix(line, "Kernel") {
+			continue
+		}
+		r := types.NetRoute{}
+		if strings.Contains(line, " dev ") || strings.Contains(line, " via ") {
+			r.Destination = fields[0]
+			r.Gateway = fieldAfterValue(fields, "via")
+			r.Interface = fieldAfterValue(fields, "dev")
+		} else {
+			if !strings.Contains(fields[0], ".") {
+				continue
+			}
+			r.Destination = fields[0]
+			if len(fields) >= 2 && fields[1] != "0.0.0.0" {
+				r.Gateway = fields[1]
+			}
+			if len(fields) >= 8 {
+				r.Interface = fields[7]
+			}
+		}
+		routes = append(routes, r)
+	}
+	return routes
+}
+
+// fieldAfterValue scans fields for key and returns the following field.
+func fieldAfterValue(fields []string, key string) string {
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] == key {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+// parseDNS parses /etc/resolv.conf nameserver lines.
+func parseDNS(out string) []string {
+	var dns []string
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "nameserver" {
+			dns = append(dns, fields[1])
+		}
+	}
+	return dns
+}
+
+func atoi64(s string) int64 {
+	n, _ := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	return n
+}
+
+func atoi(s string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(s))
+	return n
+}
+
 func (t *TerminalService) watch(s *sshSession) {
 	code := 0
 	msg := ""
@@ -686,6 +1123,11 @@ func (t *TerminalService) ensure() {
 	if t.sessions == nil {
 		t.sessions = make(map[string]*sshSession)
 	}
+	t.tunnelMu.Lock()
+	if t.tunnels == nil {
+		t.tunnels = make(map[string]*sshTunnel)
+	}
+	t.tunnelMu.Unlock()
 }
 
 func (t *TerminalService) get(id string) *sshSession {
@@ -703,6 +1145,8 @@ func (t *TerminalService) removeSession(id string) {
 	t.mu.Unlock()
 	if ok {
 		s.close()
+		// 会话关闭时一并关闭其所有端口转发 / SOCKS5 隧道
+		t.closeTunnelsFor(id)
 	}
 }
 

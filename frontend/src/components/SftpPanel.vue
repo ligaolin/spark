@@ -8,27 +8,15 @@
         </div>
 
         <template v-else>
-            <div class="sftp-head">
-                <el-tag v-if="connected" size="small" type="success" effect="dark">{{ sessionLabel }}</el-tag>
-                <el-tag v-else size="small" type="info">{{ connecting ? '连接中…' : '未连接' }}</el-tag>
-                <span v-if="error" class="sftp-err" :title="error">{{ error }}</span>
-                <el-button v-if="error" size="small" type="primary" @click="reconnect">重试</el-button>
-            </div>
-
             <div class="sftp-file-area">
-                <FilePanel
-                    ref="remotePanel"
-                    :backend="remoteBackend"
-                    title="SFTP 远程"
-                    show-mode
-                    multi-select
-                    dock-editor
-                    placeholder="远程目录，回车跳转"
-                    :connected="connected"
-                    :fav-key="favKey"
-                    @drop="onRemoteDrop"
-                    @action="onPanelAction"
-                >
+                <FilePanel ref="remotePanel" :backend="remoteBackend" title="SFTP 远程" show-mode multi-select dock-editor
+                    placeholder="远程目录，回车跳转" :connected="connected" :fav-key="favKey" @drop="onRemoteDrop"
+                    @action="onPanelAction">
+                    <template #head>
+                        <span v-if="error" class="sftp-err" :title="error">{{ error }}</span>
+                        <el-button v-if="error" size="small" type="primary" @click="reconnect">重试</el-button>
+                    </template>
+
                     <template #actions>
                         <el-button size="small" type="primary" :disabled="!connected" @click="pickAndUpload">
                             上传
@@ -45,7 +33,8 @@
                         <el-button size="small" :disabled="!connected" @click="remotePanel?.rename()">
                             重命名
                         </el-button>
-                        <el-button size="small" type="danger" plain :disabled="!connected" @click="remotePanel?.remove()">
+                        <el-button size="small" type="danger" plain :disabled="!connected"
+                            @click="remotePanel?.remove()">
                             删除
                         </el-button>
                         <el-button size="small" :disabled="!connected" @click="remotePanel?.chmod()">
@@ -76,6 +65,7 @@ import type { ConnectOptions } from '../utils/wails'
 import type { DropPayload, PanelAction } from '../types'
 import { joinPath, makeSftpBackend, type FileBackend } from '../utils/fileBackend'
 import { resolveHostKeyIssue } from '../utils/hostkey'
+import { te } from 'element-plus/es/locale/index.mjs'
 
 const props = defineProps<{
     // 当前活动 SSH 标签的连接参数；为空（无标签）时断开并显示引导
@@ -89,10 +79,7 @@ const transfers = useTransfersStore()
 const remotePanel = ref<InstanceType<typeof FilePanel>>()
 
 const sessionId = ref('')
-const connecting = ref(false)
 const error = ref('')
-const sessionLabel = ref('')
-
 const connected = computed(() => !!sessionId.value)
 
 // 远程后端：方法在调用时读取 sessionId.value（getter 形式），
@@ -176,7 +163,7 @@ async function connect(hostKeyRetry = 0) {
     const opts = props.opts
     if (!opts) return
     const seq = ++connectSeq
-    connecting.value = true
+    // connecting.value = true
     error.value = ''
     try {
         const id = await SFTPFileService.Connect(opts)
@@ -186,7 +173,6 @@ async function connect(hostKeyRetry = 0) {
             return
         }
         sessionId.value = id
-        sessionLabel.value = `${opts.username}@${opts.host}:${opts.port || 22}`
         await remotePanel.value?.goHome()
     } catch (e: any) {
         if (seq !== connectSeq) return
@@ -199,8 +185,6 @@ async function connect(hostKeyRetry = 0) {
         }
         sessionId.value = ''
         error.value = e?.message || String(e)
-    } finally {
-        if (seq === connectSeq) connecting.value = false
     }
 }
 

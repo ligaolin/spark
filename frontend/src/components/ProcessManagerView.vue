@@ -149,9 +149,7 @@ function syncTimer() {
 }
 
 watch(() => props.active, syncTimer)
-watch(() => props.sessionId, (v) => {
-  if (v) refresh()
-})
+watch(() => props.sessionId, syncTimer)
 watch(auto, syncTimer)
 watch(() => settings.processRefreshInterval, syncTimer)
 

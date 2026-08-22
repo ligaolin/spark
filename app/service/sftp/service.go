@@ -17,12 +17,12 @@ import (
 	"time"
 
 	"changeme/app/service/fileutil"
-	"changeme/app/service/sshlib"
 	"changeme/app/service/settings"
+	"changeme/app/service/sshlib"
 	"changeme/app/service/types"
 
-	"github.com/wailsapp/wails/v3/pkg/application"
 	sftplib "github.com/pkg/sftp"
+	"github.com/wailsapp/wails/v3/pkg/application"
 	xssh "golang.org/x/crypto/ssh"
 )
 

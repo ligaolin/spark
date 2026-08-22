@@ -190,7 +190,8 @@ function setEditorRef(key: string, el: EditorApi | null) {
 }
 
 function basename(p: string): string {
-    const parts = p.split('/')
+    // 兼容 POSIX（/）与 Windows（\）路径（本地文件夹与远程目录共用此面板）
+    const parts = p.split(/[\\/]/)
     return parts[parts.length - 1] || p
 }
 

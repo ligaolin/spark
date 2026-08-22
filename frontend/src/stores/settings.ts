@@ -20,6 +20,11 @@ export const useSettingsStore = defineStore('settings', {
       const v = parseInt(state.values['process.refresh'] ?? '', 10)
       return Number.isFinite(v) && v > 0 ? v : 5
     },
+    // 网络面板自动刷新间隔（秒）
+    networkRefreshInterval(state): number {
+      const v = parseInt(state.values['network.refresh'] ?? '', 10)
+      return Number.isFinite(v) && v > 0 ? v : 5
+    },
     // 终端字号
     terminalFontSize(state): number {
       const v = parseInt(state.values['terminal.fontSize'] ?? '', 10)
@@ -32,11 +37,6 @@ export const useSettingsStore = defineStore('settings', {
     // 编辑器是否自动换行（长行折行显示）
     editorWordWrap(state): boolean {
       return state.values['editor.wordWrap'] !== '0'
-    },
-    // 站点内嵌浏览器忽略证书（默认开启：SSL 证书无效/自签名/过期的站点
-    // 自动走本地代理，无需手动开开关）
-    sitesIgnoreCert(state): boolean {
-      return state.values['sites.ignoreCert'] !== '0'
     },
     // 编辑器双击选中单词时的分隔符（留空 = 默认：字母数字为单词，其余符号都截断）
     editorWordSeparators(state): string {

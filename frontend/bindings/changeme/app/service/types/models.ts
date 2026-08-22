@@ -77,6 +77,66 @@ export interface FileEntry {
 }
 
 /**
+ * NetInterface describes one remote network interface.
+ */
+export interface NetInterface {
+    "name": string;
+
+    /**
+     * up | down | unknown
+     */
+    "state": string;
+    "mac": string;
+    "mtu": number;
+    "addresses": string[] | null;
+    "rxBytes": number;
+    "txBytes": number;
+    "rxPackets": number;
+    "txPackets": number;
+}
+
+/**
+ * NetListener describes one listening socket on the remote host.
+ */
+export interface NetListener {
+    /**
+     * tcp | tcp6 | udp | udp6
+     */
+    "proto": string;
+
+    /**
+     * local address:port
+     */
+    "address": string;
+    "pid": number;
+    "process": string;
+}
+
+/**
+ * NetRoute describes one routing table entry.
+ */
+export interface NetRoute {
+    "destination": string;
+    "gateway": string;
+    "interface": string;
+}
+
+/**
+ * NetworkInfo aggregates network facts about a remote server.
+ * 监听端口已拆分为 NetworkListeners，避免较慢的 ss/netstat 拖累快速信息。
+ */
+export interface NetworkInfo {
+    "interfaces": NetInterface[] | null;
+    "routes": NetRoute[] | null;
+    "dns": string[] | null;
+
+    /**
+     * 非 Linux 等提示
+     */
+    "error"?: string;
+}
+
+/**
  * ProcessInfo describes one remote process (from ps).
  */
 export interface ProcessInfo {
@@ -193,4 +253,32 @@ export interface TransferProgress {
     "name": string;
     "done": number;
     "total": number;
+}
+
+/**
+ * Tunnel describes one active SSH tunnel on a terminal session.
+ */
+export interface Tunnel {
+    "id": string;
+
+    /**
+     * local | remote | socks
+     */
+    "kind": string;
+
+    /**
+     * 监听地址：local/socks=本机，remote=远端
+     */
+    "bindAddr": string;
+
+    /**
+     * 目标：local=远端目标，remote=本机目标，socks=空
+     */
+    "target": string;
+
+    /**
+     * running | stopped | error
+     */
+    "status": string;
+    "error"?: string;
 }

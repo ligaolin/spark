@@ -70,6 +70,12 @@ const sent = ref<{ time: string; command: string }[]>([])
 
 onMounted(() => store.load())
 
+// 把命令里的换行统一成终端的回车（\r），多行命令按"逐行输入 + 回车"发送
+function toTerminalInput(command: string): string {
+  const lines = command.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+  return lines.join('\r') + '\r'
+}
+
 // 把命令直接写入终端（模拟输入 + 回车），在左侧终端里执行
 async function sendToTerminal(command: string) {
   if (!props.sessionId) {
@@ -78,7 +84,7 @@ async function sendToTerminal(command: string) {
   }
   if (!command.trim()) return false
   try {
-    await TerminalService.Write(props.sessionId, command + '\r')
+    await TerminalService.Write(props.sessionId, toTerminalInput(command))
     const now = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
     sent.value.unshift({
@@ -106,7 +112,7 @@ async function send(command: string, _name: string) {
 async function add() {
   const values = await showInputDialog('新增命令', [
     { key: 'name', label: '命令名称', placeholder: '如：查看日志' },
-    { key: 'command', label: '命令内容', placeholder: '如：tail -n 100 /var/log/syslog' },
+    { key: 'command', label: '命令内容（支持多行）', placeholder: '如：tail -n 100 /var/log/syslog', type: 'textarea' },
   ])
   if (!values) return
   const name = values.name.trim()
@@ -127,7 +133,7 @@ async function add() {
 async function edit(cmd: CustomCommand) {
   const values = await showInputDialog('编辑命令', [
     { key: 'name', label: '命令名称', initial: cmd.name },
-    { key: 'command', label: '命令内容', initial: cmd.command },
+    { key: 'command', label: '命令内容（支持多行）', initial: cmd.command, type: 'textarea' },
   ])
   if (!values) return
   const name = values.name.trim()
@@ -209,9 +215,8 @@ async function remove(cmd: CustomCommand) {
   font-size: 11.5px;
   color: var(--text-secondary);
   margin-top: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
+  white-space: pre-wrap;
 }
 
 .cc-add {

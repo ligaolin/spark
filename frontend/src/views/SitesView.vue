@@ -12,17 +12,18 @@
                     <Plus />
                 </el-icon><span>新建站点</span>
             </el-button>
-            <el-button size="small" plain @click="openUrlDialog" title="直接输入链接在内嵌浏览器打开，无需保存">
+            <el-button size="small" plain @click="openUrlDialog" title="输入链接并选择打开方式（内嵌 / 浏览器 / 窗口 / SSH）">
                 <el-icon>
                     <Position />
                 </el-icon><span>打开链接</span>
             </el-button>
+            <el-button size="small" plain @click="openTunnelManager" title="查看 / 关闭通过 SSH 建立的端口转发隧道">
+                <el-icon>
+                    <Connection />
+                </el-icon><span>SSH 隧道</span>
+            </el-button>
             <span class="hint">站点可在文件夹间拖拽；点击链接右侧 ↗ 在右侧内嵌打开，多站点标签切换</span>
             <div class="toolbar-spacer" />
-            <!-- <el-switch v-model="ignoreCert" size="small" />
-            <span class="ignore-cert-label" :class="{ active: ignoreCert }" title="开启后，SSL 证书无效 / 自签名 / 过期的站点也能在内嵌浏览器中打开（走本地代理，绕过证书校验）">
-                忽略证书
-            </span> -->
         </div>
 
         <div class="sites-body">
@@ -110,6 +111,12 @@
                                                         @click.stop="openLink(l)">打开</el-button>
                                                     <el-button size="small" text @click.stop="openLinkInBrowser(l)"
                                                         title="在系统默认浏览器中打开">浏览器打开</el-button>
+                                                    <el-button size="small" text @click.stop="openLinkInApp(l)"
+                                                        title="在独立应用窗口打开（顶层窗口，不受 iframe 反嵌入限制，推荐用于宝塔面板等后台）">窗口打开</el-button>
+                                                    <el-button size="small" text @click.stop="openLinkViaSsh(l)"
+                                                        title="通过已保存的 SSH 连接做本地端口转发，在内嵌浏览器打开仅服务器可达的服务">SSH 打开</el-button>
+                                                    <el-button size="small" text @click.stop="openLinkViaSshWindow(l)"
+                                                        title="通过 SSH 隧道转发，并在独立应用窗口打开（不受 iframe 反嵌入限制）">SSH 窗口打开</el-button>
                                                     <el-button size="small" text @click.stop="copyText(l.url, '链接')"
                                                         title="复制链接"><el-icon>
                                                             <CopyDocument />
@@ -190,26 +197,12 @@
                             <div class="browser-frames">
                                 <div v-for="tab in browserTabs" :key="tab.key" v-show="tab.key === activeTabKey"
                                     class="frame-wrap">
-                                    <!-- 忽略证书时：代理地址解析完成前不挂载 iframe，
-                                         避免先用原始地址加载（证书错误）再切换导致空白/残留错误页 -->
-                                    <iframe v-if="frameSrc(tab.url)" :src="frameSrc(tab.url)" :key="frameKey(tab)"
-                                        class="browser-frame" />
-                                    <div v-else-if="ignoreCert && !proxyError[tab.url]" class="frame-loading">
-                                        <el-icon class="is-loading" :size="22"><Loading /></el-icon>
-                                        <span>正在通过本地代理打开（忽略证书）…</span>
-                                    </div>
-                                    <div v-else-if="ignoreCert && proxyError[tab.url]" class="frame-loading">
-                                        <el-icon :size="22" color="#f56c6c"><CircleCloseFilled /></el-icon>
-                                        <span>代理打开失败：{{ proxyError[tab.url] }}</span>
-                                        <el-button size="small" type="primary" @click="openInSystemBrowser(tab.url)">
-                                            在系统浏览器打开
-                                        </el-button>
-                                    </div>
+                                    <!-- 直接加载目标 URL：证书错误由 WebView2 原生忽略
+                                         （main.go 的 --ignore-certificate-errors），不走代理。
+                                         带 X-Frame-Options 反嵌入头的站点打不开，请用「窗口打开」 -->
+                                    <iframe :src="tab.url" :key="frameKey(tab)" class="browser-frame" />
                                 </div>
                             </div>
-                            <!-- <div v-if="ignoreCert" class="proxy-badge">
-                                已开启「忽略证书」：内嵌页面经本地代理打开，可访问 SSL 有问题的站点
-                            </div> -->
                         </div>
                     </div>
                 </el-splitter-panel>
@@ -217,15 +210,57 @@
         </div>
 
         <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
+
+        <!-- 打开链接弹窗：URL + 打开方式 -->
+        <el-dialog v-model="openUrlDialogVisible" title="打开链接" width="560px" :close-on-click-modal="false">
+            <div class="open-url-body">
+                <el-input v-model="openUrlValue" placeholder="https://example.com" clearable
+                    @keyup.enter="confirmOpenUrl" />
+                <div class="open-url-modes">
+                    <el-radio-group v-model="openUrlMode" size="small">
+                        <el-radio-button value="open">打开</el-radio-button>
+                        <el-radio-button value="browser">浏览器打开</el-radio-button>
+                        <el-radio-button value="window">窗口打开</el-radio-button>
+                        <el-radio-button value="ssh">SSH 打开</el-radio-button>
+                        <el-radio-button value="ssh-window">SSH 窗口打开</el-radio-button>
+                    </el-radio-group>
+                </div>
+            </div>
+            <template #footer>
+                <el-button @click="openUrlDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="confirmOpenUrl">确定</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- SSH 隧道管理弹窗 -->
+        <el-dialog v-model="tunnelDialogVisible" title="SSH 隧道" width="640px" :close-on-click-modal="false">
+            <div class="tunnel-list">
+                <div v-if="tunnels.length === 0" class="empty">暂无活动隧道</div>
+                <div v-for="t in tunnels" :key="t.id" class="tunnel-item">
+                    <div class="tunnel-main">
+                        <div class="tunnel-title">
+                            <span class="tunnel-conn">{{ t.connectionName }}</span>
+                            <span class="tunnel-target mono" :title="t.target">{{ t.target }}</span>
+                        </div>
+                        <div class="tunnel-url mono" :title="t.localUrl">{{ t.localUrl }}</div>
+                    </div>
+                    <div class="tunnel-actions">
+                        <el-button size="small" text type="primary" @click="openTunnelTab(t)">打开</el-button>
+                        <el-button size="small" text type="danger" @click="closeTunnel(t.id)">关闭</el-button>
+                    </div>
+                </div>
+            </div>
+        </el-dialog>
     </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Clipboard } from '@wailsio/runtime'
 import {
     Collection,
+    Connection,
     Link,
     Edit,
     Delete,
@@ -238,17 +273,14 @@ import {
     Close,
     TopRight,
     FullScreen,
-    Loading,
-    CircleCloseFilled,
     Position,
     Refresh,
 } from '@element-plus/icons-vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
-import { SiteService } from '../utils/wails'
-import type { Site, SiteLink, SiteAccount, SiteFolder } from '../utils/wails'
+import { SiteService, ConnService } from '../utils/wails'
+import type { Site, SiteLink, SiteAccount, SiteFolder, SavedConnection, TunnelInfo } from '../utils/wails'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
-import { useSettingsStore } from '../stores/settings'
 
 interface SiteTreeNode {
     key: string
@@ -281,54 +313,20 @@ let tabSeq = 0
 // 每个标签的 iframe 刷新序号：刷新时 +1，通过 iframe :key 变化重新挂载实现刷新
 const iframeSeq = reactive<Record<string, number>>({})
 
-// 忽略证书：开启后内嵌浏览器走本地代理（后端忽略 TLS 证书校验抓取页面），
-// SSL 证书无效 / 自签名 / 过期的站点也能打开。
-// 已持久化为全局配置（设置 → 通用「站点忽略证书」），默认开启；
-// 工具栏开关是快捷入口，切换即保存。
-const settings = useSettingsStore()
-const ignoreCert = computed({
-    get: () => settings.sitesIgnoreCert,
-    set: async (v: boolean) => {
-        try {
-            await settings.set('sites.ignoreCert', v ? '1' : '0')
-        } catch (e: any) {
-            ElMessage.error(`保存设置失败：${e?.message || e}`)
-        }
-    },
-})
-// 原始 URL -> 代理 URL 缓存（ProxyUrl 为异步调用，解析前不挂载 iframe）
-const proxyCache = reactive<Record<string, string>>({})
-// 原始 URL -> 代理启动失败原因（打开失败时给出错误提示与浏览器打开兜底）
-const proxyError = reactive<Record<string, string>>({})
-
-// 代理地址解析完成后才返回（未就绪返回 ''，模板据此不渲染 iframe）
-function frameSrc(raw: string): string {
-    if (!ignoreCert.value) return raw
-    return proxyCache[raw] || ''
-}
-
-// 主动解析代理地址（开启忽略证书后立即解析所有已打开标签，切换标签即时可用）
-function resolveProxy(raw: string) {
-    if (!ignoreCert.value || proxyCache[raw] || proxyError[raw]) return
-    SiteService.ProxyUrl(raw)
-        .then((u) => {
-            if (u) proxyCache[raw] = u
-        })
-        .catch((e: any) => {
-            proxyError[raw] = e?.message || String(e)
-        })
-}
-
-watch(
-    () => [ignoreCert.value, browserTabs.value.map((t) => t.url)] as [boolean, string[]],
-    () => {
-        if (!ignoreCert.value) return
-        for (const url of browserTabs.value.map((t) => t.url)) resolveProxy(url)
-    },
-    { immediate: true },
-)
+// 内嵌浏览器：直接加载目标 URL。证书错误由 WebView2 原生忽略
+// （main.go 的 --ignore-certificate-errors），不走代理。带 X-Frame-Options
+// 反嵌入头的站点在 iframe 里打不开，这类站点请用链接卡片上的「窗口打开」。
 
 const showPass = reactive<Record<number, boolean>>({})
+
+// SSH 端口转发隧道
+const tunnels = ref<TunnelInfo[]>([])
+const tunnelDialogVisible = ref(false)
+
+// 「打开链接」弹窗：URL + 打开方式
+const openUrlDialogVisible = ref(false)
+const openUrlValue = ref('')
+const openUrlMode = ref('open')
 
 // 右键菜单
 const ctxVisible = ref(false)
@@ -766,19 +764,131 @@ function openLinkInBrowser(link: SiteLink) {
     void openInSystemBrowser(link.url)
 }
 
-// 直接输入链接打开（不保存）：弹窗输入 URL → 以临时标签在内嵌浏览器打开，
-// 与已保存链接共用标签与「忽略证书」逻辑
-async function openUrlDialog() {
-    const v = await showInputDialog('打开链接', [
-        { key: 'url', label: '地址（URL）', placeholder: 'https://example.com' },
+// 在独立应用窗口（顶层 WebView）打开：不受 iframe 反嵌入头限制，
+// 证书由全局 --ignore-certificate-errors 忽略，POST / WebSocket 均正常。
+async function openLinkInApp(link: SiteLink) {
+    try {
+        await SiteService.OpenInApp(normalizeUrl(link.url), link.name)
+    } catch (e: any) {
+        ElMessage.error(`窗口打开失败：${e?.message || e}`)
+    }
+}
+
+// ---------- SSH 隧道 ----------
+
+async function loadSshConnections(): Promise<SavedConnection[]> {
+    try {
+        const all = (await ConnService.List()) ?? []
+        return all.filter((c) => (c.type || '').toLowerCase() === 'ssh')
+    } catch (e: any) {
+        ElMessage.error(`加载 SSH 连接失败：${e?.message || e}`)
+        return []
+    }
+}
+
+// 弹窗选择一个已保存的 SSH 连接（供隧道转发使用）
+async function pickSshConnection(target: string): Promise<number | null> {
+    const conns = await loadSshConnections()
+    if (conns.length === 0) {
+        ElMessage.warning('没有可用的 SSH 连接，请先在「连接管理」里保存 SSH 连接')
+        return null
+    }
+    const options = conns.map((c) => ({ label: c.name || c.host, value: String(c.id) }))
+    const v = await showInputDialog('选择 SSH 连接', [
+        { key: 'connectionId', label: 'SSH 连接', type: 'select', options, initial: String(conns[0].id) },
+        { key: 'target', label: '目标地址', initial: target, readonly: true },
     ])
-    if (!v) return
-    const url = normalizeUrl(v.url)
-    if (!url) {
+    if (!v) return null
+    return Number(v.connectionId)
+}
+
+// 建立 SSH 本地端口转发，然后按 mode 在内嵌标签页或独立窗口打开
+async function openViaSsh(rawUrl: string, mode: 'tab' | 'window') {
+    const connectionId = await pickSshConnection(rawUrl)
+    if (!connectionId) return
+    try {
+        const t = await SiteService.OpenTunnel(connectionId, rawUrl)
+        if (mode === 'window') {
+            await SiteService.OpenInApp(t.localUrl, 'SSH 隧道')
+            ElMessage.success('已建立 SSH 隧道，并在独立窗口打开')
+        } else {
+            ElMessage.success(`隧道已建立：${t.localUrl}`)
+            openTab(`SSH · ${rawUrl}`, t.localUrl)
+        }
+        tunnels.value = (await SiteService.ListTunnels()) ?? []
+    } catch (e: any) {
+        ElMessage.error(`SSH 打开失败：${e?.message || e}`)
+    }
+}
+
+function openLinkViaSsh(link: SiteLink) {
+    void openViaSsh(link.url, 'tab')
+}
+
+function openLinkViaSshWindow(link: SiteLink) {
+    void openViaSsh(link.url, 'window')
+}
+
+async function openTunnelManager() {
+    try {
+        tunnels.value = (await SiteService.ListTunnels()) ?? []
+    } catch (e: any) {
+        ElMessage.error(`加载隧道失败：${e?.message || e}`)
+    }
+    tunnelDialogVisible.value = true
+}
+
+function openTunnelTab(t: TunnelInfo) {
+    openTab(`SSH · ${t.connectionName}`, t.localUrl)
+}
+
+async function closeTunnel(id: string) {
+    try {
+        await SiteService.CloseTunnel(id)
+        tunnels.value = (await SiteService.ListTunnels()) ?? []
+    } catch (e: any) {
+        ElMessage.error(`关闭隧道失败：${e?.message || e}`)
+    }
+}
+
+// 打开「打开链接」弹窗（默认方式：内嵌打开）
+function openUrlDialog() {
+    openUrlValue.value = ''
+    openUrlMode.value = 'open'
+    openUrlDialogVisible.value = true
+}
+
+// 「打开链接」弹窗确认：按所选打开方式分发
+async function confirmOpenUrl() {
+    const raw = openUrlValue.value.trim()
+    if (!raw) {
         ElMessage.warning('请输入链接地址')
         return
     }
-    openTab(url, url)
+    const url = normalizeUrl(raw)
+    openUrlDialogVisible.value = false
+    switch (openUrlMode.value) {
+        case 'browser':
+            await openInSystemBrowser(url)
+            break
+        case 'window':
+            try {
+                await SiteService.OpenInApp(url, url)
+            } catch (e: any) {
+                ElMessage.error(`窗口打开失败：${e?.message || e}`)
+            }
+            break
+        case 'ssh':
+            await openViaSsh(raw, 'tab')
+            break
+        case 'ssh-window':
+            await openViaSsh(raw, 'window')
+            break
+        case 'open':
+        default:
+            openTab(url, url)
+            break
+    }
 }
 
 function openTab(title: string, url: string) {
@@ -817,14 +927,6 @@ function frameKey(tab: BrowserTab): string {
 
 function refreshTab(key: string) {
     iframeSeq[key] = (iframeSeq[key] || 0) + 1
-    // 开启忽略证书时重新解析代理地址，保证 iframe 重挂载后走最新代理路径；
-    // 若上次代理解析失败，清掉错误记录以便重试
-    const tab = browserTabs.value.find((t) => t.key === key)
-    if (!tab) return
-    if (ignoreCert.value) {
-        delete proxyError[tab.url]
-        resolveProxy(tab.url)
-    }
 }
 
 async function openInSystemBrowser(url?: string) {
@@ -1256,5 +1358,79 @@ async function openInSystemBrowser(url?: string) {
     height: 100%;
     border: none;
     background: #fff;
+}
+
+.tunnel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+.tunnel-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--hover-bg);
+}
+
+.tunnel-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.tunnel-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tunnel-conn {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    flex-shrink: 0;
+}
+
+.tunnel-target {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tunnel-url {
+    font-size: 11.5px;
+    color: var(--active-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tunnel-actions {
+    flex-shrink: 0;
+    display: flex;
+    gap: 4px;
+}
+
+.open-url-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.open-url-modes :deep(.el-radio-group) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
 }
 </style>

@@ -1,12 +1,15 @@
 <template>
     <div ref="rootRef" class="file-panel" :class="{ 'drop-target': dragDepth > 0 }" data-file-drop-target="1"
-        :data-file-panel-id="panelId" @dragenter="onDragEnter" @dragover="onDragOver"
-        @dragleave="onDragLeave" @drop="onDrop" @contextmenu.prevent="onBlankContext">
+        :data-file-panel-id="panelId" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave"
+        @drop="onDrop" @contextmenu.prevent="onBlankContext">
         <div class="panel-head">
             <span class="panel-title">{{ title }}</span>
-            <span v-if="loading" class="panel-loading"><el-icon class="is-loading">
+            <span v-if="loading" class="panel-loading">
+                <el-icon class="is-loading">
                     <Loading />
-                </el-icon></span>
+                </el-icon>
+            </span>
+            <slot name="head"></slot>
         </div>
 
         <div class="path-bar">
@@ -72,10 +75,8 @@
                 <el-table-column label="名称" min-width="180">
                     <template #default="{ row }">
                         <span class="entry-name" draggable="true" :title="dragHint"
-                            @dragstart="onDragStart($event, row)"
-                            @dragover="onRowDragOver($event, row)"
-                            @dragleave="onRowDragLeave($event, row)"
-                            @drop="onRowDrop($event, row)">
+                            @dragstart="onDragStart($event, row)" @dragover="onRowDragOver($event, row)"
+                            @dragleave="onRowDragLeave($event, row)" @drop="onRowDrop($event, row)">
                             <el-icon v-if="row.isDir" color="#e6c06c">
                                 <Folder />
                             </el-icon>
@@ -272,42 +273,42 @@ const editorRef = ref<InstanceType<typeof TextEditor>>()
 const searchRef = ref<InstanceType<typeof SearchDialog>>()
 
 function openEditor(file: { path: string; name: string }, lineNo?: number) {
-  if (props.dockEditor) {
-    emit('action', {
-      action: 'open-file',
-      entry: { path: file.path, name: file.name, isDir: false },
-    })
-    return
-  }
-  editorRef.value?.open(props.backend, file, lineNo)
+    if (props.dockEditor) {
+        emit('action', {
+            action: 'open-file',
+            entry: { path: file.path, name: file.name, isDir: false },
+        })
+        return
+    }
+    editorRef.value?.open(props.backend, file, lineNo)
 }
 
 async function openSearch() {
-  if (props.backend.kind === 'remote' && props.connected === false) {
-    ElMessage.warning('请先连接远程服务器')
-    return
-  }
-  let dir = currentPath.value
-  if (!dir) {
-    try {
-      dir = await props.backend.home()
-    } catch {
-      /* ignore */
+    if (props.backend.kind === 'remote' && props.connected === false) {
+        ElMessage.warning('请先连接远程服务器')
+        return
     }
-  }
-  if (!dir) {
-    ElMessage.warning('请先进入目录')
-    return
-  }
-  searchRef.value?.open(dir)
+    let dir = currentPath.value
+    if (!dir) {
+        try {
+            dir = await props.backend.home()
+        } catch {
+            /* ignore */
+        }
+    }
+    if (!dir) {
+        ElMessage.warning('请先进入目录')
+        return
+    }
+    searchRef.value?.open(dir)
 }
 
 function onSearchPick(r: SearchResult) {
-  if (r.isDir) {
-    void cd(r.path)
-  } else {
-    openEditor({ path: r.path, name: r.name }, r.lineNo)
-  }
+    if (r.isDir) {
+        void cd(r.path)
+    } else {
+        openEditor({ path: r.path, name: r.name }, r.lineNo)
+    }
 }
 
 // 拖拽高亮状态（用计数器避免子元素间移动时闪烁）
@@ -753,14 +754,14 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
             // 文档式编辑板块：打开当前目录
             ...(props.dockEditor
                 ? [
-                      {
-                          key: 'open-in-editor',
-                          label: '用编辑器打开当前目录',
-                          icon: EditPen,
-                          disabled: !linked.value || !currentPath.value,
-                      } as CtxItem,
-                      'divider' as const,
-                  ]
+                    {
+                        key: 'open-in-editor',
+                        label: '用编辑器打开当前目录',
+                        icon: EditPen,
+                        disabled: !linked.value || !currentPath.value,
+                    } as CtxItem,
+                    'divider' as const,
+                ]
                 : []),
             { key: 'mkdir', label: '新建目录', icon: FolderAdd },
             { key: 'refresh', label: '刷新', icon: Refresh },
@@ -996,8 +997,8 @@ async function remove() {
         props.multiSelect && selectedRows.value.length > 0
             ? selectedRows.value.slice()
             : selected.value
-              ? [selected.value]
-              : []
+                ? [selected.value]
+                : []
     if (targets.length === 0) {
         ElMessage.warning('请先选择文件或目录')
         return

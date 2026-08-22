@@ -21,6 +21,11 @@ import type {
   ServerInfo,
   ProcessInfo,
   SessionClosed,
+  NetworkInfo,
+  NetInterface,
+  NetListener,
+  NetRoute,
+  Tunnel,
 } from '../../bindings/changeme/app/service/types/models'
 import type {
   SavedConnection,
@@ -35,6 +40,7 @@ import type {
 } from '../../bindings/changeme/app/model/models'
 import type { HostKeyInfo, HostKeyStatus } from '../../bindings/changeme/app/service/hostkeys/models'
 import type { DatabaseConfig } from '../../bindings/changeme/app/service/databases/models'
+import type { TunnelInfo } from '../../bindings/changeme/app/service/sites/models'
 import type { SshHost, ImportResult } from '../../bindings/changeme/app/service/sshconfig/models'
 import type { DedupResult } from '../../bindings/changeme/app/service/connections/models'
 
@@ -71,10 +77,16 @@ export type {
   ServerInfo,
   ProcessInfo,
   SessionClosed,
+  NetworkInfo,
+  NetInterface,
+  NetListener,
+  NetRoute,
+  Tunnel,
   DatabaseConfig,
   SshHost,
   ImportResult,
   DedupResult,
+  TunnelInfo,
 }
 
 // 绑定模型为接口且字段全必填，这里提供带默认值的工厂函数便于构造。

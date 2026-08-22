@@ -92,6 +92,12 @@ func main() {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
+		Windows: application.WindowsOptions{
+			// 让 WebView2 原生忽略 SSL 证书错误（自签名 / 过期 / 无效证书）。
+			// 内嵌浏览器（iframe）与「窗口打开」（顶层 WebView）都直接加载目标 URL，
+			// 证书统一由这个开关忽略，不再走本地代理。全局生效。
+			AdditionalBrowserArgs: []string{"--ignore-certificate-errors"},
+		},
 	})
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{

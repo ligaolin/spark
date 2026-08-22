@@ -27,7 +27,7 @@
                     </div>
                 </div>
                 <div class="tab-add" :class="{ active: panelVisible }"
-                    :title="panelVisible ? '收起信息面板' : '展开信息面板（SFTP 文件 / 服务器信息 / 进程管理 / 自定义命令）'"
+                    :title="panelVisible ? '收起信息面板' : '展开信息面板（SFTP 文件 / 服务器信息 / 进程管理 / 自定义命令 / 网络 / 转发代理）'"
                     @click="panelVisible = !panelVisible">
                     <el-icon>
                         <InfoFilled />
@@ -52,6 +52,8 @@
                             <el-radio-button value="info">服务器信息</el-radio-button>
                             <el-radio-button value="processes">进程管理</el-radio-button>
                             <el-radio-button value="commands">自定义命令</el-radio-button>
+                            <el-radio-button value="network">网络</el-radio-button>
+                            <el-radio-button value="tunnel">转发 / 代理</el-radio-button>
                         </el-radio-group>
                         <el-icon class="side-close" @click="panelVisible = false">
                             <Close />
@@ -59,10 +61,15 @@
                     </div>
                     <div class="side-body">
                         <SftpPanel v-show="panelTab === 'sftp'" :opts="activeTabOpts" :fav-key="activeTabConnId" />
-                        <ServerInfoView v-show="panelTab === 'info'" :session-id="activeSessionId" />
+                        <ServerInfoView v-show="panelTab === 'info'" :session-id="activeSessionId"
+                            :active="infoActive" />
                         <ProcessManagerView v-show="panelTab === 'processes'" :session-id="activeSessionId"
                             :active="processActive" />
                         <CustomCommandsView v-show="panelTab === 'commands'" :session-id="activeSessionId" />
+                        <NetworkView v-show="panelTab === 'network'" :session-id="activeSessionId"
+                            :active="networkActive" />
+                        <TunnelView v-show="panelTab === 'tunnel'" :session-id="activeSessionId"
+                            :active="tunnelActive" />
                     </div>
                 </aside>
             </div>
@@ -82,6 +89,8 @@ import SftpPanel from '../components/SftpPanel.vue'
 import ServerInfoView from '../components/ServerInfoView.vue'
 import ProcessManagerView from '../components/ProcessManagerView.vue'
 import CustomCommandsView from '../components/CustomCommandsView.vue'
+import NetworkView from '../components/NetworkView.vue'
+import TunnelView from '../components/TunnelView.vue'
 import ConnectDialog from '../components/ConnectDialog.vue'
 import { useTerminalStore } from '../stores/terminal'
 import { useConnectionsStore } from '../stores/connections'
@@ -94,14 +103,20 @@ const dialogVisible = ref(false)
 
 // 右侧信息面板：SFTP 文件为默认页（打开 SSH 终端即同时打开 SFTP）
 const panelVisible = ref(true)
-const panelTab = ref<'sftp' | 'info' | 'processes' | 'commands'>('sftp')
+const panelTab = ref<'sftp' | 'info' | 'processes' | 'commands' | 'network' | 'tunnel'>('sftp')
 const activeSessionId = computed(() => store.activeTab?.sessionId || '')
 // SFTP 面板跟随当前活动标签的连接参数
 const activeTabOpts = computed(() => store.activeTab?.opts ?? null)
 // SFTP 面板的目录收藏按来源连接 id 区分（快速连接无 id → 不展示收藏入口）
 const activeTabConnId = computed(() => store.activeTab?.connId ?? undefined)
+// 服务器信息页激活时才会加载 / 刷新
+const infoActive = computed(() => panelVisible.value && panelTab.value === 'info')
 // 进程管理页激活时才会自动刷新
 const processActive = computed(() => panelVisible.value && panelTab.value === 'processes')
+// 网络页激活时才会自动刷新 / 实时采样
+const networkActive = computed(() => panelVisible.value && panelTab.value === 'network')
+// 转发 / 代理页激活时才会轮询隧道列表
+const tunnelActive = computed(() => panelVisible.value && panelTab.value === 'tunnel')
 
 // 从连接管理页「打开」SSH 进入时，确保右侧面板展开并显示 SFTP 页
 onActivated(() => {

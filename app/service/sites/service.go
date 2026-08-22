@@ -311,8 +311,12 @@ func (s *SiteService) OpenInBrowser(url string) error {
 	return application.Get().Browser.OpenURL(url)
 }
 
-// OpenInApp opens a URL in a new in-app window (its own WebView). Kept as an
-// alternative; the primary flow embeds the URL in the frontend instead.
+// OpenInApp opens a URL in a new in-app window (its own top-level WebView).
+// 顶层导航不受 iframe 反嵌入头（X-Frame-Options / CSP frame-ancestors）限制，
+// 证书错误由全局 --ignore-certificate-errors 忽略，POST / WebSocket 等交互也都正常，
+// 是打开宝塔面板等管理后台最可靠的方式。
+// 同一链接只保留一个窗口：已存在时更新标题/地址并聚焦，避免重复开窗
+// （Wails「Multiple Windows」文档的最佳实践：给窗口命名 + GetByName 去重）。
 func (s *SiteService) OpenInApp(url, title string) error {
 	url = normalizeURL(url)
 	if url == "" {
@@ -321,13 +325,28 @@ func (s *SiteService) OpenInApp(url, title string) error {
 	if strings.TrimSpace(title) == "" {
 		title = "站点"
 	}
+	name := "site:" + url
+	if w, ok := application.Get().Window.GetByName(name); ok {
+		w.SetTitle(title)
+		w.SetURL(url)
+		w.Show()
+		w.Focus()
+		return nil
+	}
 	application.Get().Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:      name,
 		Title:     title,
 		URL:       url,
 		Width:     1280,
 		Height:    820,
 		MinWidth:  480,
 		MinHeight: 360,
+		// F12 打开 DevTools，便于调试站点窗口（与主窗口一致）
+		KeyBindings: map[string]func(window application.Window){
+			"F12": func(window application.Window) {
+				window.OpenDevTools()
+			},
+		},
 	})
 	return nil
 }

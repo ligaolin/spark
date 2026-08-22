@@ -5,11 +5,16 @@ export type {
     ConnectOptions,
     DiskInfo,
     FileEntry,
+    NetInterface,
+    NetListener,
+    NetRoute,
+    NetworkInfo,
     ProcessInfo,
     SearchResult,
     ServerInfo,
     SessionClosed,
     TerminalExit,
     TerminalOutput,
-    TransferProgress
+    TransferProgress,
+    Tunnel
 } from "./models.js";

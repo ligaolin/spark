@@ -143,6 +143,53 @@ type ServerInfo struct {
 	Error       string     `json:"error,omitempty"` // 非 Linux 等提示
 }
 
+// NetInterface describes one remote network interface.
+type NetInterface struct {
+	Name      string   `json:"name"`
+	State     string   `json:"state"` // up | down | unknown
+	Mac       string   `json:"mac"`
+	MTU       int      `json:"mtu"`
+	Addresses []string `json:"addresses"`
+	RxBytes   int64    `json:"rxBytes"`
+	TxBytes   int64    `json:"txBytes"`
+	RxPackets int64    `json:"rxPackets"`
+	TxPackets int64    `json:"txPackets"`
+}
+
+// NetListener describes one listening socket on the remote host.
+type NetListener struct {
+	Proto   string `json:"proto"`   // tcp | tcp6 | udp | udp6
+	Address string `json:"address"` // local address:port
+	PID     int    `json:"pid"`
+	Process string `json:"process"`
+}
+
+// NetRoute describes one routing table entry.
+type NetRoute struct {
+	Destination string `json:"destination"`
+	Gateway     string `json:"gateway"`
+	Interface   string `json:"interface"`
+}
+
+// NetworkInfo aggregates network facts about a remote server.
+// 监听端口已拆分为 NetworkListeners，避免较慢的 ss/netstat 拖累快速信息。
+type NetworkInfo struct {
+	Interfaces []NetInterface `json:"interfaces"`
+	Routes     []NetRoute     `json:"routes"`
+	DNS        []string       `json:"dns"`
+	Error      string         `json:"error,omitempty"` // 非 Linux 等提示
+}
+
+// Tunnel describes one active SSH tunnel on a terminal session.
+type Tunnel struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`     // local | remote | socks
+	BindAddr string `json:"bindAddr"` // 监听地址：local/socks=本机，remote=远端
+	Target   string `json:"target"`   // 目标：local=远端目标，remote=本机目标，socks=空
+	Status   string `json:"status"`   // running | stopped | error
+	Error    string `json:"error,omitempty"`
+}
+
 // NewID returns a random hexadecimal session id.
 func NewID() string {
 	b := make([]byte, 12)

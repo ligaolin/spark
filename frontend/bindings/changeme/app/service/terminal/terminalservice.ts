@@ -17,6 +17,13 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as types$0 from "../types/models.js";
 
 /**
+ * CloseTunnel closes and releases a tunnel by id.
+ */
+export function CloseTunnel(tunnelID: string): $CancellablePromise<void> {
+    return $Call.ByID(4066863101, tunnelID);
+}
+
+/**
  * Connect establishes an SSH connection and starts an interactive shell.
  * It returns the new session id.
  */
@@ -43,6 +50,29 @@ export function IsConnected(id: string): $CancellablePromise<boolean> {
  */
 export function KillProcess(id: string, pid: number): $CancellablePromise<void> {
     return $Call.ByID(3799349342, id, pid);
+}
+
+/**
+ * NetworkInfo gathers interfaces, routes and DNS.
+ */
+export function NetworkInfo(id: string): $CancellablePromise<types$0.NetworkInfo | null> {
+    return $Call.ByID(2092821485, id);
+}
+
+/**
+ * NetworkListeners returns the remote listening sockets (ss / netstat).
+ */
+export function NetworkListeners(id: string): $CancellablePromise<types$0.NetListener[] | null> {
+    return $Call.ByID(4072782942, id);
+}
+
+/**
+ * OpenTunnel establishes a tunnel on the given session.
+ * kind ∈ {local, remote, socks}；bindAddr 为空或纯端口时默认 127.0.0.1（随机端口）。
+ * socksUser/socksPass 仅对 socks 生效：非空时为 SOCKS5 启用用户名/密码认证。
+ */
+export function OpenTunnel(id: string, kind: string, bindAddr: string, target: string, socksUser: string, socksPass: string): $CancellablePromise<types$0.Tunnel> {
+    return $Call.ByID(2122885187, id, kind, bindAddr, target, socksUser, socksPass);
 }
 
 /**
@@ -74,6 +104,13 @@ export function RunCommand(id: string, command: string): $CancellablePromise<str
  */
 export function ServerInfo(id: string): $CancellablePromise<types$0.ServerInfo | null> {
     return $Call.ByID(2180983378, id);
+}
+
+/**
+ * Tunnels returns all tunnels of a session.
+ */
+export function Tunnels(sessionID: string): $CancellablePromise<types$0.Tunnel[] | null> {
+    return $Call.ByID(3280445124, sessionID);
 }
 
 /**

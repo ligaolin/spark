@@ -100,7 +100,7 @@ const menu = [
 
     { path: '/documents', label: '文档管理', icon: Notebook },
     { path: '/sites', label: '站点管理', icon: Collection },
-    { path: '/remote-editor', label: '远程编辑器', icon: EditPen },
+    { path: '/remote-editor', label: '编辑器', icon: EditPen },
     // 本地终端：安卓端无法启动本机 shell，直接屏蔽显示
 ]
 

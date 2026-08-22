@@ -93,7 +93,7 @@ import { TerminalService } from '../utils/wails'
 import type { ServerInfo } from '../utils/wails'
 import { formatSize } from '../types'
 
-const props = defineProps<{ sessionId: string }>()
+const props = defineProps<{ sessionId: string; active?: boolean }>()
 
 const loading = ref(false)
 const info = ref<ServerInfo | null>(null)
@@ -125,9 +125,16 @@ async function load() {
 watch(
   () => props.sessionId,
   (v) => {
-    if (v) load()
+    // 仅在该视图可见（active）时加载，避免隐藏时浪费请求
+    if (v && props.active) load()
   },
-  { immediate: true },
+)
+watch(
+  () => props.active,
+  (act) => {
+    // 切到该视图时立即执行一次
+    if (act && props.sessionId) load()
+  },
 )
 </script>
 

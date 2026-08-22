@@ -5,3 +5,7 @@ import * as SiteService from "./siteservice.js";
 export {
     SiteService
 };
+
+export type {
+    TunnelInfo
+} from "./models.js";

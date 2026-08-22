@@ -18,8 +18,10 @@
 //   - 移除页面自带的 <meta http-equiv="Content-Security-Policy">，避免站点
 //     的 CSP 拦截"改写后的代理地址"资源导致整页空白
 //
-// 已知限制：POST 表单 / cookie 登录态不会透传（每个请求独立抓取）。对自签名
-// 内网站点足够用。
+// 请求方法（GET / POST / …）与请求体透传，cookie 登录态由 jar 自动携带；
+// 响应只转发少量安全头，X-Frame-Options / Content-Security-Policy 等反嵌入头
+// 不会被带回浏览器，因此自签名、反 iframe 的内网站点也能嵌入打开。
+// 已知限制：WebSocket 升级尚未隧道转发。
 package sites
 
 import (
@@ -151,10 +153,6 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 // 改写、直接请求到代理服务器根路径（127.0.0.1:PORT/static/...），这里用
 // Referer 里的页面地址把请求路径解析成目标 URL 后走同一代理逻辑。
 func handleCatchAll(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
 	page := pageURLFromReferer(r.Header.Get("Referer"))
 	if page == "" {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -196,7 +194,19 @@ func serveTarget(w http.ResponseWriter, r *http.Request, target string) {
 		target += "?" + q
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
+	// 透传请求体：登录表单 / XHR 等 POST 必须把 method + body 原样转发，
+	// 否则目标站会按错误方法处理（宝塔面板登录 POST 被当 GET → 404）。
+	var reqBody io.Reader
+	if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		b, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
+		if err != nil {
+			http.Error(w, "read body failed: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		reqBody = bytes.NewReader(b)
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, reqBody)
 	if err != nil {
 		http.Error(w, "bad target url", http.StatusBadRequest)
 		return
@@ -207,8 +217,10 @@ func serveTarget(w http.ResponseWriter, r *http.Request, target string) {
 	} else {
 		req.Header.Set("User-Agent", fallbackUserAgent)
 	}
-	if accept := r.Header.Get("Accept"); accept != "" {
-		req.Header.Set("Accept", accept)
+	for _, h := range []string{"Accept", "Content-Type", "X-Requested-With"} {
+		if v := r.Header.Get(h); v != "" {
+			req.Header.Set(h, v)
+		}
 	}
 
 	resp, err := insecureClient.Do(req)

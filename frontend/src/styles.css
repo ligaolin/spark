@@ -218,3 +218,7 @@ body {
     overflow: auto !important;
     padding: 10px 5px;
 }
+
+.el-button--small{
+    padding: 5px 8px;
+}
