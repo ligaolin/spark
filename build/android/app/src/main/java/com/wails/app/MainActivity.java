@@ -22,7 +22,6 @@ import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.util.Log;
-import android.view.View;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -32,9 +31,9 @@ import android.webkit.WebViewClient;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.webkit.WebViewAssetLoader;
 
 import org.json.JSONObject;
@@ -96,26 +95,36 @@ public class MainActivity extends AppCompatActivity {
         // Set up WebView
         setupWebView();
 
-        // Inset the WebView container by the system-bar insets so the UI never
-        // renders underneath the status bar / navigation bar / display cutout.
-        applySystemBarInsets();
+        // 隐藏状态栏 / 导航栏（沉浸式全屏），让应用占满整个屏幕，
+        // 而不是在系统栏下面留白浪费可用空间。
+        hideSystemBars();
 
         // Load the application
         loadApplication();
     }
 
     /**
-     * targetSdk 35 forces edge-to-edge on Android 15+, which draws the app
-     * behind the status/navigation bars. Pad the root container by the actual
-     * system-bar insets so the WebView content sits inside the safe area.
+     * Immersive fullscreen: hide the status bar and navigation bar so the app
+     * uses the whole screen. Swiping from an edge briefly re-shows the bars.
      */
-    private void applySystemBarInsets() {
-        final View root = findViewById(R.id.main_container);
-        ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
-            Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-            return WindowInsetsCompat.CONSUMED;
-        });
+    private void hideSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        WindowInsetsControllerCompat controller =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        if (controller != null) {
+            controller.hide(WindowInsetsCompat.Type.systemBars());
+            controller.setSystemBarsBehavior(
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        // 弹窗 / 键盘等导致系统栏重新出现后，窗口重获焦点时再隐藏一次。
+        if (hasFocus) {
+            hideSystemBars();
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -132,6 +141,10 @@ public class MainActivity extends AppCompatActivity {
         settings.setAllowContentAccess(false);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        // 让 viewport meta 的 width / initial-scale 生效（默认 false 会忽略它），
+        // 并按指定宽度缩放整页到屏幕，实现「桌面布局整体缩小到手机」。
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(true);
 
         // Enable debugging in debug builds
         if (DEBUG) {
