@@ -7,9 +7,10 @@ export interface DialogField {
   label: string
   placeholder?: string
   initial?: string
-  type?: 'text' | 'password' | 'select'
+  type?: 'text' | 'password' | 'select' | 'textarea'
   options?: { label: string; value: string }[] // type 为 select 时的选项
   optional?: boolean // 为 true 时允许留空
+  readonly?: boolean // 只读展示（配合 textarea 展示长文本）
 }
 
 interface InputState {

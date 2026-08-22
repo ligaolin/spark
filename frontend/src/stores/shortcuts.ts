@@ -17,6 +17,7 @@ export const SHORTCUT_DEFAULTS: ShortcutAction[] = [
   { id: 'nav.ftp', label: '打开 FTP 文件', hint: '切换到 FTP 文件页', defaultKey: 'Ctrl+4', key: 'Ctrl+4' },
   { id: 'nav.documents', label: '打开文档管理', hint: '切换到文档管理页', defaultKey: 'Ctrl+5', key: 'Ctrl+5' },
   { id: 'nav.sites', label: '打开站点管理', hint: '切换到站点管理页', defaultKey: 'Ctrl+6', key: 'Ctrl+6' },
+  { id: 'nav.local-terminal', label: '打开本地终端', hint: '切换到本地终端页（安卓端不可用）', defaultKey: 'Ctrl+7', key: 'Ctrl+7' },
   { id: 'terminal.new', label: '新建 SSH 会话', hint: '跳转终端页并打开新建会话对话框', defaultKey: 'Ctrl+T', key: 'Ctrl+T' },
   { id: 'terminal.close', label: '关闭当前终端标签', hint: '关闭当前活动标签', defaultKey: 'Ctrl+W', key: 'Ctrl+W' },
   { id: 'panel.toggle', label: '开关终端信息面板', hint: '展开/收起右侧信息面板', defaultKey: 'Ctrl+B', key: 'Ctrl+B' },

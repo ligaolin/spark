@@ -12,12 +12,17 @@
                     <Plus />
                 </el-icon><span>新建站点</span>
             </el-button>
+            <el-button size="small" plain @click="openUrlDialog" title="直接输入链接在内嵌浏览器打开，无需保存">
+                <el-icon>
+                    <Position />
+                </el-icon><span>打开链接</span>
+            </el-button>
             <span class="hint">站点可在文件夹间拖拽；点击链接右侧 ↗ 在右侧内嵌打开，多站点标签切换</span>
             <div class="toolbar-spacer" />
-            <el-switch v-model="ignoreCert" size="small" />
+            <!-- <el-switch v-model="ignoreCert" size="small" />
             <span class="ignore-cert-label" :class="{ active: ignoreCert }" title="开启后，SSL 证书无效 / 自签名 / 过期的站点也能在内嵌浏览器中打开（走本地代理，绕过证书校验）">
                 忽略证书
-            </span>
+            </span> -->
         </div>
 
         <div class="sites-body">
@@ -54,6 +59,9 @@
                                 <span class="tab-title" :title="tab.title">{{ tab.title }}</span>
                                 <el-icon class="tab-action" @click.stop="openInSystemBrowser(tab.url)" title="在浏览器打开">
                                     <TopRight />
+                                </el-icon>
+                                <el-icon class="tab-action" @click.stop="refreshTab(tab.key)" title="刷新">
+                                    <Refresh />
                                 </el-icon>
                                 <el-icon class="tab-close" @click.stop="closeTab(tab.key)" title="关闭">
                                     <Close />
@@ -102,6 +110,10 @@
                                                         @click.stop="openLink(l)">打开</el-button>
                                                     <el-button size="small" text @click.stop="openLinkInBrowser(l)"
                                                         title="在系统默认浏览器中打开">浏览器打开</el-button>
+                                                    <el-button size="small" text @click.stop="copyText(l.url, '链接')"
+                                                        title="复制链接"><el-icon>
+                                                            <CopyDocument />
+                                                        </el-icon></el-button>
                                                     <el-button size="small" text @click.stop="editLink(l)"
                                                         title="编辑"><el-icon>
                                                             <Edit />
@@ -180,7 +192,8 @@
                                     class="frame-wrap">
                                     <!-- 忽略证书时：代理地址解析完成前不挂载 iframe，
                                          避免先用原始地址加载（证书错误）再切换导致空白/残留错误页 -->
-                                    <iframe v-if="frameSrc(tab.url)" :src="frameSrc(tab.url)" class="browser-frame" />
+                                    <iframe v-if="frameSrc(tab.url)" :src="frameSrc(tab.url)" :key="frameKey(tab)"
+                                        class="browser-frame" />
                                     <div v-else-if="ignoreCert && !proxyError[tab.url]" class="frame-loading">
                                         <el-icon class="is-loading" :size="22"><Loading /></el-icon>
                                         <span>正在通过本地代理打开（忽略证书）…</span>
@@ -194,9 +207,9 @@
                                     </div>
                                 </div>
                             </div>
-                            <div v-if="ignoreCert" class="proxy-badge">
+                            <!-- <div v-if="ignoreCert" class="proxy-badge">
                                 已开启「忽略证书」：内嵌页面经本地代理打开，可访问 SSL 有问题的站点
-                            </div>
+                            </div> -->
                         </div>
                     </div>
                 </el-splitter-panel>
@@ -227,12 +240,15 @@ import {
     FullScreen,
     Loading,
     CircleCloseFilled,
+    Position,
+    Refresh,
 } from '@element-plus/icons-vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
 import { SiteService } from '../utils/wails'
 import type { Site, SiteLink, SiteAccount, SiteFolder } from '../utils/wails'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
+import { useSettingsStore } from '../stores/settings'
 
 interface SiteTreeNode {
     key: string
@@ -262,10 +278,24 @@ const browserTabs = ref<BrowserTab[]>([])
 const activeTabKey = ref<string | null>(null)
 const browserFullscreen = ref(false)
 let tabSeq = 0
+// 每个标签的 iframe 刷新序号：刷新时 +1，通过 iframe :key 变化重新挂载实现刷新
+const iframeSeq = reactive<Record<string, number>>({})
 
 // 忽略证书：开启后内嵌浏览器走本地代理（后端忽略 TLS 证书校验抓取页面），
 // SSL 证书无效 / 自签名 / 过期的站点也能打开。
-const ignoreCert = ref(false)
+// 已持久化为全局配置（设置 → 通用「站点忽略证书」），默认开启；
+// 工具栏开关是快捷入口，切换即保存。
+const settings = useSettingsStore()
+const ignoreCert = computed({
+    get: () => settings.sitesIgnoreCert,
+    set: async (v: boolean) => {
+        try {
+            await settings.set('sites.ignoreCert', v ? '1' : '0')
+        } catch (e: any) {
+            ElMessage.error(`保存设置失败：${e?.message || e}`)
+        }
+    },
+})
 // 原始 URL -> 代理 URL 缓存（ProxyUrl 为异步调用，解析前不挂载 iframe）
 const proxyCache = reactive<Record<string, string>>({})
 // 原始 URL -> 代理启动失败原因（打开失败时给出错误提示与浏览器打开兜底）
@@ -736,6 +766,21 @@ function openLinkInBrowser(link: SiteLink) {
     void openInSystemBrowser(link.url)
 }
 
+// 直接输入链接打开（不保存）：弹窗输入 URL → 以临时标签在内嵌浏览器打开，
+// 与已保存链接共用标签与「忽略证书」逻辑
+async function openUrlDialog() {
+    const v = await showInputDialog('打开链接', [
+        { key: 'url', label: '地址（URL）', placeholder: 'https://example.com' },
+    ])
+    if (!v) return
+    const url = normalizeUrl(v.url)
+    if (!url) {
+        ElMessage.warning('请输入链接地址')
+        return
+    }
+    openTab(url, url)
+}
+
 function openTab(title: string, url: string) {
     const existing = browserTabs.value.find((t) => t.url === url)
     if (existing) {
@@ -763,6 +808,23 @@ function closeTab(key: string) {
 
 function toggleFullscreen() {
     browserFullscreen.value = !browserFullscreen.value
+}
+
+// iframe 挂载 key：刷新序号变化时强制重新加载当前标签页
+function frameKey(tab: BrowserTab): string {
+    return tab.key + '-' + (iframeSeq[tab.key] || 0)
+}
+
+function refreshTab(key: string) {
+    iframeSeq[key] = (iframeSeq[key] || 0) + 1
+    // 开启忽略证书时重新解析代理地址，保证 iframe 重挂载后走最新代理路径；
+    // 若上次代理解析失败，清掉错误记录以便重试
+    const tab = browserTabs.value.find((t) => t.key === key)
+    if (!tab) return
+    if (ignoreCert.value) {
+        delete proxyError[tab.url]
+        resolveProxy(tab.url)
+    }
 }
 
 async function openInSystemBrowser(url?: string) {

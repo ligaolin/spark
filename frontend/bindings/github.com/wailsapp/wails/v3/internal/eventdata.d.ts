@@ -12,6 +12,8 @@ import type * as types$0 from "../../../../../changeme/app/service/types/models.
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
+            "localTerminal:exit": types$0.TerminalExit;
+            "localTerminal:output": types$0.TerminalOutput;
             "session:closed": types$0.SessionClosed;
             "terminal:exit": types$0.TerminalExit;
             "terminal:output": types$0.TerminalOutput;

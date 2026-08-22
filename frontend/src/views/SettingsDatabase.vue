@@ -72,6 +72,25 @@
             </el-form-item>
         </template>
 
+        <el-form-item label=" ">
+            <div class="db-backup">
+                <div class="db-backup-head">备份 / 迁移连接配置</div>
+                <div class="db-backup-actions">
+                    <el-button size="small" :loading="exporting" @click="exportConn">
+                        <el-icon><CopyDocument /></el-icon>复制连接串
+                    </el-button>
+                    <el-button size="small" :loading="importing" @click="importConn">
+                        <el-icon><Download /></el-icon>导入连接串
+                    </el-button>
+                </div>
+                <div class="db-note">
+                    安卓端<b>重装后</b>本机保存的连接配置会丢失：重装前先「复制连接串」保存到微信 / 笔记，
+                    重装后「导入连接串」粘贴即可自动填好连接信息，无需重新输入。
+                    桌面端换电脑同样适用。连接串包含数据库密码，请妥善保管。
+                </div>
+            </div>
+        </el-form-item>
+
         <!-- <template v-else>
         <el-form-item label=" ">
           <div class="db-note">数据保存在本机 SQLite 文件（gorm.db）中。</div>
@@ -92,12 +111,14 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Clipboard } from '@wailsio/runtime'
+import { CopyDocument, Download } from '@element-plus/icons-vue'
 import { DatabaseService, makeDatabaseConfig } from '../utils/wails'
 import { useSettingsStore } from '../stores/settings'
 import { useShortcutsStore } from '../stores/shortcuts'
 import { useConnectionsStore } from '../stores/connections'
 import { useCustomCommandsStore } from '../stores/customCommands'
-import { showConfirmDialog } from '../utils/dialog'
+import { showInputDialog, showConfirmDialog } from '../utils/dialog'
 
 const settings = useSettingsStore()
 const shortcuts = useShortcutsStore()
@@ -119,6 +140,8 @@ const dbForm = reactive({
 })
 const testing = ref(false)
 const switching = ref(false)
+const exporting = ref(false)
+const importing = ref(false)
 
 const DIALECT_DEFAULTS: Record<string, { port: number; label: string }> = {
     mysql: { port: 3306, label: 'MySQL' },
@@ -186,6 +209,74 @@ async function testConnection() {
     }
 }
 
+// 导出当前连接配置为可分享的连接串（安卓重装 / 换电脑后导入恢复）
+async function exportConn() {
+    exporting.value = true
+    try {
+        const s = await DatabaseService.ExportConfig()
+        let copied = false
+        try {
+            await Clipboard.SetText(s)
+            copied = true
+        } catch {
+            /* 部分平台（如安卓）剪贴板 API 不可用，改为手动复制 */
+        }
+        // 无论是否复制成功都展示连接串：可长按选择复制、转发到微信/笔记
+        await showInputDialog('连接串', [
+            {
+                key: 's',
+                label: copied ? '已复制到剪贴板（也可长按手动复制）' : '请长按选择复制',
+                type: 'textarea',
+                initial: s,
+                readonly: true,
+                optional: true,
+            },
+        ])
+        ElMessage.success(copied ? '已复制连接串到剪贴板' : '请长按选择复制连接串')
+    } catch (e: any) {
+        ElMessage.error(`导出失败：${e?.message || e}`)
+    } finally {
+        exporting.value = false
+    }
+}
+
+// 导入连接串：解析后填入表单，由用户核对后点「保存并切换」
+async function importConn() {
+    const v = await showInputDialog('导入连接串', [
+        {
+            key: 's',
+            label: '连接串',
+            type: 'textarea',
+            placeholder: '粘贴「复制连接串」导出的内容（sparkdb:// 开头）',
+        },
+    ])
+    if (!v) return
+    importing.value = true
+    try {
+        const cfg = await DatabaseService.ImportConfig(v.s)
+        if (cfg.dialect === 'sqlite') {
+            storageMode.value = 'local'
+        } else {
+            storageMode.value = 'remote'
+            Object.assign(dbForm, {
+                dialect: cfg.dialect,
+                host: cfg.host,
+                port: cfg.port || DIALECT_DEFAULTS[cfg.dialect]?.port || 3306,
+                username: cfg.username,
+                password: cfg.password,
+                database: cfg.database,
+                params: cfg.params,
+                syncKey: cfg.syncKey,
+            })
+        }
+        ElMessage.success('已导入连接信息，请核对后点击「保存并切换」')
+    } catch (e: any) {
+        ElMessage.error(`导入失败：${e?.message || e}`)
+    } finally {
+        importing.value = false
+    }
+}
+
 async function switchStorage() {
     if (storageMode.value === 'remote' && !dbForm.host.trim()) {
         ElMessage.warning('请填写主机地址')
@@ -243,6 +334,27 @@ onMounted(async () => {
     font-size: 12px;
     color: var(--text-secondary);
     line-height: 1.7;
+}
+
+.db-backup {
+    width: 100%;
+    border: 1px dashed var(--border-strong);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.db-backup-head {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.db-backup-actions {
+    display: flex;
+    gap: 8px;
 }
 
 .db-actions {

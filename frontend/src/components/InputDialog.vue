@@ -18,10 +18,20 @@
           <el-option v-for="o in f.options || []" :key="o.value" :label="o.label" :value="o.value" />
         </el-select>
         <el-input
+          v-else-if="f.type === 'textarea'"
+          v-model="values[f.key]"
+          :placeholder="f.placeholder"
+          type="textarea"
+          :rows="4"
+          :readonly="f.readonly"
+          resize="vertical"
+        />
+        <el-input
           v-else
           v-model="values[f.key]"
           :placeholder="f.placeholder"
           :type="f.type || 'text'"
+          :readonly="f.readonly"
           @keyup.enter="confirm"
         />
       </div>

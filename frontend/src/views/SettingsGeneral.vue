@@ -54,6 +54,41 @@
 
     <div class="cfg-row">
       <div class="cfg-info">
+        <div class="cfg-label">编辑器选中分隔符</div>
+        <div class="cfg-desc">
+          双击选中单词时的截断字符。<b>留空 = 连选</b>：除空格、回车（换行）外全部可连选，
+          如 <span class="mono-inline">user_name</span>、<span class="mono-inline">user.name</span> 都能整体选中。
+          填写分隔符（如 <span class="mono-inline">_</span> 或 <span class="mono-inline">._-</span>）后，
+          只有列出的字符处截断，空格、换行始终截断无需配置。保存后立即对已打开的编辑器生效
+        </div>
+      </div>
+      <div class="cfg-ctrl">
+        <el-input v-model="wordSepVal" size="small" style="width: 120px" maxlength="32"
+          placeholder="留空=默认" clearable />
+        <el-button size="small" type="primary" :loading="savingWordSep" @click="saveWordSep">
+          保存
+        </el-button>
+      </div>
+    </div>
+
+    <div class="cfg-row">
+      <div class="cfg-info">
+        <div class="cfg-label">站点忽略证书</div>
+        <div class="cfg-desc">
+          站点管理内嵌浏览器打开时是否忽略 SSL 证书校验（自签名 / 过期 / 无效证书的站点走本地代理打开）。
+          <b>默认开启</b>；关闭后此类站点需在浏览器中手动确认证书。站点管理工具栏的「忽略证书」开关与此同步
+        </div>
+      </div>
+      <div class="cfg-ctrl">
+        <el-switch v-model="sitesIgnoreCertVal" />
+        <el-button size="small" type="primary" :loading="savingSitesIgnoreCert" @click="saveSitesIgnoreCert">
+          保存
+        </el-button>
+      </div>
+    </div>
+
+    <div class="cfg-row">
+      <div class="cfg-info">
         <div class="cfg-label">点击窗口关闭按钮时</div>
         <div class="cfg-desc">
           「缩小到托盘」会把窗口隐藏到任务栏右下角的托盘区，程序继续在后台运行（连接保持不断）；
@@ -86,11 +121,15 @@ const keepaliveVal = ref(20)
 const processVal = ref(5)
 const fontVal = ref(13)
 const wordWrapVal = ref(true)
+const wordSepVal = ref('')
+const sitesIgnoreCertVal = ref(true)
 const closeActionVal = ref<'minimize' | 'exit'>('minimize')
 const savingKeepalive = ref(false)
 const savingProcess = ref(false)
 const savingFont = ref(false)
 const savingWordWrap = ref(false)
+const savingWordSep = ref(false)
+const savingSitesIgnoreCert = ref(false)
 const savingCloseAction = ref(false)
 
 onMounted(async () => {
@@ -99,6 +138,8 @@ onMounted(async () => {
   processVal.value = settings.processRefreshInterval
   fontVal.value = settings.terminalFontSize
   wordWrapVal.value = settings.editorWordWrap
+  wordSepVal.value = settings.editorWordSeparators
+  sitesIgnoreCertVal.value = settings.sitesIgnoreCert
   closeActionVal.value = settings.windowCloseAction
 })
 
@@ -163,6 +204,30 @@ async function saveWordWrap() {
     savingWordWrap.value = false
   }
 }
+
+async function saveWordSep() {
+  savingWordSep.value = true
+  try {
+    await settings.set('editor.wordSeparators', wordSepVal.value)
+    ElMessage.success('已保存（已打开的编辑器立即生效）')
+  } catch (e: any) {
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  } finally {
+    savingWordSep.value = false
+  }
+}
+
+async function saveSitesIgnoreCert() {
+  savingSitesIgnoreCert.value = true
+  try {
+    await settings.set('sites.ignoreCert', sitesIgnoreCertVal.value ? '1' : '0')
+    ElMessage.success(sitesIgnoreCertVal.value ? '已保存：默认忽略证书' : '已保存：默认校验证书')
+  } catch (e: any) {
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  } finally {
+    savingSitesIgnoreCert.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -209,5 +274,12 @@ async function saveWordWrap() {
 .cfg-note {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.mono-inline {
+  font-family: var(--term-font);
+  background: var(--hover-bg);
+  border-radius: 3px;
+  padding: 0 3px;
 }
 </style>

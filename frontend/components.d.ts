@@ -47,6 +47,7 @@ declare module 'vue' {
     ElTree: typeof import('element-plus/es')['ElTree']
     FilePanel: typeof import('./src/components/FilePanel.vue')['default']
     InputDialog: typeof import('./src/components/InputDialog.vue')['default']
+    LocalTerminalPane: typeof import('./src/components/LocalTerminalPane.vue')['default']
     MarkdownEditor: typeof import('./src/components/MarkdownEditor.vue')['default']
     ProcessManagerView: typeof import('./src/components/ProcessManagerView.vue')['default']
     RemoteEditorPanel: typeof import('./src/components/RemoteEditorPanel.vue')['default']

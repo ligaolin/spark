@@ -30,6 +30,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"regexp"
 	"strings"
@@ -47,12 +48,32 @@ var (
 
 // insecureClient 跳过 TLS 证书校验（自签名 / 过期 / 无效证书等场景）。
 // 仅用于用户明确选择"忽略证书"的内嵌浏览。
+//
+// 带 cookie jar：很多站点（如宝塔面板）首屏会下发一个 HttpOnly 会话
+// Cookie，后续的 JS / CSS / 接口请求必须携带它才返回 200（不带则 404，
+// SPA 无法启动 → 内嵌页空白）。jar 按目标域名隔离存储，代理在 Go 侧
+// 自动携带，不需要（也不能）把这些 Cookie 塞给浏览器 iframe。
 var insecureClient = &http.Client{
 	Timeout: 30 * time.Second,
 	Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // 用户显式开启
 	},
+	Jar: mustCookieJar(),
 }
+
+// mustCookieJar 创建 cookie jar（失败时返回 nil，仅退化为无 Cookie 行为）。
+func mustCookieJar() http.CookieJar {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil
+	}
+	return jar
+}
+
+// fallbackUserAgent 兜底 UA：部分站点（如宝塔面板）会按 UA 判断是否放行
+// （非浏览器 UA 直接 404）。iframe 请求一般会带 WebView2 的 UA，这里只在
+// 请求没有 UA 时兜底，避免 Go 默认的 "Go-http-client/1.1" 被拒。
+const fallbackUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 // ProxyBase returns the local proxy base URL, starting the proxy on first use.
 func (s *SiteService) ProxyBase() (string, error) {
@@ -65,6 +86,10 @@ func (s *SiteService) ProxyBase() (string, error) {
 		proxyBase = "http://" + ln.Addr().String()
 		mux := http.NewServeMux()
 		mux.HandleFunc(proxyPathPrefix, handleProxy)
+		// 兜底路由：页面 JS 动态创建的根相对 / 协议相对地址（如
+		// /static/icons/x.svg）会绕过 <base> 与 HTML 改写、直接请求到
+		// 代理服务器根路径，用 Referer 里的页面地址解析目标
+		mux.HandleFunc("/", handleCatchAll)
 		go func() { _ = http.Serve(ln, mux) }()
 	})
 	return proxyBase, proxyErr
@@ -97,13 +122,78 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	targetBytes, err := base64.RawURLEncoding.DecodeString(enc)
-	if err != nil {
-		http.Error(w, "bad target encoding", http.StatusBadRequest)
+	recovered := false
+	target := ""
+	if err == nil && strings.Contains(string(targetBytes), "://") {
+		target = string(targetBytes)
+	} else {
+		// 编码段不是合法 URL：通常是页面里的 ../ 相对路径被浏览器归一化时
+		// 吃掉了编码段（如 /spark-proxy/<enc>/../font/x.ttf → /spark-proxy/font/x.ttf）。
+		// 用 Referer 里的页面代理地址作为基准恢复目标。
+		if page := pageURLFromReferer(r.Header.Get("Referer")); page != "" {
+			// 请求路径 enc/sub 相对页面目录解析（等价于页面里的 ../ 相对路径）
+			target = joinProxyPath(page, enc+"/"+sub)
+			recovered = true
+		}
+		if !recovered {
+			http.Error(w, "bad target encoding", http.StatusBadRequest)
+			return
+		}
+	}
+	if !recovered && sub != "" {
+		target = joinProxyPath(target, sub)
+	}
+	serveTarget(w, r, target)
+}
+
+// handleCatchAll 兜底处理所有非 /spark-proxy/ 路径的请求。页面 JS 动态创建
+// 的根相对地址（如 img.src = '/static/icons/x.svg'）会绕过 <base> 与 HTML
+// 改写、直接请求到代理服务器根路径（127.0.0.1:PORT/static/...），这里用
+// Referer 里的页面地址把请求路径解析成目标 URL 后走同一代理逻辑。
+func handleCatchAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	target := string(targetBytes)
-	if sub != "" {
-		target = joinProxyPath(target, sub)
+	page := pageURLFromReferer(r.Header.Get("Referer"))
+	if page == "" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	sub := strings.TrimPrefix(r.URL.Path, "/")
+	if sub == "" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	target := joinProxyPath(page, sub)
+	serveTarget(w, r, target)
+}
+
+// pageURLFromReferer 从代理页面的 Referer 里提取目标页面 URL。
+func pageURLFromReferer(ref string) string {
+	if ref == "" {
+		return ""
+	}
+	i := strings.Index(ref, proxyPathPrefix)
+	if i < 0 {
+		return ""
+	}
+	rest := strings.TrimPrefix(ref[i+len(proxyPathPrefix):], "/")
+	enc := rest
+	if j := strings.IndexByte(rest, '/'); j >= 0 {
+		enc = rest[:j]
+	}
+	if b, err := base64.RawURLEncoding.DecodeString(enc); err == nil && strings.Contains(string(b), "://") {
+		return string(b)
+	}
+	return ""
+}
+
+// serveTarget 抓取 target 并返回给浏览器（HTML/CSS 做 URL 改写）。
+func serveTarget(w http.ResponseWriter, r *http.Request, target string) {
+	// 子资源自身的 query（如 /js/main.js?v=2、file.php?id=5）透传给目标
+	if q := r.URL.RawQuery; q != "" {
+		target += "?" + q
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
@@ -114,6 +204,8 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	// 把用户浏览器的常见请求头透传过去，尽量保持站点行为一致
 	if ua := r.Header.Get("User-Agent"); ua != "" {
 		req.Header.Set("User-Agent", ua)
+	} else {
+		req.Header.Set("User-Agent", fallbackUserAgent)
 	}
 	if accept := r.Header.Get("Accept"); accept != "" {
 		req.Header.Set("Accept", accept)
@@ -133,13 +225,15 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ct := resp.Header.Get("Content-Type")
+	// 以最终响应的 URL 作为相对链接基准（自动跟随重定向后仍正确）
+	baseURL := target
+	if resp.Request != nil && resp.Request.URL != nil {
+		baseURL = resp.Request.URL.String()
+	}
 	if isHTMLContent(ct) {
-		// 以最终响应的 URL 作为相对链接基准（自动跟随重定向后仍正确）
-		baseURL := target
-		if resp.Request != nil && resp.Request.URL != nil {
-			baseURL = resp.Request.URL.String()
-		}
 		body = rewriteHTML(body, baseURL)
+	} else if isCSSText(ct) {
+		body = rewriteCSS(body, baseURL)
 	}
 	for _, h := range []string{"Content-Type", "Cache-Control", "Content-Language", "Last-Modified"} {
 		if v := resp.Header.Get(h); v != "" {
@@ -155,25 +249,53 @@ func isHTMLContent(ct string) bool {
 	return strings.Contains(ct, "text/html") || strings.Contains(ct, "application/xhtml+xml")
 }
 
-// joinProxyPath 把相对路径 sub 拼到 target 的路径部分（保留 query/fragment），
-// 修复原先直接拼在 URL 末尾导致 "https://host/path?x=1" + "sub" 变成
-// "https://host/path?x=1/sub" 的路径错乱。
+func isCSSText(ct string) bool {
+	return strings.Contains(strings.ToLower(ct), "text/css")
+}
+
+// joinProxyPath 把相对子路径 sub 按浏览器语义解析到 target 的"目录"下
+// （而非直接拼在完整路径末尾）：
+//   - 页面 https://host/show_list.php?id=61 里的 js/main.js → https://host/js/main.js
+//   - 页面 https://host/a/b/page.html 里的 c.js → https://host/a/b/c.js
+// 同时丢弃 target 自身的 query/fragment（相对路径解析时不会继承页面的 query）。
 func joinProxyPath(target, sub string) string {
 	u, err := url.Parse(target)
 	if err != nil {
-		return strings.TrimRight(target, "/") + "/" + sub
+		// 解析失败时退化为目录拼接
+		if i := strings.LastIndex(target, "/"); i >= 0 {
+			return target[:i+1] + sub
+		}
+		return target + "/" + sub
 	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/" + sub
+	dir := u.Path
+	if i := strings.LastIndex(dir, "/"); i >= 0 {
+		dir = dir[:i+1]
+	} else {
+		dir = "/"
+	}
+	u.Path = dir + sub
+	u.RawQuery = ""
+	u.Fragment = ""
 	return u.String()
 }
 
 // ---------- HTML 改写 ----------
 
 // 匹配标签属性里的绝对 URL：src / href / action / poster / data / content / srcset
-var attrURLRe = regexp.MustCompile(`(?i)(\s(?:src|href|action|poster|data|content|srcset)\s*=\s*["'])(https?://[^"'\s>]+)`)
+// （含 data-src / data-original 等常见懒加载资源属性）
+var attrURLRe = regexp.MustCompile(`(?i)(\s(?:src|href|action|poster|data|content|srcset|data-src|data-original)\s*=\s*["'])(https?://[^"'\s>]+)`)
 
 // 匹配 CSS url(...) 里的绝对 URL（覆盖 style 属性与 <style> 块）
 var cssURLRe = regexp.MustCompile(`(?i)(url\(\s*["']?)(https?://[^)"'\s]+)`)
+
+// 匹配标签属性值（不做内容限制，是否改写由回调判断）
+var attrValueRe = regexp.MustCompile(`(?i)(\s(?:src|href|action|poster|data|content|srcset|data-src|data-original)\s*=\s*["'])([^"'\s>]+)`)
+
+// 匹配 CSS url(...) 的值（不做内容限制，是否改写由回调判断）
+var cssValueRe = regexp.MustCompile(`(?i)(url\(\s*["']?)([^)"'\s]+)`)
+
+// 匹配 srcset 完整值（多条目，如 "/a.png 1x, /b.png 2x"）
+var srcsetValueRe = regexp.MustCompile(`(?i)(\ssrcset\s*=\s*["'])([^"']*)`)
 
 // 匹配 <script> 元素（含开标签与内容）
 var scriptElemRe = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script>`)
@@ -184,30 +306,104 @@ var scriptOpenRe = regexp.MustCompile(`(?is)<script\b[^>]*>`)
 // 匹配页面自带的 CSP meta（阻止其拦截改写后的代理地址资源）
 var cspMetaRe = regexp.MustCompile(`(?is)<meta\b[^>]*http-equiv\s*=\s*["']?content-security-policy(?:-report-only)?["']?[^>]*>`)
 
+// proxyPathPrefixBytes 代理路径前缀（[]byte 形式，供快速判断）
+var proxyPathPrefixBytes = []byte(proxyPathPrefix)
+
+// isRootRelative 判断值是否为根相对路径：以单个 / 开头（排除 // 协议相对、
+// 以及已改写过的 /spark-proxy/ 代理路径）。
+func isRootRelative(v []byte) bool {
+	if len(v) == 0 || v[0] != '/' {
+		return false
+	}
+	if len(v) > 1 && v[1] == '/' {
+		return false
+	}
+	return !bytes.HasPrefix(v, proxyPathPrefixBytes)
+}
+
+// isProtocolRelative 判断值是否为协议相对地址（//host/...）。
+func isProtocolRelative(v []byte) bool {
+	return len(v) > 2 && v[0] == '/' && v[1] == '/'
+}
+
 // rewriteHTML 处理 HTML 响应：
 //  1. 把 <script> 元素与其余内容分段：元素的开标签（src 等属性）参与 URL
 //     改写，脚本内容（JS 代码）原样保留，避免破坏 JS 字符串
-//  2. 改写标签属性与 CSS url() 中的绝对 http(s) 地址为代理路径
-//  3. 移除 CSP meta、注入 <base>，使相对链接继续走代理
+//  2. 改写标签属性与 CSS url() 中的绝对 http(s) 地址、根相对路径
+//     （/static/...）以及含 .. 段的相对路径：<base> 只能影响不带前导斜杠
+//     的相对路径；根相对路径会被解析到代理服务器根目录而绕开代理；含 ..
+//     的相对路径会被浏览器归一化时吃掉代理路径里的编码段，两者都必须显式
+//     改写为代理地址
+//  3. 移除 CSP meta、注入 <base>，使普通相对链接继续走代理
 func rewriteHTML(body []byte, baseURL string) []byte {
 	var out bytes.Buffer
 	last := 0
 	for _, m := range scriptElemRe.FindAllIndex(body, -1) {
-		out.Write(rewriteAbsURLs(body[last:m[0]]))
+		out.Write(rewriteURLs(body[last:m[0]], baseURL))
 		elem := body[m[0]:m[1]]
 		if om := scriptOpenRe.FindIndex(elem); om != nil {
-			out.Write(rewriteAbsURLs(elem[om[0]:om[1]]))
+			out.Write(rewriteURLs(elem[om[0]:om[1]], baseURL))
 			out.Write(elem[om[1]:])
 		} else {
 			out.Write(elem)
 		}
 		last = m[1]
 	}
-	out.Write(rewriteAbsURLs(body[last:]))
+	out.Write(rewriteURLs(body[last:], baseURL))
 	res := stripCSPMeta(out.Bytes())
 	enc := base64.RawURLEncoding.EncodeToString([]byte(baseURL))
 	baseHref := proxyPathPrefix + enc + "/"
 	return injectBaseTag(res, baseHref)
+}
+
+// rewriteCSS 处理 CSS 响应：改写 url() 里的绝对地址、根相对路径与含 ..
+// 的相对路径。
+func rewriteCSS(body []byte, baseURL string) []byte {
+	body = cssURLRe.ReplaceAllFunc(body, func(m []byte) []byte {
+		idx := cssURLRe.FindSubmatchIndex(m)
+		if len(idx) < 4 {
+			return m
+		}
+		prefix := m[idx[2]:idx[3]]
+		u := m[idx[4]:idx[5]]
+		out := make([]byte, 0, len(m)+64)
+		out = append(out, prefix...)
+		out = append(out, proxyPathFor(u)...)
+		return out
+	})
+	body = cssValueRe.ReplaceAllFunc(body, func(m []byte) []byte {
+		idx := cssValueRe.FindSubmatchIndex(m)
+		if len(idx) < 4 {
+			return m
+		}
+		prefix := m[idx[2]:idx[3]]
+		v := m[idx[4]:idx[5]]
+		target := rewriteURLValue(v, baseURL)
+		if target == nil {
+			return m
+		}
+		out := make([]byte, 0, len(m)+64)
+		out = append(out, prefix...)
+		out = append(out, target...)
+		return out
+	})
+	return body
+}
+
+// originOf 返回 URL 的 scheme://host（含端口），用于把根相对路径拼成完整地址。
+func originOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// rewriteURLs 依次改写绝对地址与根相对/协议相对/含 .. 的路径。
+func rewriteURLs(body []byte, baseURL string) []byte {
+	body = rewriteAbsURLs(body)
+	body = rewriteRootURLs(body, baseURL)
+	return body
 }
 
 // rewriteAbsURLs rewrites absolute http(s):// URLs in tag attributes and CSS
@@ -239,6 +435,146 @@ func rewriteAbsURLs(body []byte) []byte {
 		return out
 	})
 	return body
+}
+
+// rewriteRootURLs 把标签属性与 CSS url() 里的根相对路径（/xxx）、协议相对
+// 地址（//host/...）和含 .. 段的相对路径改写为代理路径。普通相对路径（由
+// <base> 处理）与 /spark-proxy/ 本身不改写。
+// 协议相对与 .. 路径必须改写：代理页面运行在 http://127.0.0.1 上，协议相对
+// 会被解析成 http://host/...（绕过代理且协议错误）；.. 路径会被浏览器归一化
+// 时吃掉代理路径里的编码段，静态资源必然加载失败。
+func rewriteRootURLs(body []byte, baseURL string) []byte {
+	if baseURL == "" {
+		return body
+	}
+	body = attrValueRe.ReplaceAllFunc(body, func(m []byte) []byte {
+		idx := attrValueRe.FindSubmatchIndex(m)
+		if len(idx) < 4 {
+			return m
+		}
+		prefix := m[idx[2]:idx[3]]
+		v := m[idx[4]:idx[5]]
+		target := rewriteURLValue(v, baseURL)
+		if target == nil {
+			return m
+		}
+		out := make([]byte, 0, len(m)+64)
+		out = append(out, prefix...)
+		out = append(out, target...)
+		return out
+	})
+	body = cssValueRe.ReplaceAllFunc(body, func(m []byte) []byte {
+		idx := cssValueRe.FindSubmatchIndex(m)
+		if len(idx) < 4 {
+			return m
+		}
+		prefix := m[idx[2]:idx[3]]
+		v := m[idx[4]:idx[5]]
+		target := rewriteURLValue(v, baseURL)
+		if target == nil {
+			return m
+		}
+		out := make([]byte, 0, len(m)+64)
+		out = append(out, prefix...)
+		out = append(out, target...)
+		return out
+	})
+	body = rewriteSrcset(body, baseURL)
+	return body
+}
+
+// isDotRelative 判断值是否为含 .. 段的纯相对路径（这类路径被浏览器相对
+// <base> 解析时会归一化掉代理路径里的编码段，必须服务端改写）。
+func isDotRelative(v []byte) bool {
+	if len(v) == 0 {
+		return false
+	}
+	first := v[0]
+	if first == '/' || first == '#' || first == '?' {
+		return false
+	}
+	// 带 scheme 的（mailto:、data:、javascript: 等）不改写
+	if i := bytes.IndexByte(v, ':'); i > 0 {
+		schemeOK := true
+		for j := 0; j < i; j++ {
+			c := v[j]
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.') {
+				schemeOK = false
+				break
+			}
+		}
+		if schemeOK {
+			return false
+		}
+	}
+	for _, seg := range strings.Split(string(v), "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// rewriteURLValue 返回 v 改写后的代理路径；无需改写（普通相对路径、data:、
+// 已改写的代理路径等）时返回 nil。
+func rewriteURLValue(v []byte, baseURL string) []byte {
+	switch {
+	case bytes.HasPrefix(v, []byte("http://")) || bytes.HasPrefix(v, []byte("https://")):
+		// 绝对地址（主要供 srcset 多条目使用；普通属性已被 attrURLRe 先改写）
+		return proxyPathFor(v)
+	case isRootRelative(v):
+		return proxyPathFor(append([]byte(originOf(baseURL)), v...))
+	case isProtocolRelative(v):
+		// //host/path → https://host/path（原页面为 https）
+		return proxyPathFor(append([]byte("https:"), v...))
+	case isDotRelative(v):
+		// ../xxx → 按页面目录解析成绝对地址再改写
+		base, err := url.Parse(baseURL)
+		if err != nil {
+			return nil
+		}
+		rel, err := url.Parse(string(v))
+		if err != nil {
+			return nil
+		}
+		return proxyPathFor([]byte(base.ResolveReference(rel).String()))
+	}
+	return nil
+}
+
+// rewriteSrcset 逐个改写 srcset 多条目里的 URL（跳过已改写的代理路径）。
+func rewriteSrcset(body []byte, baseURL string) []byte {
+	return srcsetValueRe.ReplaceAllFunc(body, func(m []byte) []byte {
+		idx := srcsetValueRe.FindSubmatchIndex(m)
+		if len(idx) < 4 {
+			return m
+		}
+		prefix := m[idx[2]:idx[3]]
+		val := string(m[idx[4]:idx[5]])
+		parts := strings.Split(val, ",")
+		changed := false
+		for i, p := range parts {
+			trimmed := strings.TrimLeft(p, " \t")
+			sp := strings.IndexAny(trimmed, " \t")
+			if sp < 0 {
+				sp = len(trimmed)
+			}
+			urlPart := trimmed[:sp]
+			target := rewriteURLValue([]byte(urlPart), baseURL)
+			if target == nil {
+				continue
+			}
+			parts[i] = strings.Replace(p, urlPart, string(target), 1)
+			changed = true
+		}
+		if !changed {
+			return m
+		}
+		out := make([]byte, 0, len(m)+128)
+		out = append(out, prefix...)
+		out = append(out, strings.Join(parts, ",")...)
+		return out
+	})
 }
 
 // proxyPathFor 把绝对 URL 编码为代理路径 /spark-proxy/<enc>/

@@ -15,10 +15,26 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * ExportConfig 把当前存储配置序列化成一段可分享的连接串，便于迁移到其他
+ * 设备 / 重装后的安卓端。
+ */
+export function ExportConfig(): $CancellablePromise<string> {
+    return $Call.ByID(433547766);
+}
+
+/**
  * GetCurrent returns the current storage config.
  */
 export function GetCurrent(): $CancellablePromise<$models.DatabaseConfig> {
     return $Call.ByID(693830799);
+}
+
+/**
+ * ImportConfig 解析 ExportConfig 导出的连接串，返回配置对象（不切换存储，
+ * 由前端填入表单核对后走「保存并切换」）。
+ */
+export function ImportConfig(str: string): $CancellablePromise<$models.DatabaseConfig> {
+    return $Call.ByID(2432575461, str);
 }
 
 /**

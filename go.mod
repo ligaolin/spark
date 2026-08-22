@@ -3,6 +3,7 @@ module changeme
 go 1.26.4
 
 require (
+	github.com/aymanbagabas/go-pty v0.2.3
 	github.com/glebarez/sqlite v1.11.0
 	github.com/jlaffaye/ftp v0.2.2
 	github.com/pkg/sftp v1.13.11
@@ -17,8 +18,10 @@ require (
 replace github.com/jlaffaye/ftp => ./third_party/jlaffaye/ftp
 
 require (
+	github.com/creack/pty v1.1.24 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/sijms/go-ora/v2 v2.9.0 // indirect
+	github.com/u-root/u-root v0.16.0 // indirect
 )
 
 require (

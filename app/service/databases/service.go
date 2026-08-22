@@ -6,6 +6,7 @@
 package databases
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,6 +162,63 @@ func (s *DatabaseService) GetCurrent() DatabaseConfig {
 		return cfg
 	}
 	return DatabaseConfig{Dialect: "sqlite"}
+}
+
+// configStringPrefix 识别导出串的前缀，避免把任意粘贴内容当成配置解析。
+const configStringPrefix = "sparkdb://"
+
+// encodeConfig 把配置编码为可分享的连接串：sparkdb:// + base64url(JSON)。
+// 注意：串内包含数据库密码（与填写时等价），请勿随意分享。
+func encodeConfig(cfg DatabaseConfig) string {
+	data, _ := json.Marshal(cfg)
+	return configStringPrefix + base64.RawURLEncoding.EncodeToString(data)
+}
+
+// decodeConfig 解析连接串并校验字段（不切换存储）。
+func decodeConfig(str string) (DatabaseConfig, error) {
+	str = strings.TrimSpace(str)
+	if !strings.HasPrefix(str, configStringPrefix) {
+		return DatabaseConfig{}, errors.New("连接串格式不正确：请粘贴「复制连接串」导出的完整内容")
+	}
+	raw := strings.TrimPrefix(str, configStringPrefix)
+	data, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return DatabaseConfig{}, errors.New("连接串无法解析：内容已损坏或复制不完整")
+	}
+	var cfg DatabaseConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return DatabaseConfig{}, errors.New("连接串无法解析：内容已损坏或复制不完整")
+	}
+	switch cfg.Dialect {
+	case "sqlite", "mysql", "postgres", "sqlserver", "oracle":
+	default:
+		return DatabaseConfig{}, errors.New("连接串中的数据库类型无效")
+	}
+	if cfg.Dialect != "sqlite" {
+		if strings.TrimSpace(cfg.Host) == "" {
+			return DatabaseConfig{}, errors.New("连接串中缺少主机地址")
+		}
+		if strings.TrimSpace(cfg.Database) == "" {
+			return DatabaseConfig{}, errors.New("连接串中缺少数据库名")
+		}
+	}
+	return cfg, nil
+}
+
+// ExportConfig 把当前存储配置序列化成一段可分享的连接串，便于迁移到其他
+// 设备 / 重装后的安卓端。
+func (s *DatabaseService) ExportConfig() (string, error) {
+	cfg, ok := Load()
+	if !ok {
+		cfg = DatabaseConfig{Dialect: "sqlite"}
+	}
+	return encodeConfig(cfg), nil
+}
+
+// ImportConfig 解析 ExportConfig 导出的连接串，返回配置对象（不切换存储，
+// 由前端填入表单核对后走「保存并切换」）。
+func (s *DatabaseService) ImportConfig(str string) (DatabaseConfig, error) {
+	return decodeConfig(str)
 }
 
 // Test verifies that a connection to the given config can be established.

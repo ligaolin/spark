@@ -1,6 +1,8 @@
 package databases
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -140,9 +142,46 @@ func TestMigrateDataReencrypt(t *testing.T) {	oldSeed := secure.CurrentKeySeed()
 	}
 }
 
+// 连接串编码 / 解码：往返一致，且能识别非法输入
+func TestConfigEncodeDecode(t *testing.T) {
+	want := DatabaseConfig{
+		Dialect: "mysql", Host: "db.example.com", Port: 3306,
+		Username: "root", Password: "pw", Database: "spark",
+		Params: "charset=utf8mb4", SyncKey: "sync-1",
+	}
+	s := encodeConfig(want)
+	if !strings.HasPrefix(s, configStringPrefix) {
+		t.Fatalf("export prefix: %q", s)
+	}
+
+	got, err := decodeConfig(s)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if got != want {
+		t.Fatalf("round-trip mismatch:\n got %+v\nwant %+v", got, want)
+	}
+
+	// 非法输入
+	if _, err := decodeConfig("hello world"); err == nil {
+		t.Fatal("garbage should fail import")
+	}
+	if _, err := decodeConfig(configStringPrefix + "!!not-base64!!"); err == nil {
+		t.Fatal("bad base64 should fail import")
+	}
+	if _, err := decodeConfig("sparkdb://" + base64.RawURLEncoding.EncodeToString([]byte(`{"dialect":"mongo"}`))); err == nil {
+		t.Fatal("unknown dialect should fail import")
+	}
+	// 远程库缺 host / database
+	bad := DatabaseConfig{Dialect: "postgres", Host: "", Username: "u", Password: "p", Database: "d"}
+	data, _ := json.Marshal(bad)
+	if _, err := decodeConfig(configStringPrefix + base64.RawURLEncoding.EncodeToString(data)); err == nil {
+		t.Fatal("remote config without host should fail import")
+	}
+}
+
 // 配置本地持久化：保存后能原样读回（重启后无需重新设置）
-func TestConfigPersistence(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "dbconfig.json")
+func TestConfigPersistence(t *testing.T) {	path := filepath.Join(t.TempDir(), "dbconfig.json")
 	cfg := DatabaseConfig{
 		Dialect: "mysql", Host: "db.example.com", Port: 3306,
 		Username: "root", Password: "pw", Database: "spark", SyncKey: "sync-1",

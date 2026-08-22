@@ -6,7 +6,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { basicSetup } from 'codemirror'
 import { EditorView, keymap } from '@codemirror/view'
-import { Compartment, EditorState, type Extension } from '@codemirror/state'
+import { Compartment, EditorSelection, EditorState, findClusterBreak, type Extension } from '@codemirror/state'
 import { indentWithTab } from '@codemirror/commands'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { languages } from '@codemirror/language-data'
@@ -85,6 +85,91 @@ const languageConf = new Compartment()
 const editableConf = new Compartment()
 const wrapConf = new Compartment()
 const themeConf = new Compartment()
+const wordSepConf = new Compartment()
+
+// ---------- 双击选中分隔符 ----------
+// 设置「编辑器选中分隔符」（设置 → 通用）：留空 = 连选（空格/换行仍会截断，
+// 其余符号 _ . - 等全部可连选）；填写分隔符（如 _ 或 ._-）后，只有列出的
+// 字符处截断。通过接管鼠标双击（mouseSelectionStyle）实现，语言无关、
+// 可随时重配置。
+
+type WordCat = 'space' | 'word' | 'other'
+
+function makeSeparatorCategorizer(seps: string): (char: string) => WordCat {
+  return (char) => {
+    if (!/\S/.test(char)) return 'space' // 空格 / Tab / 换行永远截断，无需配置
+    if (seps.includes(char)) return 'other' // 配置的分隔符截断
+    return 'word' // 其余全部连选（含字母数字与 _ . - 等符号）
+  }
+}
+
+// 按分类器找出 pos 所在的"词"区间（等价于 CodeMirror 内部 groupAt 的
+// 分隔符版，选中的是一整段同类型字符）。
+function groupAtWithCat(
+  state: EditorState,
+  pos: number,
+  cat: (char: string) => WordCat,
+  bias = 1,
+) {
+  const line = state.doc.lineAt(pos)
+  const linePos = pos - line.from
+  if (line.length === 0) return EditorSelection.cursor(pos)
+  let from = linePos
+  let to = linePos
+  if (bias < 0) from = findClusterBreak(line.text, linePos, false)
+  else to = findClusterBreak(line.text, linePos)
+  const c = cat(line.text.slice(from, to))
+  while (from > 0) {
+    const prev = findClusterBreak(line.text, from, false)
+    if (cat(line.text.slice(prev, from)) !== c) break
+    from = prev
+  }
+  while (to < line.length) {
+    const next = findClusterBreak(line.text, to)
+    if (cat(line.text.slice(to, next)) !== c) break
+    to = next
+  }
+  return EditorSelection.undirectionalRange(from + line.from, to + line.from)
+}
+
+// 只在 event.detail === 2（双击）时接管，单击 / 拖选 / 三击仍走默认行为
+function wordSeparatorExtension(seps: string): Extension {
+  return EditorView.mouseSelectionStyle.of((view, event) => {
+    if (event.detail !== 2) return null
+    const start = view.posAndSideAtCoords({ x: event.clientX, y: event.clientY }, false)
+    if (start == null) return null
+    const cat = makeSeparatorCategorizer(seps)
+    const startRange = groupAtWithCat(view.state, start.pos, cat, start.assoc)
+    let startPos = start.pos
+    let startAssoc = start.assoc
+    let startSel = view.state.selection
+    return {
+      update(u) {
+        if (u.docChanged) {
+          startPos = u.changes.mapPos(startPos)
+          startSel = startSel.map(u.changes)
+        }
+      },
+      get(ev, extend, multiple) {
+        const cur = view.posAndSideAtCoords({ x: ev.clientX, y: ev.clientY }, false)
+        if (!cur) return view.state.selection
+        let range = groupAtWithCat(view.state, cur.pos, cat, cur.assoc)
+        // 双击后拖拽扩展：从起点词到当前词的范围
+        if (startPos !== cur.pos && !extend) {
+          const from = Math.min(startRange.from, range.from)
+          const to = Math.max(startRange.to, range.to)
+          range =
+            from < range.from
+              ? EditorSelection.range(from, to, range.assoc)
+              : EditorSelection.range(to, from, range.assoc)
+        }
+        if (extend) return startSel.replaceRange(startSel.main.extend(range.from, range.to, range.assoc))
+        if (multiple) return startSel.addRange(range)
+        return EditorSelection.create([range])
+      },
+    }
+  })
+}
 
 onMounted(() => {
   const host = hostRef.value
@@ -98,6 +183,7 @@ onMounted(() => {
       languageConf.of([]),
       editableConf.of(EditorView.editable.of(true)),
       wrapConf.of(props.wrap ? EditorView.lineWrapping : []),
+      wordSepConf.of(wordSeparatorExtension(settings.editorWordSeparators)),
       EditorView.updateListener.of((u) => {
         if (u.docChanged) emit('change', u.state.doc.toString())
       }),
@@ -138,6 +224,15 @@ watch(
   (t) => {
     if (!view) return
     view.dispatch({ effects: themeConf.reconfigure(t === 'dark' ? oneDark : lightTheme) })
+  },
+)
+
+// 双击选中分隔符配置变化后即时生效
+watch(
+  () => settings.editorWordSeparators,
+  (seps) => {
+    if (!view) return
+    view.dispatch({ effects: wordSepConf.reconfigure(wordSeparatorExtension(seps)) })
   },
 )
 

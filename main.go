@@ -14,6 +14,7 @@ import (
 	"changeme/app/service/ftp"
 	"changeme/app/service/hostkeys"
 	"changeme/app/service/local"
+	"changeme/app/service/localterminal"
 	"changeme/app/service/secure"
 	"changeme/app/service/settings"
 	"changeme/app/service/sftp"
@@ -39,6 +40,8 @@ var appIcon []byte
 func init() {
 	application.RegisterEvent[types.TerminalOutput]("terminal:output")
 	application.RegisterEvent[types.TerminalExit]("terminal:exit")
+	application.RegisterEvent[types.TerminalOutput]("localTerminal:output")
+	application.RegisterEvent[types.TerminalExit]("localTerminal:exit")
 	application.RegisterEvent[types.TransferProgress]("transfer:progress")
 	application.RegisterEvent[types.SessionClosed]("session:closed")
 }
@@ -67,6 +70,7 @@ func main() {
 		Description: "终端工具 - SSH / SFTP / FTP",
 		Services: []application.Service{
 			application.NewService(&terminal.TerminalService{}),
+			application.NewService(&localterminal.LocalTerminalService{}),
 			application.NewService(&sftp.SFTPFileService{}),
 			application.NewService(&ftp.FTPFileService{}),
 			application.NewService(&connections.ConnService{}),

@@ -11,6 +11,7 @@ import { SettingsService } from '../../bindings/changeme/app/service/settings'
 import { SiteService } from '../../bindings/changeme/app/service/sites'
 import { DatabaseService } from '../../bindings/changeme/app/service/databases'
 import { LocalService } from '../../bindings/changeme/app/service/local'
+import { LocalTerminalService } from '../../bindings/changeme/app/service/localterminal'
 import { HostKeyService } from '../../bindings/changeme/app/service/hostkeys'
 import { SshConfigService } from '../../bindings/changeme/app/service/sshconfig'
 import { UpdateService } from '../../bindings/changeme/app/service/update'
@@ -49,6 +50,7 @@ export {
   SiteService,
   DatabaseService,
   LocalService,
+  LocalTerminalService,
   HostKeyService,
   SshConfigService,
   UpdateService,
@@ -158,6 +160,8 @@ export function makeDatabaseConfig(partial: Partial<DatabaseConfig> = {}): Datab
 export const EVENTS = {
   terminalOutput: 'terminal:output',
   terminalExit: 'terminal:exit',
+  localTerminalOutput: 'localTerminal:output',
+  localTerminalExit: 'localTerminal:exit',
   transferProgress: 'transfer:progress',
   sessionClosed: 'session:closed',
 } as const
