@@ -31,7 +31,7 @@ const (
 )
 
 // tooltip / menu labels.
-const trayTooltip = "Spark 终端工具"
+const trayTooltip = "Spark 终端"
 
 // quitting is set once a real shutdown has started. The WindowClosing hook must
 // not veto those closes, otherwise App.Quit's cleanup (which closes every

@@ -6,9 +6,9 @@ version: '3'
 # This information is used to generate the build assets.
 info:
   companyName: "Spark" # The name of the company
-  productName: "Spark 终端工具" # The name of the application
+  productName: "Spark 终端" # The name of the application
   productIdentifier: "com.spark.terminal" # The unique product identifier
-  description: "终端工具 - SSH / SFTP / FTP" # The application description
+  description: "终端 - SSH / SFTP / FTP" # The application description
   copyright: "(c) 2026, Spark" # Copyright text
   comments: "SSH terminal / SFTP / FTP desktop tool built with Wails v3" # Comments
   version: "1.0.0" # The application version

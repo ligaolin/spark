@@ -5,7 +5,7 @@
                 <div class="brand">
                     <span class="brand-logo">⚡</span>
                     <span class="brand-name">Spark</span>
-                    <span class="brand-sub">终端工具</span>
+                    <span class="brand-sub">终端</span>
                 </div>
                 <nav class="nav">
                     <router-link v-for="item in menu" :key="item.path" :to="item.path" class="nav-item"

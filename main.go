@@ -67,8 +67,8 @@ func main() {
 	model.Migrate()
 
 	app := application.New(application.Options{
-		Name:        "spark",
-		Description: "终端工具 - SSH / SFTP / FTP",
+		Name:        "spark 终端",
+		Description: "终端 - SSH / SFTP / FTP",
 		Services: []application.Service{
 			application.NewService(&terminal.TerminalService{}),
 			application.NewService(&localterminal.LocalTerminalService{}),
@@ -109,7 +109,7 @@ func main() {
 	}
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "Spark 终端工具",
+		Title:  "Spark",
 		Width:  1380,
 		Height: 880,
 		Mac: application.MacWindow{
