@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 
 ####
 ## Please note: Template replacements don't work in this file. They are provided with default defines like
@@ -21,7 +21,7 @@ Unicode true
 ####
 !define INFO_PROJECTNAME    "spark"
 !define INFO_COMPANYNAME    "Spark"
-!define INFO_PRODUCTNAME    "Spark 终端"
+!define INFO_PRODUCTNAME    "Spark 终端工具"
 ## !define INFO_PRODUCTVERSION "1.0.0"     # Default "0.1.0"
 ## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "© 2026, My Company"
 ###

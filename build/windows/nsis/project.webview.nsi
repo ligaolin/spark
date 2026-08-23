@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 
 ####
 ## 离线内置 WebView2 版本的 NSIS 脚本。
@@ -10,7 +10,7 @@ Unicode true
 ####
 !define INFO_PROJECTNAME    "spark"
 !define INFO_COMPANYNAME    "Spark"
-!define INFO_PRODUCTNAME    "Spark 终端"
+!define INFO_PRODUCTNAME    "Spark 终端工具"
 ## !define INFO_PRODUCTVERSION "1.0.0"     # Default "0.1.0"
 ## !define INFO_COPYRIGHT      "(c) Now, My Company" # Default "© 2026, My Company"
 ###
