@@ -67,7 +67,7 @@ jobs:
         shell: bash
         run: |
           mv "bin/spark-${{ matrix.arch }}-installer.exe" "Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}-installer.exe"
-          mv "bin/spark-${{ matrix.arch }}-installer-webview.exe" "Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}-installer-webview.exe"
+          mv "bin/spark-${{ matrix.arch }}-webview-installer.exe" "Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}-webview-installer.exe"
 
       - name: Publish to Release
         uses: softprops/action-gh-release@v2
@@ -75,7 +75,7 @@ jobs:
           files: |
             Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}.exe
             Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}-installer.exe
-            Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}-installer-webview.exe
+            Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}-webview-installer.exe
           name: Spark ${{ github.ref_name }}
           draft: false
           prerelease: false
