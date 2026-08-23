@@ -36,6 +36,13 @@ jobs:
           go install github.com/go-task/task/v3/cmd/task@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          $nsis = "${env:ProgramFiles(x86)}\NSIS"
+          if (Test-Path $nsis) { Add-Content -Path $env:GITHUB_PATH -Value $nsis }
+
       - name: Set version from tag
         shell: bash
         run: |
@@ -150,8 +157,8 @@ jobs:
       - name: Set version from tag
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
-      - name: Build
-        run: task build VERSION=${{ env.VERSION }}
+      - name: Build & package .app
+        run: task package VERSION=${{ env.VERSION }}
 
       - name: Package app bundle
         run: |
@@ -164,6 +171,7 @@ jobs:
           cd bin
           # 只打包 .app：内置 updater 要求 zip 里恰好一个顶层条目；-y 保留包内符号链接
           APP="$(find . -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$APP" ]; then echo "未找到 .app 包" && exit 1; fi
           zip -r -y "../Spark-${{ env.VERSION }}-darwin-$ARCH.zip" "$APP" > /dev/null
 
       - name: Publish to Release
