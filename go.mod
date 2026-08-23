@@ -23,6 +23,7 @@ require (
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/sijms/go-ora/v2 v2.9.0 // indirect
 	github.com/u-root/u-root v0.16.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
 )
 
 require (

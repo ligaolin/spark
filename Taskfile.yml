@@ -29,6 +29,11 @@ tasks:
     cmds:
       - task: "{{.GOOS}}:package"
 
+  package:webview:
+    summary: Packages the application with an embedded offline WebView2 runtime (Windows only)
+    cmds:
+      - task: windows:package:webview
+
   run:
     summary: Runs the application
     cmds:

@@ -28,11 +28,9 @@
             <div v-if="updateState.downloadError" class="upd-err">
                 下载失败：{{ updateState.downloadError }}
             </div>
-            <div v-if="updateState.downloadedPath" class="upd-done">
+            <div v-if="updateState.phase === 'installed'" class="upd-done">
                 <el-icon color="#34c759"><CircleCheckFilled /></el-icon>
-                <span class="upd-path" :title="updateState.downloadedPath">
-                    已下载到：{{ updateState.downloadedPath }}
-                </span>
+                <span>{{ isAndroid ? '更新已下载完成，点击「安装」进行安装' : '更新已下载并校验完成，点击「重启更新」安装并重启' }}</span>
             </div>
         </template>
 
@@ -41,10 +39,10 @@
             <el-button v-if="updateState.phase === 'ready'" type="primary" @click="downloadUpdate">
                 下载更新
             </el-button>
-            <template v-if="updateState.downloadedPath">
-                <el-button type="primary" @click="revealDownload">打开所在文件夹</el-button>
-                <el-button @click="launchDownload">运行新版本</el-button>
+            <template v-if="updateState.phase === 'installed'">
                 <el-button @click="openReleasePage">查看发布页</el-button>
+                <el-button v-if="isAndroid" type="primary" @click="installUpdate">安装</el-button>
+                <el-button v-else type="primary" @click="restartUpdate">重启更新</el-button>
             </template>
             <el-button v-if="updateState.downloadError" @click="openReleasePage">查看发布页</el-button>
             <el-button v-if="updateState.downloadError" @click="closeUpdateDialog">关闭</el-button>
@@ -59,10 +57,11 @@ import {
     updateState,
     closeUpdateDialog,
     downloadUpdate,
-    revealDownload,
-    launchDownload,
+    installUpdate,
+    restartUpdate,
     openReleasePage,
     formatBytes,
+    isAndroid,
 } from '../utils/updateCheck'
 
 const percent = computed(() => {

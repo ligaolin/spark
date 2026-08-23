@@ -116,6 +116,17 @@ public class WailsJSBridge {
     }
 
     /**
+     * Install a downloaded APK via the system installer (Android only).
+     * Called from JavaScript: wails.installApk(path)
+     *
+     * @param path absolute path of the downloaded APK
+     */
+    @JavascriptInterface
+    public void installApk(String path) {
+        bridge.installApk(path);
+    }
+
+    /**
      * Send a callback response to JavaScript
      */
     private void sendCallback(String callbackId, String result, String error) {

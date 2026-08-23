@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"runtime"
 
 	"changeme/app/model"
 	"changeme/app/service/connections"
@@ -99,6 +100,13 @@ func main() {
 			AdditionalBrowserArgs: []string{"--ignore-certificate-errors"},
 		},
 	})
+
+	// 内置更新器：仅桌面端初始化（安卓 / iOS 跳过，前端也已隐藏更新入口）
+	if runtime.GOOS != "android" && runtime.GOOS != "ios" {
+		if err := update.Init(); err != nil {
+			log.Printf("初始化更新器失败: %v", err)
+		}
+	}
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Spark 终端工具",

@@ -58,7 +58,8 @@
                 <div class="rep-editor">
                     <div class="rep-tabs">
                         <div v-for="f in openFiles" :key="f.key" class="rep-tab"
-                            :class="{ active: f.key === activeKey }" @click="activeKey = f.key">
+                            :class="{ active: f.key === activeKey }" @click="activeKey = f.key"
+                            @contextmenu.prevent="onTabContext($event, f)">
                             <span class="rep-tab-title" :title="f.path">{{ f.name }}</span>
                             <span v-if="f.dirty" class="rep-dirty" title="未保存">●</span>
                             <el-icon class="rep-tab-close" title="关闭" @click.stop="closeFile(f)">
@@ -96,6 +97,7 @@
         </el-splitter>
 
         <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
+        <ContextMenu v-model="tabCtxVisible" :x="tabCtxX" :y="tabCtxY" :items="tabCtxItems" @pick="onTabCtxPick" />
     </div>
 </template>
 
@@ -113,6 +115,9 @@ import {
     Edit,
     Delete,
     Lock,
+    CloseBold,
+    DArrowRight,
+    CircleClose,
 } from '@element-plus/icons-vue'
 import CodeEditor from './CodeEditor.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
@@ -171,6 +176,14 @@ const ctxVisible = ref(false)
 const ctxX = ref(0)
 const ctxY = ref(0)
 const ctxItems = ref<(CtxItem | 'divider')[]>([])
+
+// 文件标签页右键菜单
+const tabCtxVisible = ref(false)
+const tabCtxX = ref(0)
+const tabCtxY = ref(0)
+const tabCtxItems = ref<(CtxItem | 'divider')[]>([])
+const tabCtxFile = ref<OpenFile | null>(null)
+const tabCtxIndex = ref(-1)
 
 // FTP 后端没有 chmod 能力（仅 SFTP 提供）
 const canChmod = computed(() => !!props.backend.chmod)
@@ -574,6 +587,75 @@ async function closeFile(f: OpenFile) {
     delete editorRefs.value[f.key] // 释放编辑器实例（组件卸载时销毁）
     if (activeKey.value === f.key) {
         activeKey.value = openFiles.value[idx]?.key ?? openFiles.value[idx - 1]?.key ?? null
+    }
+}
+
+// ---------- 文件标签页右键 ----------
+
+function onTabContext(event: MouseEvent, f: OpenFile) {
+    event.preventDefault()
+    tabCtxFile.value = f
+    tabCtxIndex.value = openFiles.value.findIndex((x) => x.key === f.key)
+    tabCtxItems.value = buildTabCtx()
+    tabCtxX.value = event.clientX
+    tabCtxY.value = event.clientY
+    tabCtxVisible.value = false
+    requestAnimationFrame(() => {
+        tabCtxVisible.value = true
+    })
+}
+
+function buildTabCtx(): (CtxItem | 'divider')[] {
+    const total = openFiles.value.length
+    const idx = tabCtxIndex.value
+    return [
+        { key: 'close-current', label: '关闭当前', icon: Close, disabled: total === 0 },
+        { key: 'close-others', label: '关闭其他', icon: CloseBold, disabled: total <= 1 },
+        { key: 'close-right', label: '关闭右边', icon: DArrowRight, disabled: idx < 0 || idx >= total - 1 },
+        { key: 'close-all', label: '关闭全部', icon: CircleClose, disabled: total === 0 },
+    ]
+}
+
+async function onTabCtxPick(item: CtxItem) {
+    const f = tabCtxFile.value
+    if (!f) return
+    const idx = openFiles.value.findIndex((x) => x.key === f.key)
+    switch (item.key) {
+        case 'close-current':
+            await closeFile(f)
+            break
+        case 'close-others':
+            await closeFiles(openFiles.value.filter((x) => x.key !== f.key))
+            break
+        case 'close-right':
+            await closeFiles(idx >= 0 ? openFiles.value.slice(idx + 1) : [])
+            break
+        case 'close-all':
+            await closeFiles([...openFiles.value])
+            break
+    }
+}
+
+async function closeFiles(list: OpenFile[]) {
+    if (!list.length) return
+    const dirtyCount = list.filter((f) => f.dirty).length
+    if (dirtyCount > 0) {
+        const ok = await showConfirmDialog(
+            '关闭文件',
+            `有 ${dirtyCount} 个文件存在未保存的更改，确定关闭？`,
+            true,
+            '不保存并关闭',
+        )
+        if (!ok) return
+    }
+    for (const f of list) {
+        const idx = openFiles.value.findIndex((x) => x.key === f.key)
+        if (idx < 0) continue
+        openFiles.value.splice(idx, 1)
+        delete editorRefs.value[f.key]
+        if (activeKey.value === f.key) {
+            activeKey.value = openFiles.value[idx]?.key ?? openFiles.value[idx - 1]?.key ?? null
+        }
     }
 }
 

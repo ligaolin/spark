@@ -11,8 +11,11 @@ permissions:
 
 jobs:
   build-windows:
-    name: Windows
+    name: Windows (${{ matrix.arch }})
     runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
 
@@ -41,17 +44,31 @@ jobs:
           sed -i "s/\"file_version\": \"[^\"]*\"/\"file_version\": \"$VERSION\"/" build/windows/info.json
           sed -i "s/\"ProductVersion\": \"[^\"]*\"/\"ProductVersion\": \"$VERSION\"/" build/windows/info.json
 
-      - name: Build
-        run: task build VERSION=${{ env.VERSION }}
+      - name: Build app (raw exe for auto-update)
+        run: task build VERSION=${{ env.VERSION }} ARCH=${{ matrix.arch }}
 
-      - name: Rename artifact
+      - name: Rename raw exe
         shell: bash
-        run: mv bin/spark.exe "Spark-${{ env.VERSION }}-windows-amd64.exe"
+        run: mv bin/spark.exe "Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}.exe"
+
+      - name: Package installers (normal + offline WebView2)
+        run: |
+          task package VERSION=${{ env.VERSION }} ARCH=${{ matrix.arch }}
+          task package:webview VERSION=${{ env.VERSION }} ARCH=${{ matrix.arch }}
+
+      - name: Rename installers
+        shell: bash
+        run: |
+          mv "bin/spark-${{ matrix.arch }}-installer.exe" "Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}-installer.exe"
+          mv "bin/spark-${{ matrix.arch }}-installer-webview.exe" "Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}-installer-webview.exe"
 
       - name: Publish to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Spark-*.exe
+          files: |
+            Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}.exe
+            Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}-installer.exe
+            Spark-${{ env.VERSION }}-windows-${{ matrix.arch }}-installer-webview.exe
           name: Spark ${{ github.ref_name }}
           draft: false
           prerelease: false
@@ -138,13 +155,21 @@ jobs:
 
       - name: Package app bundle
         run: |
+          case "$(uname -m)" in
+            x86_64) ARCH=amd64 ;;
+            arm64)  ARCH=arm64 ;;
+            *)      ARCH="$(uname -m)" ;;
+          esac
+          echo "ARCH=$ARCH" >> "$GITHUB_ENV"
           cd bin
-          zip -r "../Spark-${{ env.VERSION }}-macos.zip" . > /dev/null
+          # 只打包 .app：内置 updater 要求 zip 里恰好一个顶层条目；-y 保留包内符号链接
+          APP="$(find . -maxdepth 1 -name '*.app' -print -quit)"
+          zip -r -y "../Spark-${{ env.VERSION }}-darwin-$ARCH.zip" "$APP" > /dev/null
 
       - name: Publish to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Spark-*-macos.zip
+          files: Spark-*-darwin-*.zip
           name: Spark ${{ github.ref_name }}
           draft: false
           prerelease: false

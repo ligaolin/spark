@@ -13,7 +13,7 @@
         github.com/ligaolin/spark
       </el-link>
     </div>
-    <div v-if="!isAndroid" class="about-actions">
+    <div class="about-actions">
       <el-button size="small" type="primary" plain @click="checkUpdate">检查更新</el-button>
     </div>
   </div>
@@ -23,11 +23,8 @@
 import { ref, onMounted } from 'vue'
 import { SettingsService } from '../utils/wails'
 import { checkForUpdatesManual } from '../utils/updateCheck'
-import { isAndroidApp } from '../utils/platform'
 
 const version = ref('dev')
-// 安卓端没有更新功能（下载的是 Windows 安装包），隐藏检查更新入口
-const isAndroid = isAndroidApp()
 
 onMounted(async () => {
   try {

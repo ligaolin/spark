@@ -8,12 +8,6 @@ export interface UpdateInfo {
     "current": string;
     "latest": string;
     "hasUpdate": boolean;
-    "tag": string;
     "name": string;
-    "releaseUrl": string;
-    "assetUrl": string;
-    "assetName": string;
-    "assetSize": number;
-    "publishedAt": string;
     "body": string;
 }

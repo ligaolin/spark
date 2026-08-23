@@ -1,55 +1,63 @@
-// 新版本检查 / 下载控制器：状态机 + 与 UpdateService 绑定的调用。
+// 新版本检查 / 更新控制器：状态机 + 与 UpdateService 绑定。
+// 桌面端：Check → DownloadAndInstall → Restart（自动替换二进制并重启）。
+// 安卓端：Check → DownloadApk（下载到本地）→ window.wails.installApk(path)（调系统安装器）。
 // UpdateDialog.vue 只负责渲染本模块的状态。
 import { reactive } from 'vue'
 import { Events } from '@wailsio/runtime'
 import { ElMessage } from 'element-plus'
 import { UpdateService } from './wails'
+import { isAndroidApp } from './platform'
 
 export interface UpdateInfo {
   current: string
   latest: string
   hasUpdate: boolean
-  tag: string
   name: string
-  releaseUrl: string
-  assetUrl: string
-  assetName: string
-  assetSize: number
-  publishedAt: string
   body: string
 }
 
+export const isAndroid = isAndroidApp()
+
 export const updateState = reactive({
   visible: false,
-  phase: 'idle' as 'idle' | 'checking' | 'ready' | 'error' | 'downloading' | 'done',
+  phase: 'idle' as 'idle' | 'checking' | 'ready' | 'downloading' | 'installed' | 'error',
   info: null as UpdateInfo | null,
-  errorMsg: '',
   done: 0,
   total: 0,
-  downloadedPath: '',
   downloadError: '',
+  downloadedPath: '',
 })
 
 let progressBound = false
 function bindProgress() {
   if (progressBound) return
   progressBound = true
-  Events.On('update:progress', (evt: any) => {
+  // 下载进度（桌面内置 updater 与安卓手动下载都用这个事件名）
+  Events.On('wails:updater:download-progress', (evt: any) => {
     const p = evt?.data
     if (!p) return
-    updateState.done = Number(p.done) || 0
+    updateState.done = Number(p.written) || 0
     updateState.total = Number(p.total) || 0
+  })
+  // 安卓安装结果 / 权限提示
+  Events.On('android:apkInstall', (evt: any) => {
+    const p = evt?.data
+    if (!p) return
+    if (p.needPermission) {
+      ElMessage.warning('请在系统设置中允许「安装未知应用」，然后回到应用再点一次「安装」')
+    } else if (p.error) {
+      ElMessage.error(`安装失败：${p.error}`)
+    }
   })
 }
 
 function reset() {
   updateState.phase = 'idle'
   updateState.info = null
-  updateState.errorMsg = ''
   updateState.done = 0
   updateState.total = 0
-  updateState.downloadedPath = ''
   updateState.downloadError = ''
+  updateState.downloadedPath = ''
 }
 
 // 检查更新。silent=true（应用启动时）检查过程不打扰用户，仅在有新版本时
@@ -63,9 +71,7 @@ export async function checkForUpdates(silent = false): Promise<void> {
   }
   try {
     const info = await UpdateService.CheckUpdate()
-    if (!info) {
-      throw new Error('未获取到版本信息')
-    }
+    if (!info) throw new Error('未获取到版本信息')
     if (!info.hasUpdate) {
       if (!silent) {
         ElMessage.success(`当前已是最新版本（${info.current}）`)
@@ -95,32 +101,39 @@ export async function downloadUpdate(): Promise<void> {
   updateState.done = 0
   updateState.total = 0
   try {
-    const path = await UpdateService.DownloadUpdate()
-    updateState.downloadedPath = path
-    updateState.phase = 'done'
+    if (isAndroid) {
+      updateState.downloadedPath = await UpdateService.DownloadApk()
+    } else {
+      await UpdateService.DownloadAndInstall()
+    }
+    updateState.phase = 'installed'
   } catch (e: any) {
     updateState.downloadError = e?.message || String(e)
     updateState.phase = 'ready'
   }
 }
 
-export async function revealDownload() {
-  if (!updateState.downloadedPath) return
-  try {
-    await UpdateService.RevealInExplorer(updateState.downloadedPath)
-  } catch (e: any) {
-    ElMessage.error(`打开文件夹失败：${e?.message || e}`)
+// 安卓：调起系统安装器
+export function installUpdate(): void {
+  const w = (window as any).wails
+  if (!w || typeof w.installApk !== 'function') {
+    ElMessage.error('当前环境不支持在线安装')
+    return
   }
+  const path = updateState.downloadedPath
+  if (!path) {
+    ElMessage.warning('请先下载更新')
+    return
+  }
+  w.installApk(path)
 }
 
-export async function launchDownload() {
-  if (!updateState.downloadedPath) return
+// 桌面：替换二进制并重启
+export async function restartUpdate(): Promise<void> {
   try {
-    await UpdateService.LaunchApp(updateState.downloadedPath)
-    updateState.visible = false
-    ElMessage.success('已启动新版本，请关闭本程序后使用新版本')
+    await UpdateService.Restart()
   } catch (e: any) {
-    ElMessage.error(`启动失败：${e?.message || e}`)
+    ElMessage.error(`重启更新失败：${e?.message || e}`)
   }
 }
 

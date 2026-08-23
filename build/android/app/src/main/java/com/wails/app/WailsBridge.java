@@ -52,6 +52,7 @@ import androidx.biometric.BiometricManager;
 import androidx.biometric.BiometricPrompt;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 import androidx.fragment.app.FragmentActivity;
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKey;
@@ -59,6 +60,7 @@ import androidx.security.crypto.MasterKey;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
 import java.util.Locale;
 import java.util.concurrent.Executor;
 
@@ -459,6 +461,49 @@ public class WailsBridge {
                 activity.startActivity(view);
             } catch (Exception e) {
                 Log.e(TAG, "openURL failed", e);
+            }
+        });
+    }
+
+    /**
+     * Install a downloaded APK via the system package installer. On Android 8+
+     * it first checks the "install unknown apps" permission and, if missing,
+     * opens the settings screen so the user can grant it, then retries.
+     * Result / errors are emitted as "android:apkInstall" events.
+     */
+    public void installApk(final String path) {
+        mainHandler.post(() -> {
+            try {
+                File apk = new File(path);
+                if (!apk.exists() || !apk.isFile()) {
+                    emitEvent("android:apkInstall",
+                            new JSONObject().put("error", "APK 文件不存在").toString());
+                    return;
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                        && !activity.getPackageManager().canRequestPackageInstalls()) {
+                    Intent settings = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:" + activity.getPackageName()));
+                    settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    activity.startActivity(settings);
+                    emitEvent("android:apkInstall",
+                            new JSONObject().put("needPermission", true).toString());
+                    return;
+                }
+                Uri uri = FileProvider.getUriForFile(activity,
+                        activity.getPackageName() + ".fileprovider", apk);
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                intent.setDataAndType(uri, "application/vnd.android.package-archive");
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                activity.startActivity(intent);
+            } catch (Exception e) {
+                Log.e(TAG, "installApk failed", e);
+                try {
+                    emitEvent("android:apkInstall",
+                            new JSONObject().put("error",
+                                    e.getMessage() != null ? e.getMessage() : "unknown").toString());
+                } catch (Exception ignored) {
+                }
             }
         });
     }

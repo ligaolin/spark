@@ -164,12 +164,10 @@ onMounted(() => {
     })
     window.addEventListener('keydown', onKeyDown)
     // 启动后延迟检查 GitHub 新版本：有新版时弹窗提示可点击下载更新。
-    // 安卓端无此功能（下载的是 Windows 安装包），跳过。
-    if (!isAndroidApp()) {
-        setTimeout(() => {
-            void checkForUpdates(true)
-        }, 1500)
-    }
+    // 桌面端自动替换二进制并重启；安卓端下载 APK 后调起系统安装器。
+    setTimeout(() => {
+        void checkForUpdates(true)
+    }, 1500)
 })
 
 onBeforeUnmount(() => {

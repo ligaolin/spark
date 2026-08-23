@@ -3,4 +3,6 @@
     <!-- Camera captures are written here and shared with the camera app via the
          FileProvider. -->
     <cache-path name="captures" path="captures/" />
+    <!-- Downloaded update APK (files/updates/) shared with the package installer. -->
+    <files-path name="updates" path="updates/" />
 </paths>
