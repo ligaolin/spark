@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
 	"runtime"
 
 	"changeme/app/model"
@@ -19,6 +20,7 @@ import (
 	"changeme/app/service/secure"
 	"changeme/app/service/settings"
 	"changeme/app/service/sftp"
+	"changeme/app/service/shellmenu"
 	"changeme/app/service/sites"
 	"changeme/app/service/sshconfig"
 	"changeme/app/service/terminal"
@@ -66,6 +68,15 @@ func main() {
 
 	model.Migrate()
 
+	// 系统右键菜单：解析首次启动携带的打开请求（--terminal <path> / --editor <path>），
+	// 先暂存到服务里，等前端挂载后通过 Consume 取走。
+	shellMenuSvc := &shellmenu.ShellMenuService{}
+	if req := shellmenu.ParseArgs(os.Args[1:]); req != nil {
+		shellMenuSvc.SetPending(req)
+	}
+
+	var win *application.WebviewWindow
+
 	app := application.New(application.Options{
 		Name:        "spark 终端",
 		Description: "终端 - SSH / SFTP / FTP",
@@ -85,6 +96,7 @@ func main() {
 			application.NewService(&hostkeys.HostKeyService{}),
 			application.NewService(&sshconfig.SshConfigService{}),
 			application.NewService(&update.UpdateService{}),
+			application.NewService(shellMenuSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -99,7 +111,30 @@ func main() {
 			// 证书统一由这个开关忽略，不再走本地代理。全局生效。
 			AdditionalBrowserArgs: []string{"--ignore-certificate-errors"},
 		},
+		// 单实例：系统右键菜单 / 二次双击启动都会把参数转发到已运行的实例。
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "spark-terminal-desktop",
+			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				if req := shellmenu.ParseArgs(data.Args); req != nil {
+					shellMenuSvc.SetPending(req)
+					application.Get().Event.Emit("app:open", req)
+				}
+				// 无论是否带打开参数，二次启动都唤起主窗口。
+				if win != nil {
+					tray.Show(win)
+				}
+			},
+		},
 	})
+
+	// 注册系统右键菜单（HKCU，跟随当前 exe 路径，升级后自动更新）。
+	if exe, err := os.Executable(); err == nil {
+		if err := shellmenu.Register(exe); err != nil {
+			log.Printf("注册系统右键菜单失败: %v", err)
+		}
+	} else {
+		log.Printf("获取可执行文件路径失败，跳过系统右键菜单注册: %v", err)
+	}
 
 	// 内置更新器：仅桌面端初始化（安卓 / iOS 跳过，前端也已隐藏更新入口）
 	if runtime.GOOS != "android" && runtime.GOOS != "ios" {
@@ -108,7 +143,7 @@ func main() {
 		}
 	}
 
-	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
+	win = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Spark",
 		Width:  1380,
 		Height: 880,

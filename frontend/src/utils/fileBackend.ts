@@ -1,7 +1,7 @@
 // 文件面板后端适配器：把 SFTP / FTP / 本地文件操作统一成同一个接口，
 // 供 FilePanel 组件复用。
 import { LocalService, SFTPFileService, FTPFileService } from './wails'
-import type { FileEntry, SearchResult } from '../types'
+import type { FileEntry, SearchResult, SearchOptions, ReplaceResult } from '../types'
 
 export interface FileBackend {
   kind: 'local' | 'remote'
@@ -18,8 +18,10 @@ export interface FileBackend {
   // 编辑器：读取 / 保存文本文件
   readFile(path: string): Promise<string>
   writeFile(path: string, content: string): Promise<void>
-  // 搜索：按文件名或文件内容递归搜索
-  search(dir: string, pattern: string, mode: 'name' | 'content'): Promise<SearchResult[]>
+  // 搜索：按文件名或文件内容递归搜索（options：区分大小写 / 正则）
+  search(dir: string, pattern: string, mode: 'name' | 'content', options: SearchOptions): Promise<SearchResult[]>
+  // 替换：对内容搜索结果执行全局替换
+  replace(dir: string, pattern: string, replacement: string, mode: 'name' | 'content', options: SearchOptions): Promise<ReplaceResult>
 }
 
 export function makeLocalBackend(): FileBackend {
@@ -36,7 +38,8 @@ export function makeLocalBackend(): FileBackend {
     download: async () => {},
     readFile: (p) => LocalService.ReadFile(p),
     writeFile: (p, c) => LocalService.WriteFile(p, c),
-    search: async (d, p, m) => (await LocalService.Search(d, p, m)) ?? [],
+    search: async (d, p, m, opts) => (await LocalService.Search(d, p, m, opts)) ?? [],
+    replace: (d, p, r, m, opts) => LocalService.Replace(d, p, r, m, opts),
   }
 }
 
@@ -58,7 +61,8 @@ export function makeSftpBackend(getSessionId: () => string): FileBackend {
     download: (r, l) => SFTPFileService.Download(getSessionId(), r, l),
     readFile: (p) => SFTPFileService.ReadFile(getSessionId(), p),
     writeFile: (p, c) => SFTPFileService.WriteFile(getSessionId(), p, c),
-    search: async (d, p, m) => (await SFTPFileService.Search(getSessionId(), d, p, m)) ?? [],
+    search: async (d, p, m, opts) => (await SFTPFileService.Search(getSessionId(), d, p, m, opts)) ?? [],
+    replace: (d, p, r, m, opts) => SFTPFileService.Replace(getSessionId(), d, p, r, m, opts),
   }
 }
 
@@ -76,7 +80,8 @@ export function makeFtpBackend(getSessionId: () => string): FileBackend {
     download: (r, l, isDir) => FTPFileService.Download(getSessionId(), r, l, !!isDir),
     readFile: (p) => FTPFileService.ReadFile(getSessionId(), p),
     writeFile: (p, c) => FTPFileService.WriteFile(getSessionId(), p, c),
-    search: async (d, p, m) => (await FTPFileService.Search(getSessionId(), d, p, m)) ?? [],
+    search: async (d, p, m, opts) => (await FTPFileService.Search(getSessionId(), d, p, m, opts)) ?? [],
+    replace: (d, p, r, m, opts) => FTPFileService.Replace(getSessionId(), d, p, r, m, opts),
   }
 }
 

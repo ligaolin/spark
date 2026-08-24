@@ -178,10 +178,14 @@ const remoteBackend: FileBackend = {
     props.mode === 'sftp'
       ? SFTPFileService.WriteFile(currentSessionId.value, p, c)
       : FTPFileService.WriteFile(currentSessionId.value, p, c),
-  search: async (d, p, m) =>
+  search: async (d, p, m, opts) =>
     props.mode === 'sftp'
-      ? ((await SFTPFileService.Search(currentSessionId.value, d, p, m)) ?? [])
-      : ((await FTPFileService.Search(currentSessionId.value, d, p, m)) ?? []),
+      ? ((await SFTPFileService.Search(currentSessionId.value, d, p, m, opts)) ?? [])
+      : ((await FTPFileService.Search(currentSessionId.value, d, p, m, opts)) ?? []),
+  replace: (d, p, r, m, opts) =>
+    props.mode === 'sftp'
+      ? SFTPFileService.Replace(currentSessionId.value, d, p, r, m, opts)
+      : FTPFileService.Replace(currentSessionId.value, d, p, r, m, opts),
 }
 
 // ---------- 编辑器（独立页面「远程编辑器」，见 stores/remoteEditor） ----------

@@ -16,10 +16,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 /**
  * Create spawns a local shell attached to a pseudo-terminal and returns a
  * new session id. shell 为空时使用平台默认 shell；可传 "powershell" 等覆盖。
- * rows / cols 为终端初始尺寸。
+ * dir 为终端起始目录（空时回退用户主目录）。rows / cols 为终端初始尺寸。
  */
-export function Create(shell: string, rows: number, cols: number): $CancellablePromise<string> {
-    return $Call.ByID(4196236269, shell, rows, cols);
+export function Create(shell: string, dir: string, rows: number, cols: number): $CancellablePromise<string> {
+    return $Call.ByID(4196236269, shell, dir, rows, cols);
 }
 
 /**

@@ -163,8 +163,9 @@ func (l *LocalService) Remove(p string) error {
 }
 
 // Search walks a local directory recursively and returns filename matches
-// (mode "name") or content matches (mode "content").
-func (l *LocalService) Search(dir, pattern, mode string) ([]types.SearchResult, error) {
+// (mode "name") or content matches (mode "content"). opts controls case
+// sensitivity and regex (content only).
+func (l *LocalService) Search(dir, pattern, mode string, opts types.SearchOptions) ([]types.SearchResult, error) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
 		return nil, errors.New("请输入搜索关键字")
@@ -174,6 +175,12 @@ func (l *LocalService) Search(dir, pattern, mode string) ([]types.SearchResult, 
 	}
 	dir = filepath.Clean(dir)
 	contentMode := strings.EqualFold(mode, "content")
+	if contentMode {
+		if err := fileutil.ValidateContentPattern(pattern, opts.CaseSensitive, opts.UseRegex); err != nil {
+			return nil, err
+		}
+	}
+	excludes := fileutil.CompileExcludes(opts.Exclude)
 	results := make([]types.SearchResult, 0, 64)
 	err := filepath.Walk(dir, func(p string, info os.FileInfo, werr error) error {
 		if werr != nil {
@@ -182,12 +189,18 @@ func (l *LocalService) Search(dir, pattern, mode string) ([]types.SearchResult, 
 		if p == dir {
 			return nil // 跳过根目录本身
 		}
+		name := filepath.Base(p)
+		if fileutil.MatchesExclude(excludes, p, name) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if len(results) >= fileutil.MaxSearchResults {
 			return filepath.SkipAll
 		}
-		name := filepath.Base(p)
 		if info.IsDir() {
-			if !contentMode && fileutil.MatchName(name, pattern) {
+			if !contentMode && fileutil.MatchNameOpt(name, pattern, opts.CaseSensitive) {
 				results = append(results, types.SearchResult{
 					Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(), IsDir: true,
 				})
@@ -205,7 +218,11 @@ func (l *LocalService) Search(dir, pattern, mode string) ([]types.SearchResult, 
 			if fileutil.IsBinary(data) {
 				return nil
 			}
-			for _, h := range fileutil.MatchLines(data, pattern, fileutil.MaxMatchesPerFile) {
+			hits, herr := fileutil.MatchLinesOpt(data, pattern, fileutil.MaxMatchesPerFile, opts.CaseSensitive, opts.UseRegex)
+			if herr != nil {
+				return herr
+			}
+			for _, h := range hits {
 				results = append(results, types.SearchResult{
 					Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(),
 					LineNo: h.LineNo, Line: h.Line,
@@ -216,7 +233,7 @@ func (l *LocalService) Search(dir, pattern, mode string) ([]types.SearchResult, 
 			}
 			return nil
 		}
-		if fileutil.MatchName(name, pattern) {
+		if fileutil.MatchNameOpt(name, pattern, opts.CaseSensitive) {
 			results = append(results, types.SearchResult{
 				Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(),
 			})
@@ -224,6 +241,66 @@ func (l *LocalService) Search(dir, pattern, mode string) ([]types.SearchResult, 
 		return nil
 	})
 	return results, err
+}
+
+// Replace replaces every content match of pattern in files under dir,
+// returning how many files and occurrences were changed.
+func (l *LocalService) Replace(dir, pattern, replacement, mode string, opts types.SearchOptions) (types.ReplaceResult, error) {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return types.ReplaceResult{}, errors.New("请输入搜索关键字")
+	}
+	if !strings.EqualFold(mode, "content") {
+		return types.ReplaceResult{}, errors.New("仅内容搜索支持替换")
+	}
+	if err := fileutil.ValidateContentPattern(pattern, opts.CaseSensitive, opts.UseRegex); err != nil {
+		return types.ReplaceResult{}, err
+	}
+	if dir == "" {
+		dir, _ = os.UserHomeDir()
+	}
+	dir = filepath.Clean(dir)
+	excludes := fileutil.CompileExcludes(opts.Exclude)
+	res := types.ReplaceResult{}
+	err := filepath.Walk(dir, func(p string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return nil
+		}
+		if p == dir {
+			return nil
+		}
+		name := filepath.Base(p)
+		if fileutil.MatchesExclude(excludes, p, name) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() || info.Size() <= 0 || info.Size() > fileutil.MaxContentSearchSize {
+			return nil
+		}
+		data, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		if fileutil.IsBinary(data) {
+			return nil
+		}
+		out, n, cerr := fileutil.ReplaceAllContent(data, pattern, replacement, opts.CaseSensitive, opts.UseRegex)
+		if cerr != nil {
+			return cerr
+		}
+		if n == 0 {
+			return nil
+		}
+		if werr := os.WriteFile(p, out, info.Mode().Perm()); werr != nil {
+			return werr
+		}
+		res.Files++
+		res.Occurrences += n
+		return nil
+	})
+	return res, err
 }
 
 // ReadFile reads a local text file for the built-in editor, enforcing a size

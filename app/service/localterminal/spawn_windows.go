@@ -9,8 +9,16 @@ import (
 	"strings"
 )
 
-// platformDefaultShell 返回 Windows 默认 shell（$COMSPEC，通常是 cmd.exe）。
+// platformDefaultShell 返回 Windows 默认 shell。
+// 本地终端默认使用 PowerShell（优先 Windows PowerShell 5.x，其次 pwsh），
+// 两者都不可用时退回 cmd.exe。
 func platformDefaultShell() string {
+	if p, err := exec.LookPath("powershell.exe"); err == nil {
+		return p
+	}
+	if p, err := exec.LookPath("pwsh.exe"); err == nil {
+		return p
+	}
 	if v := os.Getenv("COMSPEC"); v != "" {
 		return v
 	}

@@ -154,7 +154,7 @@ async function create() {
   term.clear()
   fitAddon.fit()
   try {
-    const id = await LocalTerminalService.Create(props.tab.shell, term.rows, term.cols)
+    const id = await LocalTerminalService.Create(props.tab.shell, props.tab.cwd || '', term.rows, term.cols)
     if (seq !== createSeq) return // 已重连/关闭
     store.markRunning(props.tab.key, id)
   } catch (e: any) {

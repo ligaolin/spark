@@ -44,6 +44,19 @@ export interface SearchResult {
   line?: string
 }
 
+// 搜索 / 替换选项：区分大小写、正则（正则仅对内容搜索生效）、排除 glob
+export interface SearchOptions {
+  caseSensitive: boolean
+  useRegex: boolean
+  exclude: string
+}
+
+// 替换结果：修改的文件数与替换的匹配总数
+export interface ReplaceResult {
+  files: number
+  occurrences: number
+}
+
 // 拖拽传输负载：source 为拖拽来源，entries 为内部面板条目，paths 为操作系统文件路径
 // targetDir：拖到某个目录行上时指定的目标目录（缺省为面板当前目录）
 export interface DropPayload {

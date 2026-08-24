@@ -67,6 +67,21 @@ type SearchResult struct {
 	Line   string `json:"line,omitempty"`
 }
 
+// SearchOptions controls how search/replace matches text: case sensitivity,
+// whether the pattern is a regular expression (content mode only), and glob
+// patterns to exclude from the search (comma/newline separated).
+type SearchOptions struct {
+	CaseSensitive bool   `json:"caseSensitive"`
+	UseRegex      bool   `json:"useRegex"`
+	Exclude       string `json:"exclude"`
+}
+
+// ReplaceResult reports the outcome of a replace-all operation.
+type ReplaceResult struct {
+	Files       int `json:"files"`       // 被修改的文件数
+	Occurrences int `json:"occurrences"` // 被替换的匹配总数
+}
+
 // TerminalOutput is emitted to the frontend with chunks of SSH terminal output.
 type TerminalOutput struct {
 	SessionID string `json:"sessionId"`

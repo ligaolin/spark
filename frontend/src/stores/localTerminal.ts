@@ -9,6 +9,7 @@ export interface LocalTerminalTab {
   error?: string
   exitCode?: number
   shell: string // 创建时使用的 shell（'' = 平台默认；'powershell' 等）
+  cwd: string // 终端起始目录（'' = 用户主目录）
 }
 
 let tabSeq = 1
@@ -26,13 +27,14 @@ export const useLocalTerminalStore = defineStore('localTerminal', {
   },
 
   actions: {
-    addTab(shell = ''): LocalTerminalTab {
+    addTab(shell = '', cwd = ''): LocalTerminalTab {
       const tab: LocalTerminalTab = {
         key: `loc-${tabSeq++}`,
         sessionId: '',
         title: '本地终端',
         status: 'starting',
         shell,
+        cwd,
       }
       this.tabs.push(tab)
       this.activeKey = tab.key

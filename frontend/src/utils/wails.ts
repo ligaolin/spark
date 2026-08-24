@@ -15,6 +15,8 @@ import { LocalTerminalService } from '../../bindings/changeme/app/service/localt
 import { HostKeyService } from '../../bindings/changeme/app/service/hostkeys'
 import { SshConfigService } from '../../bindings/changeme/app/service/sshconfig'
 import { UpdateService } from '../../bindings/changeme/app/service/update'
+import { ShellMenuService } from '../../bindings/changeme/app/service/shellmenu'
+import type { LaunchRequest } from '../../bindings/changeme/app/service/shellmenu/models'
 
 import type {
   ConnectOptions,
@@ -60,6 +62,7 @@ export {
   HostKeyService,
   SshConfigService,
   UpdateService,
+  ShellMenuService,
 }
 export type {
   ConnectOptions,
@@ -87,6 +90,7 @@ export type {
   ImportResult,
   DedupResult,
   TunnelInfo,
+  LaunchRequest,
 }
 
 // 绑定模型为接口且字段全必填，这里提供带默认值的工厂函数便于构造。

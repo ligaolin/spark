@@ -54,7 +54,7 @@ declare module 'vue' {
     RemoteEditorPanel: typeof import('./src/components/RemoteEditorPanel.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
-    SearchDialog: typeof import('./src/components/SearchDialog.vue')['default']
+    SearchPanel: typeof import('./src/components/SearchPanel.vue')['default']
     ServerInfoView: typeof import('./src/components/ServerInfoView.vue')['default']
     SftpPanel: typeof import('./src/components/SftpPanel.vue')['default']
     SshConfigImport: typeof import('./src/components/SshConfigImport.vue')['default']

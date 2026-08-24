@@ -171,6 +171,32 @@ export interface ProcessInfo {
 }
 
 /**
+ * ReplaceResult reports the outcome of a replace-all operation.
+ */
+export interface ReplaceResult {
+    /**
+     * 被修改的文件数
+     */
+    "files": number;
+
+    /**
+     * 被替换的匹配总数
+     */
+    "occurrences": number;
+}
+
+/**
+ * SearchOptions controls how search/replace matches text: case sensitivity,
+ * whether the pattern is a regular expression (content mode only), and glob
+ * patterns to exclude from the search (comma/newline separated).
+ */
+export interface SearchOptions {
+    "caseSensitive": boolean;
+    "useRegex": boolean;
+    "exclude": string;
+}
+
+/**
  * SearchResult describes one search hit: either a filename match or a
  * content match (content matches also carry the line number and text).
  */

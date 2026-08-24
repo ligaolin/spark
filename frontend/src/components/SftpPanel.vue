@@ -146,6 +146,7 @@ const remoteBackend: FileBackend = {
     readFile: withReconnect(rawBackend.readFile),
     writeFile: withReconnect(rawBackend.writeFile),
     search: withReconnect(rawBackend.search),
+    replace: withReconnect(rawBackend.replace),
 }
 
 function basename(p: string): string {

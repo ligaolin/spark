@@ -205,8 +205,9 @@ func (s *SFTPFileService) Chmod(id, remotePath string, mode uint32) error {
 }
 
 // Search walks a remote directory recursively and returns filename matches
-// (mode "name") or content matches (mode "content").
-func (s *SFTPFileService) Search(id, dir, pattern, mode string) ([]types.SearchResult, error) {
+// (mode "name") or content matches (mode "content"). opts controls case
+// sensitivity and regex (content only).
+func (s *SFTPFileService) Search(id, dir, pattern, mode string, opts types.SearchOptions) ([]types.SearchResult, error) {
 	sess, err := s.get(id)
 	if err != nil {
 		return nil, err
@@ -221,6 +222,12 @@ func (s *SFTPFileService) Search(id, dir, pattern, mode string) ([]types.SearchR
 		}
 	}
 	contentMode := strings.EqualFold(mode, "content")
+	if contentMode {
+		if err := fileutil.ValidateContentPattern(pattern, opts.CaseSensitive, opts.UseRegex); err != nil {
+			return nil, err
+		}
+	}
+	excludes := fileutil.CompileExcludes(opts.Exclude)
 	results := make([]types.SearchResult, 0, 64)
 	w := sess.sftp.Walk(dir)
 	for w.Step() {
@@ -236,8 +243,14 @@ func (s *SFTPFileService) Search(id, dir, pattern, mode string) ([]types.SearchR
 		}
 		info := w.Stat()
 		name := path.Base(p)
+		if fileutil.MatchesExclude(excludes, p, name) {
+			if info.IsDir() {
+				w.SkipDir()
+			}
+			continue
+		}
 		if info.IsDir() {
-			if !contentMode && fileutil.MatchName(name, pattern) {
+			if !contentMode && fileutil.MatchNameOpt(name, pattern, opts.CaseSensitive) {
 				results = append(results, types.SearchResult{
 					Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(), IsDir: true,
 				})
@@ -260,7 +273,11 @@ func (s *SFTPFileService) Search(id, dir, pattern, mode string) ([]types.SearchR
 			if fileutil.IsBinary(data) {
 				continue
 			}
-			for _, h := range fileutil.MatchLines(data, pattern, fileutil.MaxMatchesPerFile) {
+			hits, herr := fileutil.MatchLinesOpt(data, pattern, fileutil.MaxMatchesPerFile, opts.CaseSensitive, opts.UseRegex)
+			if herr != nil {
+				return nil, herr
+			}
+			for _, h := range hits {
 				results = append(results, types.SearchResult{
 					Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(),
 					LineNo: h.LineNo, Line: h.Line,
@@ -269,13 +286,82 @@ func (s *SFTPFileService) Search(id, dir, pattern, mode string) ([]types.SearchR
 					break
 				}
 			}
-		} else if fileutil.MatchName(name, pattern) {
+		} else if fileutil.MatchNameOpt(name, pattern, opts.CaseSensitive) {
 			results = append(results, types.SearchResult{
 				Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(),
 			})
 		}
 	}
 	return results, nil
+}
+
+// Replace replaces every content match of pattern in files under dir,
+// returning how many files and occurrences were changed.
+func (s *SFTPFileService) Replace(id, dir, pattern, replacement, mode string, opts types.SearchOptions) (types.ReplaceResult, error) {
+	sess, err := s.get(id)
+	if err != nil {
+		return types.ReplaceResult{}, err
+	}
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return types.ReplaceResult{}, errors.New("请输入搜索关键字")
+	}
+	if !strings.EqualFold(mode, "content") {
+		return types.ReplaceResult{}, errors.New("仅内容搜索支持替换")
+	}
+	if err := fileutil.ValidateContentPattern(pattern, opts.CaseSensitive, opts.UseRegex); err != nil {
+		return types.ReplaceResult{}, err
+	}
+	if dir == "" {
+		if dir, err = sess.sftp.Getwd(); err != nil {
+			return types.ReplaceResult{}, err
+		}
+	}
+	excludes := fileutil.CompileExcludes(opts.Exclude)
+	res := types.ReplaceResult{}
+	w := sess.sftp.Walk(dir)
+	for w.Step() {
+		if w.Err() != nil {
+			continue
+		}
+		p := w.Path()
+		if p == dir {
+			continue
+		}
+		info := w.Stat()
+		name := path.Base(p)
+		if fileutil.MatchesExclude(excludes, p, name) {
+			if info.IsDir() {
+				w.SkipDir()
+			}
+			continue
+		}
+		if info.IsDir() || info.Size() <= 0 || info.Size() > fileutil.MaxContentSearchSize {
+			continue
+		}
+		f, oerr := sess.sftp.Open(p)
+		if oerr != nil {
+			continue
+		}
+		data, rerr := io.ReadAll(io.LimitReader(f, fileutil.MaxContentSearchSize+1))
+		_ = f.Close()
+		if rerr != nil || int64(len(data)) > fileutil.MaxContentSearchSize || fileutil.IsBinary(data) {
+			continue
+		}
+		out, n, cerr := fileutil.ReplaceAllContent(data, pattern, replacement, opts.CaseSensitive, opts.UseRegex)
+		if cerr != nil {
+			return types.ReplaceResult{}, cerr
+		}
+		if n == 0 {
+			continue
+		}
+		if werr := s.WriteFile(id, p, string(out)); werr != nil {
+			return types.ReplaceResult{}, werr
+		}
+		res.Files++
+		res.Occurrences += n
+	}
+	return res, nil
 }
 
 // ReadFile reads a remote text file for the built-in editor, enforcing a size

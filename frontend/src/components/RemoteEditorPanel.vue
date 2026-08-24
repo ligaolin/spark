@@ -24,8 +24,15 @@
                         <el-button size="small" text title="刷新当前目录" @click="refreshCurrent">
                             <el-icon><Refresh /></el-icon>
                         </el-button>
+                        <el-button size="small" text :class="{ active: showSearch }"
+                            :title="showSearch ? '切回目录树' : '搜索（文件名 / 文件内容）'" @click="toggleSearch">
+                            <el-icon><Search /></el-icon>
+                        </el-button>
                     </div>
-                    <div class="rep-tree-body" @contextmenu.prevent="onBlankContextMenu">
+                    <div v-show="showSearch" class="rep-tree-body rep-search-body">
+                        <SearchPanel ref="searchRef" :backend="backend" @pick="onSearchPick" />
+                    </div>
+                    <div v-show="!showSearch" class="rep-tree-body" @contextmenu.prevent="onBlankContextMenu">
                         <el-tree
                             :key="treeVersion"
                             ref="treeRef"
@@ -121,13 +128,19 @@ import {
     CloseBold,
     DArrowRight,
     CircleClose,
+    Search,
+    Upload,
+    Download,
 } from '@element-plus/icons-vue'
 import CodeEditor from './CodeEditor.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 import ContextMenu from './ContextMenu.vue'
 import type { CtxItem } from './ContextMenu.vue'
+import SearchPanel from './SearchPanel.vue'
 import { showConfirmDialog, showInputDialog } from '../utils/dialog'
 import { useSettingsStore } from '../stores/settings'
+import { LocalService } from '../utils/wails'
+import type { SearchResult } from '../types'
 import { parentDir, joinPath, type FileBackend } from '../utils/fileBackend'
 
 // 两个编辑器组件暴露同一套操作方法
@@ -155,6 +168,8 @@ const settings = useSettingsStore()
 
 const treeRef = ref()
 const treeVersion = ref(0)
+const searchRef = ref<InstanceType<typeof SearchPanel>>()
+const showSearch = ref(false)
 const openFiles = ref<OpenFile[]>([])
 const activeKey = ref<string | null>(null)
 const saving = ref(false)
@@ -190,6 +205,8 @@ const tabCtxIndex = ref(-1)
 
 // FTP 后端没有 chmod 能力（仅 SFTP 提供）
 const canChmod = computed(() => !!props.backend.chmod)
+// 上传 / 下载仅对远程后端有意义（本地文件夹无需）
+const isRemote = computed(() => props.backend.kind === 'remote')
 // 重命名 / 删除 / 改权限：需要一个非根节点的选中项
 const canOperateSelected = computed(
     () => !!selectedNode.value && selectedNode.value.path !== props.rootPath,
@@ -374,6 +391,144 @@ function refreshCurrent() {
         reloadDir(n.isDir ? n.path : parentDir(n.path, props.backend.sep))
     } else {
         refreshRoot()
+    }
+}
+
+// ---------- 内嵌搜索面板（VS Code 式切换，替代弹出式对话框） ----------
+
+// 切换目录树 ↔ 搜索面板；搜索范围取当前选中目录（未选中时用根目录）
+async function toggleSearch() {
+    if (showSearch.value) {
+        showSearch.value = false
+        return
+    }
+    showSearch.value = true
+    await nextTick()
+    searchRef.value?.open(currentDir.value)
+}
+
+function onSearchPick(r: SearchResult) {
+    if (r.isDir) {
+        showSearch.value = false
+        void revealPath(r.path)
+    } else {
+        void openFile({ path: r.path, name: r.name }, r.lineNo)
+    }
+}
+
+// 展开懒加载树直至目标目录（搜索结果双击目录后定位到树中对应节点）
+async function revealPath(path: string) {
+    if (path === props.rootPath) {
+        refreshRoot()
+        return
+    }
+    const chain: string[] = []
+    let cur = path
+    while (cur && cur !== props.rootPath) {
+        chain.unshift(cur)
+        const p = parentDir(cur, props.backend.sep)
+        if (p === cur) break
+        cur = p
+    }
+    const tree = treeRef.value as any
+    const store = tree?.store
+    if (!store) return
+    const expandAt = (i: number) => {
+        if (i >= chain.length) {
+            treeRef.value?.setCurrentKey?.(path)
+            return
+        }
+        const node = store.nodesMap[chain[i]]
+        if (node) {
+            node.expand(() => expandAt(i + 1))
+        }
+    }
+    expandAt(0)
+}
+
+// ---------- 右键上传 / 下载（仅远程后端） ----------
+
+async function pickUploadFiles() {
+    const dir = currentDir.value
+    let files: string[]
+    try {
+        files = (await LocalService.PickFiles()) ?? []
+    } catch (e: any) {
+        ElMessage.error(`选择文件失败：${e?.message || e}`)
+        return
+    }
+    if (!files.length) return
+    let ok = 0
+    const failed: string[] = []
+    for (const f of files) {
+        const target = joinPath(dir, basename(f), props.backend.sep)
+        try {
+            await props.backend.upload(f, target)
+            ok++
+        } catch (e: any) {
+            failed.push(basename(f))
+            ElMessage.error(`上传 ${basename(f)} 失败：${e?.message || e}`)
+        }
+    }
+    if (failed.length === 0) ElMessage.success(`已上传 ${ok} 项到 ${dir}`)
+    await reloadDir(dir)
+}
+
+async function pickUploadDir() {
+    const dir = currentDir.value
+    let local: string
+    try {
+        local = (await LocalService.PickDirectory()) || ''
+    } catch (e: any) {
+        ElMessage.error(`选择目录失败：${e?.message || e}`)
+        return
+    }
+    if (!local) return
+    const name = basename(local)
+    const target = joinPath(dir, name, props.backend.sep)
+    try {
+        await props.backend.upload(local, target)
+        ElMessage.success(`已上传目录到 ${dir}`)
+    } catch (e: any) {
+        ElMessage.error(`上传目录失败：${e?.message || e}`)
+    }
+    await reloadDir(dir)
+}
+
+// 选择下载保存目录；取消时回退到系统下载目录
+async function pickDownloadDir(): Promise<string | null> {
+    try {
+        const dir = await LocalService.PickDirectory()
+        if (dir) return dir
+    } catch (e: any) {
+        ElMessage.error(`选择目录失败：${e?.message || e}`)
+    }
+    try {
+        const def = await LocalService.DefaultDownloadDir()
+        if (def) {
+            ElMessage.info(`未选择保存目录，使用系统下载目录：${def}`)
+            return def
+        }
+    } catch {
+        /* ignore */
+    }
+    return null
+}
+
+async function downloadSelected() {
+    const n = selectedNode.value
+    if (!n || n.path === props.rootPath) {
+        ElMessage.warning('请先选择要下载的文件或目录')
+        return
+    }
+    const dir = await pickDownloadDir()
+    if (!dir) return
+    const target = joinPath(dir, n.name, '/')
+    try {
+        await props.backend.download(n.path, target, n.isDir)
+        ElMessage.success(`已下载到 ${target}`)
+    } catch (e: any) {
+        ElMessage.error(`下载失败：${e?.message || e}`)
     }
 }
 
@@ -602,6 +757,18 @@ function buildMenu(data: TreeNode | null): (CtxItem | 'divider')[] {
         { key: 'mkdir', label: '新建目录', icon: FolderAdd },
         'divider',
     ]
+    if (isRemote.value) {
+        items.push({ key: 'upload-files', label: '上传文件…', icon: Upload })
+        items.push({ key: 'upload-dir', label: '上传目录…', icon: FolderAdd })
+        if (!isRoot) {
+            items.push({
+                key: 'download-entry',
+                label: data.isDir ? '下载目录（含全部内容）' : '下载',
+                icon: Download,
+            })
+        }
+        items.push('divider')
+    }
     if (!isRoot) {
         if (data.isDir) {
             items.push({ key: 'refresh', label: '刷新', icon: Refresh })
@@ -651,6 +818,15 @@ async function onCtxPick(item: CtxItem) {
             break
         case 'refresh':
             refreshCurrent()
+            break
+        case 'upload-files':
+            await pickUploadFiles()
+            break
+        case 'upload-dir':
+            await pickUploadDir()
+            break
+        case 'download-entry':
+            await downloadSelected()
             break
     }
 }
@@ -878,6 +1054,16 @@ defineExpose({ openPath, confirmClose, hasDirty: () => openFiles.value.some((f) 
     min-height: 0;
     overflow: auto;
     padding: 4px;
+}
+
+.rep-tree-body.rep-search-body {
+    padding: 0;
+    overflow: hidden;
+}
+
+.rep-tree-head :deep(.el-button.active) {
+    color: var(--active-text);
+    background: var(--hover-strong);
 }
 
 .rep-tree-node {

@@ -28,7 +28,8 @@
                     <Refresh />
                 </el-icon>
             </el-button>
-            <el-button size="small" text @click="openSearch" title="搜索（文件名 / 文件内容）">
+            <el-button size="small" text :class="{ active: showSearch }" :title="showSearch ? '切回文件列表' : '搜索（文件名 / 文件内容）'"
+                @click="toggleSearch">
                 <el-icon>
                     <Search />
                 </el-icon>
@@ -68,7 +69,10 @@
                 @blur="pathInput = currentPath" :placeholder="placeholder" />
         </div>
 
-        <div ref="tableWrapRef" class="table-wrap file-table" @mousedown="onTableMouseDown">
+        <div v-show="showSearch" class="table-wrap search-wrap">
+            <SearchPanel ref="searchRef" :backend="backend" @pick="onSearchPick" />
+        </div>
+        <div v-show="!showSearch" ref="tableWrapRef" class="table-wrap file-table" @mousedown="onTableMouseDown">
             <el-table :data="entries" height="100%" size="small" :highlight-current-row="!multiSelect"
                 :row-class-name="rowClassName" @current-change="onSelect" @row-click="onRowClick"
                 @row-dblclick="onDblClick" @row-contextmenu="onRowContext" empty-text="空目录">
@@ -125,13 +129,11 @@
 
         <!-- 弹出式文本编辑器：仅非文档式（dockEditor=false）时使用 -->
         <TextEditor v-if="!props.dockEditor" ref="editorRef" />
-        <!-- 搜索：文件名 / 文件内容，递归搜索 -->
-        <SearchDialog ref="searchRef" :backend="backend" @pick="onSearchPick" />
     </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
     Top,
@@ -156,7 +158,7 @@ import {
 import ContextMenu from './ContextMenu.vue'
 import type { CtxItem } from './ContextMenu.vue'
 import TextEditor from './TextEditor.vue'
-import SearchDialog from './SearchDialog.vue'
+import SearchPanel from './SearchPanel.vue'
 import { FavoriteService, makeFavorite } from '../utils/wails'
 import type { Favorite } from '../utils/wails'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
@@ -270,7 +272,8 @@ const rootRef = ref<HTMLElement>()
 
 // 编辑器 / 搜索
 const editorRef = ref<InstanceType<typeof TextEditor>>()
-const searchRef = ref<InstanceType<typeof SearchDialog>>()
+const searchRef = ref<InstanceType<typeof SearchPanel>>()
+const showSearch = ref(false)
 
 function openEditor(file: { path: string; name: string }, lineNo?: number) {
     if (props.dockEditor) {
@@ -283,7 +286,12 @@ function openEditor(file: { path: string; name: string }, lineNo?: number) {
     editorRef.value?.open(props.backend, file, lineNo)
 }
 
-async function openSearch() {
+// 切换内嵌搜索面板：再次点击切回文件列表（VS Code 式），不再弹窗
+async function toggleSearch() {
+    if (showSearch.value) {
+        showSearch.value = false
+        return
+    }
     if (props.backend.kind === 'remote' && props.connected === false) {
         ElMessage.warning('请先连接远程服务器')
         return
@@ -300,11 +308,14 @@ async function openSearch() {
         ElMessage.warning('请先进入目录')
         return
     }
+    showSearch.value = true
+    await nextTick()
     searchRef.value?.open(dir)
 }
 
 function onSearchPick(r: SearchResult) {
     if (r.isDir) {
+        showSearch.value = false
         void cd(r.path)
     } else {
         openEditor({ path: r.path, name: r.name }, r.lineNo)
@@ -1255,6 +1266,16 @@ onBeforeUnmount(() => {
     position: relative;
     /* 底部留出空白：列表滚到底时仍有空隙可起手框选（拖选） */
     padding: 20px;
+}
+
+/* 内嵌搜索面板占据整个文件区，去掉文件列表为框选预留的内边距 */
+.table-wrap.search-wrap {
+    padding: 0;
+}
+
+.path-bar :deep(.el-button.active) {
+    color: var(--active-text);
+    background: var(--hover-strong);
 }
 
 .box-select-overlay {

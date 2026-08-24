@@ -11,13 +11,13 @@ export interface ShortcutAction {
 
 // 快捷键默认值；用户修改后覆盖保存到数据库（shortcut.<id>）
 export const SHORTCUT_DEFAULTS: ShortcutAction[] = [
-  { id: 'nav.connections', label: '打开连接管理', hint: '切换到连接管理页', defaultKey: 'Ctrl+1', key: 'Ctrl+1' },
-  { id: 'nav.terminal', label: '打开 SSH 终端', hint: '切换到 SSH 终端页', defaultKey: 'Ctrl+2', key: 'Ctrl+2' },
-  { id: 'nav.sftp', label: '打开 SFTP 面板', hint: '在 SSH 终端右侧打开 SFTP 文件面板', defaultKey: 'Ctrl+3', key: 'Ctrl+3' },
+  { id: 'nav.local-terminal', label: '打开本地终端', hint: '切换到本地终端页（安卓端不可用）', defaultKey: 'Ctrl+1', key: 'Ctrl+1' },
+  { id: 'nav.connections', label: '打开连接管理', hint: '切换到连接管理页', defaultKey: 'Ctrl+2', key: 'Ctrl+2' },
+  { id: 'nav.terminal', label: '打开 SSH 终端', hint: '切换到 SSH 终端页', defaultKey: 'Ctrl+3', key: 'Ctrl+3' },
   { id: 'nav.ftp', label: '打开 FTP 文件', hint: '切换到 FTP 文件页', defaultKey: 'Ctrl+4', key: 'Ctrl+4' },
   { id: 'nav.documents', label: '打开文档管理', hint: '切换到文档管理页', defaultKey: 'Ctrl+5', key: 'Ctrl+5' },
   { id: 'nav.sites', label: '打开站点管理', hint: '切换到站点管理页', defaultKey: 'Ctrl+6', key: 'Ctrl+6' },
-  { id: 'nav.local-terminal', label: '打开本地终端', hint: '切换到本地终端页（安卓端不可用）', defaultKey: 'Ctrl+7', key: 'Ctrl+7' },
+  { id: 'nav.editor', label: '打开编辑器', hint: '切换到编辑器页', defaultKey: 'Ctrl+7', key: 'Ctrl+7' },
   { id: 'terminal.new', label: '新建 SSH 会话', hint: '跳转终端页并打开新建会话对话框', defaultKey: 'Ctrl+T', key: 'Ctrl+T' },
   { id: 'terminal.close', label: '关闭当前终端标签', hint: '关闭当前活动标签', defaultKey: 'Ctrl+W', key: 'Ctrl+W' },
   { id: 'panel.toggle', label: '开关终端信息面板', hint: '展开/收起右侧信息面板', defaultKey: 'Ctrl+B', key: 'Ctrl+B' },

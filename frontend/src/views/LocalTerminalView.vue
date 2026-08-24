@@ -17,8 +17,8 @@
         <p>还没有本地终端</p>
         <div class="empty-actions">
           <el-select v-model="shellChoice" size="default" style="width: 180px">
-            <el-option label="默认（cmd.exe）" value="" />
-            <el-option label="PowerShell" value="powershell" />
+            <el-option label="PowerShell（默认）" value="" />
+            <el-option label="cmd.exe" value="cmd" />
           </el-select>
           <el-button type="primary" @click="newTerminal">新建本地终端</el-button>
         </div>
@@ -38,8 +38,8 @@
           </div>
           <el-select v-model="shellChoice" size="small" class="tab-shell-select"
             title="新终端的 shell">
-            <el-option label="cmd.exe" value="" />
-            <el-option label="PowerShell" value="powershell" />
+            <el-option label="PowerShell（默认）" value="" />
+            <el-option label="cmd.exe" value="cmd" />
           </el-select>
           <div class="tab-add" title="新建本地终端" @click="newTerminal">
             <el-icon>
@@ -78,11 +78,13 @@ const tabCtxItems = ref<(CtxItem | 'divider')[]>([])
 const tabCtxTab = ref<LocalTerminalTab | null>(null)
 const tabCtxIndex = ref(-1)
 
-// 新建终端使用的 shell（'' = 平台默认，Windows 为 cmd.exe）
+// 新建终端使用的 shell（'' = 平台默认，Windows 为 PowerShell）
 const shellChoice = ref('')
 
 function shellLabel(shell: string): string {
-  return shell === 'powershell' ? 'PowerShell' : shell || 'cmd'
+  if (shell === 'powershell') return 'PowerShell'
+  if (shell === 'cmd') return 'cmd.exe'
+  return shell || 'PowerShell'
 }
 
 function newTerminal() {

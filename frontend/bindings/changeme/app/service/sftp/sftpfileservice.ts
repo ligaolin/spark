@@ -88,11 +88,20 @@ export function Rename(id: string, oldPath: string, newPath: string): $Cancellab
 }
 
 /**
- * Search walks a remote directory recursively and returns filename matches
- * (mode "name") or content matches (mode "content").
+ * Replace replaces every content match of pattern in files under dir,
+ * returning how many files and occurrences were changed.
  */
-export function Search(id: string, dir: string, pattern: string, mode: string): $CancellablePromise<types$0.SearchResult[] | null> {
-    return $Call.ByID(2768692821, id, dir, pattern, mode);
+export function Replace(id: string, dir: string, pattern: string, replacement: string, mode: string, opts: types$0.SearchOptions): $CancellablePromise<types$0.ReplaceResult> {
+    return $Call.ByID(2034973415, id, dir, pattern, replacement, mode, opts);
+}
+
+/**
+ * Search walks a remote directory recursively and returns filename matches
+ * (mode "name") or content matches (mode "content"). opts controls case
+ * sensitivity and regex (content only).
+ */
+export function Search(id: string, dir: string, pattern: string, mode: string, opts: types$0.SearchOptions): $CancellablePromise<types$0.SearchResult[] | null> {
+    return $Call.ByID(2768692821, id, dir, pattern, mode, opts);
 }
 
 /**

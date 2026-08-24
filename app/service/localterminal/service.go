@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 
@@ -42,8 +43,8 @@ func (t *LocalTerminalService) ServiceName() string { return "LocalTerminalServi
 
 // Create spawns a local shell attached to a pseudo-terminal and returns a
 // new session id. shell 为空时使用平台默认 shell；可传 "powershell" 等覆盖。
-// rows / cols 为终端初始尺寸。
-func (t *LocalTerminalService) Create(shell string, rows, cols int) (string, error) {
+// dir 为终端起始目录（空时回退用户主目录）。rows / cols 为终端初始尺寸。
+func (t *LocalTerminalService) Create(shell, dir string, rows, cols int) (string, error) {
 	if strings.TrimSpace(shell) == "" {
 		shell = platformDefaultShell()
 	}
@@ -67,7 +68,7 @@ func (t *LocalTerminalService) Create(shell string, rows, cols int) (string, err
 	}
 
 	cmd := p.Command(shell, platformShellArgs(shell)...)
-	cmd.Dir = platformHomeDir()
+	cmd.Dir = resolveStartDir(dir)
 	if err := cmd.Start(); err != nil {
 		p.Close()
 		return "", fmt.Errorf("启动本地 shell 失败: %w", err)
@@ -121,6 +122,17 @@ func (t *LocalTerminalService) Disconnect(id string) error {
 func (t *LocalTerminalService) IsRunning(id string) bool {
 	s := t.get(id)
 	return s != nil && !s.isClosed()
+}
+
+// resolveStartDir 校验并返回本地终端的起始目录；为空或不是目录时回退到用户主目录。
+func resolveStartDir(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if dir != "" {
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			return dir
+		}
+	}
+	return platformHomeDir()
 }
 
 // readLoop 读取伪终端输出并转发给前端。

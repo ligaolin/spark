@@ -51,7 +51,7 @@
 import { computed, onBeforeUnmount, onMounted } from 'vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { useRoute, useRouter } from 'vue-router'
-import { Window } from '@wailsio/runtime'
+import { Window, Events } from '@wailsio/runtime'
 import {
     Monitor,
     Connection,
@@ -68,6 +68,10 @@ import DialogHost from './components/DialogHost.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import { useShortcutsStore, eventToCombo } from './stores/shortcuts'
 import { useSettingsStore } from './stores/settings'
+import { useLocalTerminalStore } from './stores/localTerminal'
+import { openDirInEditor, openFileInEditor } from './stores/remoteEditor'
+import { makeLocalBackend, parentDir } from './utils/fileBackend'
+import { ShellMenuService } from './utils/wails'
 import { applyTheme, cacheTheme } from './utils/theme'
 import { emit } from './utils/bus'
 import { isAndroidApp } from './utils/platform'
@@ -89,6 +93,25 @@ async function toggleTheme() {
         const next: 'dark' | 'light' = isDark.value ? 'light' : 'dark'
         applyTheme(next)
         cacheTheme(next)
+    }
+}
+
+// 系统右键菜单 / 二次启动：打开本地终端（在指定目录）或编辑器（打开文件夹 / 文件）
+async function handleLaunchRequest(req: { kind: string; path: string; isDir: boolean } | null) {
+    if (!req || !req.path) return
+    if (req.kind === 'terminal') {
+        const store = useLocalTerminalStore()
+        const dir = req.isDir ? req.path : parentDir(req.path, '/')
+        store.addTab('', dir)
+        await router.push('/local-terminal')
+    } else if (req.kind === 'editor') {
+        const backend = makeLocalBackend()
+        if (req.isDir) {
+            openDirInEditor(backend, req.path)
+        } else {
+            openFileInEditor(backend, { path: req.path })
+        }
+        await router.push('/remote-editor')
     }
 }
 
@@ -124,10 +147,6 @@ function onKeyDown(e: KeyboardEvent) {
         case 'nav.terminal':
             router.push('/terminal')
             break
-        case 'nav.sftp':
-            router.push('/terminal')
-            emit('terminal:show-sftp')
-            break
         case 'nav.ftp':
             router.push('/ftp')
             break
@@ -136,6 +155,9 @@ function onKeyDown(e: KeyboardEvent) {
             break
         case 'nav.sites':
             router.push('/sites')
+            break
+        case 'nav.editor':
+            router.push('/remote-editor')
             break
         case 'nav.local-terminal':
             router.push('/local-terminal')
@@ -164,6 +186,13 @@ onMounted(() => {
         cacheTheme(settings.theme)
     })
     window.addEventListener('keydown', onKeyDown)
+    // 系统右键菜单打开：订阅二次启动事件，并取走首次启动暂存的请求
+    Events.On('app:open', (evt: any) => {
+        void handleLaunchRequest(evt?.data)
+    })
+    ShellMenuService.Consume()
+        .then((req) => handleLaunchRequest(req))
+        .catch(() => undefined)
     // 启动后延迟检查 GitHub 新版本：有新版时弹窗提示可点击下载更新。
     // 桌面端自动替换二进制并重启；安卓端下载 APK 后调起系统安装器。
     setTimeout(() => {

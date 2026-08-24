@@ -11,6 +11,8 @@ export type {
     NetRoute,
     NetworkInfo,
     ProcessInfo,
+    ReplaceResult,
+    SearchOptions,
     SearchResult,
     ServerInfo,
     SessionClosed,

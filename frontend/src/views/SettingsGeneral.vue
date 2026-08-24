@@ -103,6 +103,24 @@
 
     <div class="cfg-row">
       <div class="cfg-info">
+        <div class="cfg-label">搜索排除</div>
+        <div class="cfg-desc">
+          文件搜索（本地 / SFTP / FTP）默认排除的 glob 模式，逗号或换行分隔，如
+          <span class="mono-inline">node_modules, dist, *.log</span>。
+          搜索面板里填写的排除项会与这里叠加生效；排除目录会跳过整个子树。保存后立即生效
+        </div>
+      </div>
+      <div class="cfg-ctrl">
+        <el-input v-model="searchExcludeVal" size="small" style="width: 260px"
+          placeholder="node_modules, dist, *.log" clearable type="textarea" autosize />
+        <el-button size="small" type="primary" :loading="savingSearchExclude" @click="saveSearchExclude">
+          保存
+        </el-button>
+      </div>
+    </div>
+
+    <div class="cfg-row">
+      <div class="cfg-info">
         <div class="cfg-label">点击窗口关闭按钮时</div>
         <div class="cfg-desc">
           「缩小到托盘」会把窗口隐藏到任务栏右下角的托盘区，程序继续在后台运行（连接保持不断）；
@@ -149,6 +167,7 @@ const fontVal = ref(13)
 const wordWrapVal = ref(true)
 const wordSepVal = ref('')
 const treeFollowVal = ref(true)
+const searchExcludeVal = ref('')
 const closeActionVal = ref<'minimize' | 'exit'>('minimize')
 const autoStartVal = ref(false)
 const savingKeepalive = ref(false)
@@ -158,6 +177,7 @@ const savingFont = ref(false)
 const savingWordWrap = ref(false)
 const savingWordSep = ref(false)
 const savingTreeFollow = ref(false)
+const savingSearchExclude = ref(false)
 const savingCloseAction = ref(false)
 const savingAutoStart = ref(false)
 
@@ -170,6 +190,7 @@ onMounted(async () => {
   wordWrapVal.value = settings.editorWordWrap
   wordSepVal.value = settings.editorWordSeparators
   treeFollowVal.value = settings.editorTreeFollow
+  searchExcludeVal.value = settings.searchExclude
   closeActionVal.value = settings.windowCloseAction
   autoStartVal.value = await SettingsService.IsAutoStart()
 })
@@ -269,6 +290,18 @@ async function saveTreeFollow() {
     ElMessage.error(`保存失败：${e?.message || e}`)
   } finally {
     savingTreeFollow.value = false
+  }
+}
+
+async function saveSearchExclude() {
+  savingSearchExclude.value = true
+  try {
+    await settings.set('search.exclude', searchExcludeVal.value.trim())
+    ElMessage.success('已保存（搜索立即生效）')
+  } catch (e: any) {
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  } finally {
+    savingSearchExclude.value = false
   }
 }
 

@@ -46,6 +46,10 @@ export const useSettingsStore = defineStore('settings', {
     editorTreeFollow(state): boolean {
       return state.values['editor.treeFollow'] !== '0'
     },
+    // 文件搜索默认排除的 glob（逗号/换行分隔，与搜索面板内填写的排除项叠加）
+    searchExclude(state): string {
+      return state.values['search.exclude'] ?? ''
+    },
     // 明暗主题（默认暗色，保持现有行为）
     theme(state): Theme {
       return state.values['app.theme'] === 'light' ? 'light' : 'dark'
