@@ -17,7 +17,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { MdEditor } from 'md-editor-v3'
 import type { ToolbarNames } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
@@ -95,17 +95,6 @@ watch(
 function onChange(v: string) {
   emit('change', v)
 }
-
-// Ctrl+S 兜底（编辑器焦点在内容区时快捷键可能被编辑器接管）
-function onKeydown(e: KeyboardEvent) {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-    e.preventDefault()
-    emit('save')
-  }
-}
-
-onMounted(() => window.addEventListener('keydown', onKeydown, true))
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true))
 
 defineExpose({ setContent, getContent, focus, jumpToLine, setReadonly: (v: boolean) => (readonly.value = v) })
 </script>
