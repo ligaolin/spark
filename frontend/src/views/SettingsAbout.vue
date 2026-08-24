@@ -5,7 +5,7 @@
     <div class="about-version">版本 {{ version }}</div>
     <div class="about-desc">
       SSH 终端 / SFTP / FTP 桌面终端，基于 Wails v3 + Vue3 + xterm.js。
-      功能：多标签 SSH 终端、双栏文件管理（拖拽 / 右键菜单 / 断点续传 / 目录收藏）、
+      功能：多标签 SSH 终端、文件管理（拖拽 / 右键菜单 / 断点续传 / 目录收藏）、
       服务器信息、进程管理、自定义命令、连接保活、凭据加密。
     </div>
     <div class="about-links">
