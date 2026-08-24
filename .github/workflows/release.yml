@@ -181,3 +181,31 @@ jobs:
           name: Spark ${{ github.ref_name }}
           draft: false
           prerelease: false
+
+  checksums:
+    name: Checksums (SHA256)
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-linux, build-macos]
+    steps:
+      - name: Download all release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --dir dist \
+            --clobber
+
+      - name: Generate checksums.txt
+        run: |
+          cd dist
+          sha256sum * | grep -v 'checksums\.txt$' | sort -k2 > ../checksums.txt
+          cat ../checksums.txt
+
+      - name: Upload checksums.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.ref_name }}" checksums.txt \
+            --repo "${{ github.repository }}" \
+            --clobber
