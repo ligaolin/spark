@@ -12,7 +12,7 @@
                         <el-button size="small" text title="新建目录" @click="mkdir">
                             <el-icon><FolderAdd /></el-icon>
                         </el-button>
-                        <el-button size="small" text title="重命名" :disabled="!canOperateSelected" @click="renameNode">
+                        <!-- <el-button size="small" text title="重命名" :disabled="!canOperateSelected" @click="renameNode">
                             <el-icon><Edit /></el-icon>
                         </el-button>
                         <el-button size="small" text title="删除" :disabled="!canOperateSelected" @click="removeNode">
@@ -20,7 +20,7 @@
                         </el-button>
                         <el-button v-if="canChmod" size="small" text title="修改权限" :disabled="!canOperateSelected" @click="chmodNode">
                             <el-icon><Lock /></el-icon>
-                        </el-button>
+                        </el-button> -->
                         <el-button size="small" text title="刷新当前目录" @click="refreshCurrent">
                             <el-icon><Refresh /></el-icon>
                         </el-button>
