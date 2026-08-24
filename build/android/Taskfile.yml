@@ -54,6 +54,9 @@ tasks:
       - task: compile:go:shared
         vars:
           ARCH: '{{.ARCH | default .HOST_ARCH}}'
+          # 必须显式传 PRODUCTION：go-task 的 cmds 子任务不会继承父任务 vars，
+          # 不传会导致 compile:go:shared 走 debug 分支（无 -X 版本注入 → 版本恒为 "dev"）
+          PRODUCTION: '{{.PRODUCTION | default "false"}}'
     vars:
       BUILD_FLAGS: '{{if eq .PRODUCTION "true"}}-tags production,android -trimpath -buildvcs=false -ldflags="-w -s"{{else}}-tags android,debug -buildvcs=false -gcflags=all="-l"{{end}}'
     env:

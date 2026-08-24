@@ -86,6 +86,23 @@
 
     <div class="cfg-row">
       <div class="cfg-info">
+        <div class="cfg-label">编辑器切换标签自动定位文件</div>
+        <div class="cfg-desc">
+          在编辑器（本地文件夹 / SFTP / FTP 用编辑器打开目录）里切换已打开文件的标签时，
+          左侧文件树自动展开所在目录、选中并滚动到该文件；关闭后仅切换标签不移动树。
+          保存后立即生效
+        </div>
+      </div>
+      <div class="cfg-ctrl">
+        <el-switch v-model="treeFollowVal" />
+        <el-button size="small" type="primary" :loading="savingTreeFollow" @click="saveTreeFollow">
+          保存
+        </el-button>
+      </div>
+    </div>
+
+    <div class="cfg-row">
+      <div class="cfg-info">
         <div class="cfg-label">点击窗口关闭按钮时</div>
         <div class="cfg-desc">
           「缩小到托盘」会把窗口隐藏到任务栏右下角的托盘区，程序继续在后台运行（连接保持不断）；
@@ -131,6 +148,7 @@ const networkVal = ref(5)
 const fontVal = ref(13)
 const wordWrapVal = ref(true)
 const wordSepVal = ref('')
+const treeFollowVal = ref(true)
 const closeActionVal = ref<'minimize' | 'exit'>('minimize')
 const autoStartVal = ref(false)
 const savingKeepalive = ref(false)
@@ -139,6 +157,7 @@ const savingNetwork = ref(false)
 const savingFont = ref(false)
 const savingWordWrap = ref(false)
 const savingWordSep = ref(false)
+const savingTreeFollow = ref(false)
 const savingCloseAction = ref(false)
 const savingAutoStart = ref(false)
 
@@ -150,6 +169,7 @@ onMounted(async () => {
   fontVal.value = settings.terminalFontSize
   wordWrapVal.value = settings.editorWordWrap
   wordSepVal.value = settings.editorWordSeparators
+  treeFollowVal.value = settings.editorTreeFollow
   closeActionVal.value = settings.windowCloseAction
   autoStartVal.value = await SettingsService.IsAutoStart()
 })
@@ -237,6 +257,18 @@ async function saveWordSep() {
     ElMessage.error(`保存失败：${e?.message || e}`)
   } finally {
     savingWordSep.value = false
+  }
+}
+
+async function saveTreeFollow() {
+  savingTreeFollow.value = true
+  try {
+    await settings.set('editor.treeFollow', treeFollowVal.value ? '1' : '0')
+    ElMessage.success(treeFollowVal.value ? '已保存：切换标签将自动定位文件' : '已保存：切换标签不再定位文件')
+  } catch (e: any) {
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  } finally {
+    savingTreeFollow.value = false
   }
 }
 

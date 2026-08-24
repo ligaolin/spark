@@ -36,8 +36,11 @@
                             :load="loadNode"
                             highlight-current
                             :expand-on-click-node="true"
+                            draggable
+                            :allow-drop="allowDrop"
                             @node-click="onNodeClick"
                             @node-contextmenu="onNodeContextMenu"
+                            @node-drop="onNodeDrop"
                         >
                             <template #default="{ data }">
                                 <span class="rep-tree-node">
@@ -102,7 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
     Folder,
@@ -233,14 +236,20 @@ async function loadNode(node: any, resolve: (children: any[]) => void) {
     }
     try {
         const list = await props.backend.list(node.data.path)
-        const children = (list ?? []).map((e) => ({
-            path: e.path,
-            name: e.name,
-            isDir: e.isDir,
-            // 关键：懒加载树用 isLeaf 判断叶子节点（且 el-tree 的 props 必须显式
-            // 配置 isLeaf: 'isLeaf'，否则默认不读该字段，文件仍会被当成目录）
-            isLeaf: !e.isDir,
-        }))
+        const children = (list ?? [])
+            .map((e) => ({
+                path: e.path,
+                name: e.name,
+                isDir: e.isDir,
+                // 关键：懒加载树用 isLeaf 判断叶子节点（且 el-tree 的 props 必须显式
+                // 配置 isLeaf: 'isLeaf'，否则默认不读该字段，文件仍会被当成目录）
+                isLeaf: !e.isDir,
+            }))
+            // 目录归目录放前面、文件归文件放后面，各自按名称排序（自然排序：file2 < file10）
+            .sort((a, b) => {
+                if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+                return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+            })
         resolve(children)
     } catch (e: any) {
         ElMessage.error(`加载目录失败：${e?.message || e}`)
@@ -274,6 +283,76 @@ function onNodeClick(data: any) {
         void openFile({ path: data.path, name: data.name })
     }
 }
+
+// ---------- 标签切换自动定位（设置 editor.treeFollow 控制） ----------
+// 切换已打开文件的标签时，左侧文件树自动展开所在目录、选中并滚动到该文件。
+
+// 等待某个路径的树节点出现（懒加载目录展开后子节点异步填充）
+function waitForNode(path: string, timeoutMs = 4000): Promise<any> {
+    const tree = treeRef.value as any
+    const t0 = Date.now()
+    return new Promise((resolve) => {
+        const tick = () => {
+            const n = tree?.store?.nodesMap?.[path]
+            if (n) return resolve(n)
+            if (Date.now() - t0 > timeoutMs) return resolve(null)
+            setTimeout(tick, 60)
+        }
+        tick()
+    })
+}
+
+// 在懒加载树中定位并选中某个文件：逐级展开祖先目录，最后高亮 + 滚动到可见区域。
+// 目录未加载时强制展开触发 loadNode，等子节点出现后再继续下钻（尽力而为，失败静默）。
+async function revealInTree(path: string) {
+    const tree = treeRef.value as any
+    if (!tree) return
+    const root = tree.store?.nodesMap?.[props.rootPath]
+    if (root && !root.expanded) root.expand()
+    let rel = path
+    if (path === props.rootPath) {
+        return
+    }
+    if (path.startsWith(props.rootPath + '/') || path.startsWith(props.rootPath + '\\')) {
+        rel = path.slice(props.rootPath.length)
+    }
+    rel = rel.replace(/^[\\/]+/, '')
+    if (!rel) return
+    const sep = path.includes('/') ? '/' : path.includes('\\') ? '\\' : props.backend.sep
+    const segs = rel.split(/[\\/]/).filter(Boolean)
+    let cur = props.rootPath
+    for (let i = 0; i < segs.length; i++) {
+        const childPath = joinPath(cur, segs[i], sep)
+        let node = tree.store?.nodesMap?.[childPath]
+        if (!node) {
+            // 父目录尚未加载/展开：调用 expand()（未加载时会触发懒加载，子节点异步填充）
+            const parent = tree.store?.nodesMap?.[cur]
+            if (parent && !parent.expanded) parent.expand()
+            node = await waitForNode(childPath)
+            if (!node) return // 超时或加载失败，放弃定位（不打扰用户）
+        }
+        if (i === segs.length - 1) {
+            tree.setCurrentKey(childPath)
+            selectedNode.value = {
+                path: childPath,
+                name: node.data?.name ?? segs[i],
+                isDir: node.data?.isDir ?? false,
+            }
+            const current = tree.$el?.querySelector?.('.el-tree-node.is-current')
+            current?.scrollIntoView?.({ block: 'nearest' })
+            return
+        }
+        if (node.data?.isDir && !node.expanded) node.expand()
+        cur = childPath
+    }
+}
+
+watch(activeKey, (key) => {
+    if (!key || !settings.editorTreeFollow) return
+    const f = openFiles.value.find((x) => x.key === key)
+    if (!f) return
+    void revealInTree(f.path)
+})
 
 // 重新加载某个目录节点的子级（懒加载树）。节点不在当前已加载集合中时，
 // 回退为整体刷新（重新挂树并展开根目录）。
@@ -433,6 +512,75 @@ async function chmodNode() {
         await reloadDir(parentDir(n.path, props.backend.sep))
     } catch (e: any) {
         ElMessage.error(`修改权限失败：${e?.message || e}`)
+    }
+}
+
+// ---------- 目录树拖拽移动（文件 / 目录拖到其他文件夹） ----------
+
+// 仅允许「拖入文件夹内部」（inner）；不允许插到同级节点前后，也不允许把目录拖进自己的子孙目录。
+function allowDrop(dragging: any, drop: any, type: string): boolean {
+    if (type !== 'inner') return false
+    const src = dragging?.data as TreeNode | undefined
+    const dst = drop?.data as TreeNode | undefined
+    if (!src || !dst || !dst.isDir) return false
+    if (src.path === dst.path) return false
+    if (src.isDir) {
+        const sep = src.path.includes('/') ? '/' : '\\'
+        if (dst.path.startsWith(src.path + sep)) return false // 拖进自己的子目录 = 循环移动
+    }
+    return true
+}
+
+// 拖拽完成：把条目 rename 到目标目录（本地 / SFTP / FTP 的 rename 均为路径级移动）。
+// 同步更新已打开标签的路径（被移动的文件本身，或位于被移动目录内的文件），并刷新源 / 目标目录。
+async function onNodeDrop(dragging: any, drop: any, dropType: string) {
+    if (dropType !== 'inner') return
+    const src = dragging.data as TreeNode
+    const dst = drop.data as TreeNode
+    if (!src || !dst || src.path === dst.path) return
+    const target = joinPath(dst.path, src.name, props.backend.sep)
+    if (target === src.path) return
+    if (await nameExists(dst.path, src.name)) {
+        ElMessage.warning(`目标目录已存在同名「${src.name}」`)
+        return
+    }
+    const srcDir = parentDir(src.path, props.backend.sep)
+    try {
+        await props.backend.rename(src.path, target)
+        updateOpenPaths(src.path, target, src.isDir)
+        if (selectedNode.value?.path === src.path) {
+            selectedNode.value = { path: target, name: src.name, isDir: src.isDir }
+        }
+        ElMessage.success(`已移动到 ${dst.name}`)
+        await reloadDir(srcDir)
+        await reloadDir(dst.path)
+    } catch (e: any) {
+        ElMessage.error(`移动失败：${e?.message || e}`)
+        await reloadDir(srcDir)
+        await reloadDir(dst.path)
+    }
+}
+
+// 移动后同步打开的标签：文件本身被移动 → 直接改 key/path；目录被移动 → 目录内已打开的文件路径一并前移
+function updateOpenPaths(oldPath: string, newPath: string, isDir: boolean) {
+    for (const f of openFiles.value) {
+        let np: string | null = null
+        if (!isDir && f.key === oldPath) {
+            np = newPath
+        } else if (
+            isDir &&
+            (f.key === oldPath || f.key.startsWith(oldPath + '/') || f.key.startsWith(oldPath + '\\'))
+        ) {
+            np = newPath + f.key.slice(oldPath.length)
+        }
+        if (!np) continue
+        const oldKey = f.key
+        editorRefs.value[np] = editorRefs.value[oldKey]
+        delete editorRefs.value[oldKey]
+        f.key = np
+        f.path = np
+        f.name = basename(np)
+        if (activeKey.value === oldKey) activeKey.value = np
     }
 }
 

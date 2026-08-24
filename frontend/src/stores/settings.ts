@@ -42,6 +42,10 @@ export const useSettingsStore = defineStore('settings', {
     editorWordSeparators(state): string {
       return state.values['editor.wordSeparators'] ?? ''
     },
+    // 编辑器切换标签时，是否在左侧文件树自动展开并选中、滚动到对应文件（默认开启）
+    editorTreeFollow(state): boolean {
+      return state.values['editor.treeFollow'] !== '0'
+    },
     // 明暗主题（默认暗色，保持现有行为）
     theme(state): Theme {
       return state.values['app.theme'] === 'light' ? 'light' : 'dark'

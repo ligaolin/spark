@@ -75,12 +75,23 @@ jobs:
       - name: Set version
         run: |
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            # 标签发布：版本 = 去掉 v 前缀的标签名，versionCode 按主.次.修订派生（单调递增）
             VERSION="${GITHUB_REF_NAME#v}"
+            MAJOR="${VERSION%%.*}"; REST="${VERSION#*.}"; MINOR="${REST%%.*}"
+            PATCH="${REST#*.}"; PATCH="${PATCH%%[^0-9]*}"
+            [ -z "$PATCH" ] && PATCH=0
+            VERSION_CODE=$((MAJOR * 10000 + MINOR * 100 + PATCH))
           else
-            VERSION="$(git rev-parse --short=7 HEAD)"
+            # 手动触发：用「最近标签-提交数-短哈希」作为版本（合法 semver 预发布号，
+            # 避免 git 短哈希无法比较导致"永远提示有新版本"）
+            VERSION="$(git describe --tags --abbrev=7 2>/dev/null || echo "0.0.0-$(git rev-parse --short=7 HEAD)")"
+            VERSION="${VERSION#v}"
+            VERSION_CODE=1
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
           sed -i "s/versionName \".*\"/versionName \"$VERSION\"/" build/android/app/build.gradle
+          sed -i "s/versionCode [0-9]*/versionCode $VERSION_CODE/" build/android/app/build.gradle
 
       - name: Decode signing keystore (optional)
         if: env.ANDROID_KEYSTORE_BASE64 != ''
