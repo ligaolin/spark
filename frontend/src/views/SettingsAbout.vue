@@ -1,6 +1,6 @@
 <template>
   <div class="about-card">
-    <div class="about-logo">⚡</div>
+    <img class="about-logo" :src="logoUrl" alt="Spark" />
     <div class="about-name">Spark 终端</div>
     <div class="about-version">版本 {{ version }}</div>
     <div class="about-desc">
@@ -23,6 +23,7 @@
 import { ref, onMounted } from 'vue'
 import { SettingsService } from '../utils/wails'
 import { checkForUpdatesManual } from '../utils/updateCheck'
+import logoUrl from '../assets/logo.png'
 
 const version = ref('dev')
 
@@ -54,7 +55,9 @@ function checkUpdate() {
 }
 
 .about-logo {
-  font-size: 40px;
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
 }
 
 .about-name {

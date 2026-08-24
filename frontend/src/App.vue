@@ -3,7 +3,7 @@
         <div class="app-shell">
             <aside class="sidebar">
                 <div class="brand">
-                    <span class="brand-logo">⚡</span>
+                    <img class="brand-logo" :src="logoUrl" alt="Spark" />
                     <span class="brand-name">Spark</span>
                     <span class="brand-sub">终端</span>
                 </div>
@@ -72,6 +72,7 @@ import { applyTheme, cacheTheme } from './utils/theme'
 import { emit } from './utils/bus'
 import { isAndroidApp } from './utils/platform'
 import { checkForUpdates } from './utils/updateCheck'
+import logoUrl from './assets/logo.png'
 
 const route = useRoute()
 const router = useRouter()
@@ -193,13 +194,17 @@ onBeforeUnmount(() => {
 .brand {
     padding: 18px 16px 14px;
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 8px;
     border-bottom: 1px solid var(--border-color);
 }
 
 .brand-logo {
-    font-size: 18px;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    display: block;
+    flex-shrink: 0;
 }
 
 .brand-name {
