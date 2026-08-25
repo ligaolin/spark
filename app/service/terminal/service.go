@@ -42,6 +42,7 @@ type sshSession struct {
 
 	stopKA chan struct{}
 	kaOnce sync.Once
+	kaWg   sync.WaitGroup
 
 	mu     sync.Mutex
 	closed bool
@@ -106,10 +107,14 @@ func (t *TerminalService) Connect(opts types.ConnectOptions) (string, error) {
 	// 保活：定期发送 SSH keepalive，连接死亡（网络中断/空闲超时被断开）时
 	// 关闭客户端，触发下方 watch 的 terminal:exit 通知前端（间隔可在设置中调整）
 	if ka := settings.GetInt("keepalive.interval", 20); ka > 0 {
-		go sshlib.KeepAliveLoop(s.stopKA, func() error {
-			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
-			return err
-		}, time.Duration(ka)*time.Second, 10*time.Second, 3, func() { s.close() })
+		s.kaWg.Add(1)
+		go func() {
+			defer s.kaWg.Done()
+			sshlib.KeepAliveLoop(s.stopKA, func() error {
+				_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+				return err
+			}, time.Duration(ka)*time.Second, 10*time.Second, 3, func() { s.close() })
+		}()
 	}
 
 	// Merge stdout and stderr into one stream forwarded to the frontend.
@@ -332,7 +337,9 @@ func parsePsAux(out string) []types.ProcessInfo {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 10 {
+		// ps aux 格式: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND
+		// 至少需要 11 个字段（COMMAND 可能包含空格）
+		if len(fields) < 11 {
 			continue
 		}
 		pid, err := strconv.Atoi(fields[1])
@@ -394,12 +401,14 @@ func shQuote(s string) string {
 }
 
 // ServerInfo queries basic server information (OS, CPU, memory, disks).
-// 内置重试机制：首次失败后会等待 800ms 重试一次，提高不稳定网络下的成功率。
+// 内置重试机制：首次失败后会短暂等待重试一次，提高不稳定网络下的成功率。
 func (t *TerminalService) ServerInfo(id string) (*types.ServerInfo, error) {
 	info, err := t.serverInfoOnce(id)
 	if err != nil || isServerInfoEmpty(info) {
 		// 首次失败或拿到空数据，短暂等待后重试一次
-		time.Sleep(800 * time.Millisecond)
+		select {
+		case <-time.After(200 * time.Millisecond):
+		}
 		info2, err2 := t.serverInfoOnce(id)
 		if err2 == nil && !isServerInfoEmpty(info2) {
 			return info2, nil
@@ -685,7 +694,9 @@ const ipListScript = `(ip -o addr show 2>/dev/null || ifconfig 2>/dev/null || ho
 func (t *TerminalService) NetworkInfo(id string) (*types.NetworkInfo, error) {
 	info, err := t.networkInfoOnce(id)
 	if err != nil || isNetworkInfoEmpty(info) {
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-time.After(150 * time.Millisecond):
+		}
 		info2, err2 := t.networkInfoOnce(id)
 		if err2 == nil && !isNetworkInfoEmpty(info2) {
 			return info2, nil
@@ -1214,17 +1225,25 @@ func (w *outputWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (t *TerminalService) ensure() {
+func (t *TerminalService) ensureSessions() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.sessions == nil {
 		t.sessions = make(map[string]*sshSession)
 	}
+}
+
+func (t *TerminalService) ensureTunnels() {
 	t.tunnelMu.Lock()
+	defer t.tunnelMu.Unlock()
 	if t.tunnels == nil {
 		t.tunnels = make(map[string]*sshTunnel)
 	}
-	t.tunnelMu.Unlock()
+}
+
+func (t *TerminalService) ensure() {
+	t.ensureSessions()
+	t.ensureTunnels()
 }
 
 func (t *TerminalService) get(id string) *sshSession {
@@ -1262,5 +1281,6 @@ func (s *sshSession) close() error {
 	s.closed = true
 	s.mu.Unlock()
 	s.kaOnce.Do(func() { close(s.stopKA) })
+	s.kaWg.Wait()
 	return s.client.Close()
 }

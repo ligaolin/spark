@@ -39,6 +39,7 @@ type sftpSession struct {
 
 	stopKA chan struct{}
 	kaOnce sync.Once
+	kaWg   sync.WaitGroup
 }
 
 // ServiceName implements application.ServiceName.
@@ -87,17 +88,21 @@ func (s *SFTPFileService) Connect(opts types.ConnectOptions) (string, error) {
 
 	// 保活：定期发送 SSH keepalive；连接死亡时通知前端并清理会话（间隔可在设置中调整）
 	if ka := settings.GetInt("keepalive.interval", 20); ka > 0 {
-		go sshlib.KeepAliveLoop(sess.stopKA, func() error {
-			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
-			return err
-		}, time.Duration(ka)*time.Second, 10*time.Second, 3, func() {
-			application.Get().Event.Emit("session:closed", types.SessionClosed{
-				SessionID: id,
-				Type:      "sftp",
-				Reason:    "连接已断开",
+		sess.kaWg.Add(1)
+		go func() {
+			defer sess.kaWg.Done()
+			sshlib.KeepAliveLoop(sess.stopKA, func() error {
+				_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+				return err
+			}, time.Duration(ka)*time.Second, 10*time.Second, 3, func() {
+				application.Get().Event.Emit("session:closed", types.SessionClosed{
+					SessionID: id,
+					Type:      "sftp",
+					Reason:    "连接已断开",
+				})
+				_ = s.Disconnect(id)
 			})
-			_ = s.Disconnect(id)
-		})
+		}()
 	}
 
 	// Note: SFTP has no server-side "current directory"; the frontend
@@ -117,6 +122,7 @@ func (s *SFTPFileService) Disconnect(id string) error {
 		return nil
 	}
 	sess.kaOnce.Do(func() { close(sess.stopKA) })
+	sess.kaWg.Wait()
 	_ = sess.sftp.Close()
 	return sess.client.Close()
 }
@@ -549,7 +555,7 @@ func (s *SFTPFileService) downloadFile(cl *sftplib.Client, id, remotePath, local
 	}
 	defer remote.Close()
 
-	if err := os.MkdirAll(path.Dir(localPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 		return err
 	}
 

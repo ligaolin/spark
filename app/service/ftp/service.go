@@ -43,6 +43,7 @@ type ftpSession struct {
 	mu      sync.Mutex
 	stopKA  chan struct{}
 	kaOnce  sync.Once
+	kaWg    sync.WaitGroup
 }
 
 // ServiceName implements application.ServiceName.
@@ -97,20 +98,24 @@ func (s *FTPFileService) Connect(opts types.ConnectOptions) (string, error) {
 	// 保活：定期发送 NOOP，防止服务器空闲超时断开；连接死亡时通知前端并清理（间隔可在设置中调整）
 	// 注意：控制连接忙（列表/传输进行中）时跳过本轮 NOOP，避免与传输并发读写同一连接
 	if ka := settings.GetInt("keepalive.interval", 20); ka > 0 {
-		go sshlib.KeepAliveLoop(sess.stopKA, func() error {
-			if !sess.mu.TryLock() {
-				return nil // 连接正忙，本轮跳过；操作本身也在保活
-			}
-			defer sess.mu.Unlock()
-			return conn.NoOp()
-		}, time.Duration(ka)*time.Second, 10*time.Second, 3, func() {
-			application.Get().Event.Emit("session:closed", types.SessionClosed{
-				SessionID: id,
-				Type:      "ftp",
-				Reason:    "连接已断开",
+		sess.kaWg.Add(1)
+		go func() {
+			defer sess.kaWg.Done()
+			sshlib.KeepAliveLoop(sess.stopKA, func() error {
+				if !sess.mu.TryLock() {
+					return nil // 连接正忙，本轮跳过；操作本身也在保活
+				}
+				defer sess.mu.Unlock()
+				return conn.NoOp()
+			}, time.Duration(ka)*time.Second, 10*time.Second, 3, func() {
+				application.Get().Event.Emit("session:closed", types.SessionClosed{
+					SessionID: id,
+					Type:      "ftp",
+					Reason:    "连接已断开",
+				})
+				_ = s.Disconnect(id)
 			})
-			_ = s.Disconnect(id)
-		})
+		}()
 	}
 
 	if opts.DefaultDir != "" {
@@ -131,6 +136,7 @@ func (s *FTPFileService) Disconnect(id string) error {
 		return nil
 	}
 	sess.kaOnce.Do(func() { close(sess.stopKA) })
+	sess.kaWg.Wait()
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	return sess.conn.Quit()
@@ -561,7 +567,7 @@ func (s *FTPFileService) downloadDir(conn *ftp.ServerConn, id, remoteDir, localD
 }
 
 func (s *FTPFileService) downloadFile(conn *ftp.ServerConn, id, remotePath, localPath string) error {
-	if err := os.MkdirAll(path.Dir(localPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 		return err
 	}
 

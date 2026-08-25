@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
 
 	oracle "github.com/godoes/gorm-oracle"
@@ -15,9 +16,14 @@ import (
 	"gorm.io/gorm"
 )
 
-var db *gorm.DB
+var (
+	db  *gorm.DB
+	mu  sync.RWMutex
+)
 
 func InitDB() (err error) {
+	mu.Lock()
+	defer mu.Unlock()
 	db, err = gorm.Open(sqlite.Open(dataSourcePath()), &gorm.Config{})
 	return err
 }
@@ -40,6 +46,8 @@ func Reconnect(dialect, dsn string) error {
 	if err != nil {
 		return err
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if db != nil {
 		if old, err := db.DB(); err == nil {
 			_ = old.Close()
@@ -96,5 +104,7 @@ func dialectorFor(dialect, dsn string) gorm.Dialector {
 }
 
 func GetDB() *gorm.DB {
+	mu.RLock()
+	defer mu.RUnlock()
 	return db
 }
