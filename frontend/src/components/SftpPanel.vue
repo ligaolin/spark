@@ -51,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Events } from '@wailsio/runtime'
@@ -59,183 +59,292 @@ import { FolderOpened } from '@element-plus/icons-vue'
 import FilePanel from './FilePanel.vue'
 import TransferDock from './TransferDock.vue'
 import { useTransfersStore } from '../stores/transfers'
-import { openDirInEditor, openFileInEditor, closeAllPanels } from '../stores/remoteEditor'
+import { openDirInEditor, openFileInEditor, closePanelsByScope } from '../stores/remoteEditor'
 import { SFTPFileService, EVENTS, LocalService } from '../utils/wails'
 import type { ConnectOptions } from '../utils/wails'
 import type { DropPayload, PanelAction } from '../types'
 import { joinPath, makeSftpBackend, type FileBackend } from '../utils/fileBackend'
 import { resolveHostKeyIssue } from '../utils/hostkey'
-import { te } from 'element-plus/es/locale/index.mjs'
+import { useTerminalStore } from '../stores/terminal'
 
 const props = defineProps<{
     // 当前活动 SSH 标签的连接参数；为空（无标签）时断开并显示引导
     opts: ConnectOptions | null
+    // 当前活动 SSH 标签 key：每个标签各自持有独立的 SFTP 会话
+    tabKey: string
     // 目录收藏键（来源已保存连接 id；快速连接为 0 时不展示收藏）
     favKey?: number
 }>()
 
 const router = useRouter()
 const transfers = useTransfersStore()
+const terminalStore = useTerminalStore()
 const remotePanel = ref<InstanceType<typeof FilePanel>>()
 
-const sessionId = ref('')
-const error = ref('')
+// 每个 SSH 标签一个独立 SFTP 会话 + 后端对象。
+// 关键修复：切换活动标签只切换「当前显示」，旧标签的会话保持存活，
+// 因此远程编辑器里从该标签打开的文件 / 目录板块不会在切换标签时被重置；
+// 只有标签被真正关闭或会话断开时，才会随标签一起清理。
+interface TabSftp {
+    opts: ConnectOptions | null
+    id: string
+    error: string
+    // 递增序号：作废在途的连接结果（标签被关闭 / 有更新的连接请求时）
+    seq: number
+    pending: Promise<void> | null
+    backend: FileBackend | null
+}
+
+const tabs = reactive<Record<string, TabSftp>>({})
+
+function ensureTab(key: string, opts?: ConnectOptions | null) {
+    if (!key) return
+    if (!tabs[key]) {
+        tabs[key] = { opts: opts ?? null, id: '', error: '', seq: 0, pending: null, backend: null }
+    } else if (opts) {
+        tabs[key].opts = opts
+    }
+}
+
+const sessionId = computed(() => {
+    const key = props.tabKey
+    return key && tabs[key] ? tabs[key].id : ''
+})
 const connected = computed(() => !!sessionId.value)
+const error = computed(() => {
+    const key = props.tabKey
+    return key && tabs[key] ? tabs[key].error : ''
+})
 
-// 远程后端：方法在调用时读取 sessionId.value（getter 形式），
-// 连接成功后再调用 goHome 等也能拿到最新会话 id，避免旧后端对象竞态
-const rawBackend = makeSftpBackend(() => sessionId.value)
-
-// ---------- 会话丢失自动重连 ----------
-// 移动端网络不稳时 SFTP 会话可能被保活判定死亡而清理，但前端可能尚未
-// 收到 session:closed；在「会话不存在/已关闭」类错误时自动重连并重试一次。
+// ---------- 会话丢失自动重连（仅针对其所属标签重连） ----------
 
 function isSessionGone(e: any): boolean {
     const m = String(e?.message || e)
     return m.includes('会话') && (m.includes('不存在') || m.includes('已关闭'))
 }
 
-let reconnectPromise: Promise<boolean> | null = null
-let reconnectingNow = false
-async function reconnectAndWait(): Promise<boolean> {
-    if (!props.opts) return false
-    if (reconnectPromise) {
-        // 就是本次重连内部（如 connect 的 goHome）再次触发时直接放弃，
-        // 避免自等待死锁。
-        if (reconnectingNow) return false
-        return reconnectPromise
-    }
-    if (sessionId.value) {
-        SFTPFileService.Disconnect(sessionId.value).catch(() => undefined)
-        sessionId.value = ''
-    }
-    remotePanel.value?.clear()
-    reconnectingNow = true
-    reconnectPromise = connect()
-        .then(() => !!sessionId.value)
-        .finally(() => {
-            reconnectPromise = null
-            reconnectingNow = false
-        })
-    return reconnectPromise
-}
-
-function withReconnect(fn: (...args: any[]) => Promise<any>) {
-    return async (...args: any[]) => {
-        try {
-            return await fn(...args)
-        } catch (e) {
-            if (isSessionGone(e) && (await reconnectAndWait())) {
-                return await fn(...args)
-            }
-            throw e
-        }
-    }
-}
-
-const remoteBackend: FileBackend = {
-    ...rawBackend,
-    home: withReconnect(rawBackend.home),
-    list: withReconnect(rawBackend.list),
-    mkdir: withReconnect(rawBackend.mkdir),
-    rename: withReconnect(rawBackend.rename),
-    remove: withReconnect(rawBackend.remove),
-    chmod: withReconnect(rawBackend.chmod!),
-    upload: withReconnect(rawBackend.upload),
-    download: withReconnect(rawBackend.download),
-    readFile: withReconnect(rawBackend.readFile),
-    writeFile: withReconnect(rawBackend.writeFile),
-    search: withReconnect(rawBackend.search),
-    replace: withReconnect(rawBackend.replace),
-}
-
-function basename(p: string): string {
-    const parts = p.split(/[\\/]/)
-    return parts[parts.length - 1] || p
-}
-
-// ---------- 连接生命周期 ----------
-
-// 连接序号：每次连接请求递增，用于丢弃「过期」的在途连接结果，
-// 避免切标签/重连时旧的连接回写覆盖新会话（竞态导致"会话不存在"）。
-let connectSeq = 0
-
-async function connect(hostKeyRetry = 0) {
-    const opts = props.opts
-    if (!opts) return
-    const seq = ++connectSeq
-    // connecting.value = true
-    error.value = ''
+// 给某个标签拨一个全新 SFTP 会话（不做标签间切换的清理）。
+async function doConnect(key: string, opts: ConnectOptions, seq: number, hostKeyRetry: number): Promise<void> {
+    const t = tabs[key]
     try {
         const id = await SFTPFileService.Connect(opts)
-        if (seq !== connectSeq) {
-            // 期间有更新的连接请求，本次结果作废并清理掉这个多余会话
+        if (tabs[key] !== t || seq !== t.seq) {
+            // 期间标签被关闭 / 有更新的连接请求：清理掉这个多余会话
             SFTPFileService.Disconnect(id).catch(() => undefined)
             return
         }
-        sessionId.value = id
-        await remotePanel.value?.goHome()
+        t.error = ''
+        t.id = id
     } catch (e: any) {
-        if (seq !== connectSeq) return
+        if (tabs[key] !== t || seq !== t.seq) return
         if (hostKeyRetry === 0) {
             const accepted = await resolveHostKeyIssue(e, opts)
             if (accepted) {
-                await connect(1)
+                await doConnect(key, opts, ++t.seq, 1)
                 return
             }
         }
-        sessionId.value = ''
-        error.value = e?.message || String(e)
+        t.error = e?.message || String(e)
     }
 }
 
-function disconnect() {
-    connectSeq++ // 使在途连接失效
-    const id = sessionId.value
-    sessionId.value = ''
-    if (id) {
-        SFTPFileService.Disconnect(id).catch(() => undefined)
+// 确保 key 标签已有会话：已连接直接返回 true；未连接则发起拨号
+// （并发请求复用同一次拨号）。
+async function connectTab(key: string, hostKeyRetry = 0): Promise<boolean> {
+    ensureTab(key)
+    const t = tabs[key]
+    if (!t) return false
+    if (t.id) return true
+    if (t.pending) {
+        try {
+            await t.pending
+        } catch {
+            /* 拨号内部已处理错误 */
+        }
+        return !!tabs[key]?.id
     }
+    const opts = t.opts
+    if (!opts) return false
+    const seq = ++t.seq
+    const p = doConnect(key, opts, seq, hostKeyRetry)
+    t.pending = p
+    try {
+        await p
+    } finally {
+        if (tabs[key] === t && t.pending === p) t.pending = null
+    }
+    return !!tabs[key]?.id
+}
+
+// 每个标签一个稳定后端对象（sessionId 用 getter 实时读取该标签当前会话，
+// 保存到编辑器板块里的后端不会因切换到其他标签而指向别的会话）。
+function buildTabBackend(key: string, opts: ConnectOptions): FileBackend {
+    const raw = makeSftpBackend(() => (tabs[key] ? tabs[key].id : ''))
+    const wrap = (fn: (...args: any[]) => Promise<any>) =>
+        async (...args: any[]) => {
+            try {
+                return await fn(...args)
+            } catch (e: any) {
+                if (isSessionGone(e) && (await connectTab(key))) {
+                    return await fn(...args)
+                }
+                throw e
+            }
+        }
+    return {
+        ...raw,
+        home: wrap(raw.home),
+        list: wrap(raw.list),
+        mkdir: wrap(raw.mkdir),
+        rename: wrap(raw.rename),
+        remove: wrap(raw.remove),
+        chmod: wrap(raw.chmod!),
+        upload: wrap(raw.upload),
+        download: wrap(raw.download),
+        readFile: wrap(raw.readFile),
+        writeFile: wrap(raw.writeFile),
+        search: wrap(raw.search),
+        replace: wrap(raw.replace),
+    }
+}
+
+function backendForTab(key: string): FileBackend | null {
+    if (!key || !props.opts && !tabs[key]?.opts) return null
+    ensureTab(key, props.opts)
+    const t = tabs[key]
+    if (!t || !t.opts) return null
+    if (!t.backend) t.backend = buildTabBackend(key, t.opts)
+    return t.backend
+}
+
+// FilePanel 当前展示用的后端（随活动标签切换）
+const remoteBackend = computed<FileBackend>(() => backendForTab(props.tabKey) ?? nullBackend)
+
+// 无活动标签时的空后端（模板此时显示空态，不会真正使用）
+const nullBackend: FileBackend = {
+    kind: 'remote',
+    label: 'SFTP',
+    sep: '/',
+    home: async () => '/',
+    list: async () => [],
+    mkdir: async () => undefined,
+    rename: async () => undefined,
+    remove: async () => undefined,
+    upload: async () => undefined,
+    download: async () => undefined,
+    readFile: async () => '',
+    writeFile: async () => undefined,
+    search: async () => [],
+    replace: async () => ({ files: 0, occurrences: 0 }),
+}
+
+// ---------- 标签生命周期 ----------
+
+// 活动标签切换：只把面板视图切到该标签的会话，不关闭旧标签会话与编辑器板块
+async function activateTab(key: string) {
+    if (!key) {
+        remotePanel.value?.clear()
+        return
+    }
+    ensureTab(key, props.opts)
+    const ok = await connectTab(key)
+    if (props.tabKey !== key) return // 拨号期间又切换了标签，交给最新的激活流程
     remotePanel.value?.clear()
-    // 会话断开后其编辑器板块不再可用，全部关闭
-    closeAllPanels()
+    if (ok) {
+        await panelGoHome()
+    }
 }
 
-function reconnect() {
-    void connect()
+// 让 FilePanel 回到当前标签的主目录；面板尚未挂载时等一帧再试
+// （如 keep-alive 恢复瞬间、首次拨号比面板渲染更快完成）
+async function panelGoHome() {
+    let panel = remotePanel.value
+    if (!panel) {
+        await nextTick()
+        panel = remotePanel.value
+    }
+    await panel?.goHome()
 }
 
-// 活动标签切换 → 切换 SFTP 连接；无标签 → 断开。
-// immediate：首次挂载时若已有活动标签（如终端页 keep-alive 恢复）也立即连接
+// 标签被关闭 / 移除：断开其 SFTP 会话并关闭属于该标签的编辑器板块
+function teardownTab(key: string) {
+    const t = tabs[key]
+    if (!t) return
+    t.seq++ // 作废在途拨号
+    if (t.id) {
+        SFTPFileService.Disconnect(t.id).catch(() => undefined)
+    }
+    delete tabs[key]
+    // 该标签自己的编辑器板块随之关闭（不触碰其他标签 / FTP 页的板块）
+    closePanelsByScope(key)
+    if (props.tabKey === key) {
+        remotePanel.value?.clear()
+    }
+}
+
 watch(
-    () => props.opts,
-    (opts, prev) => {
-        if (prev) disconnect()
-        if (opts) void connect()
+    () => props.tabKey,
+    (key) => {
+        void activateTab(key || '')
     },
     { immediate: true },
 )
 
-// 保活检测到连接断开时清理会话状态
+// 标签列表变化 → 清理已被移除标签的会话（关闭其他标签时也要释放）
+watch(
+    () => terminalStore.tabs.map((t) => t.key),
+    (keys) => {
+        const current = new Set(keys)
+        for (const key of Object.keys(tabs)) {
+            if (!current.has(key)) teardownTab(key)
+        }
+    },
+)
+
+// 保活检测到连接断开（任何标签的会话）→ 只清理该标签
 let unSessionClosed: (() => void) | null = null
 unSessionClosed = Events.On(EVENTS.sessionClosed, (evt: any) => {
     const sc = evt.data
-    if (sc && sc.sessionId === sessionId.value) {
-        sessionId.value = ''
-        remotePanel.value?.clear()
-        closeAllPanels()
-        error.value = sc.reason || '连接已断开，请重新连接'
+    if (!sc || !sc.sessionId) return
+    for (const key of Object.keys(tabs)) {
+        const t = tabs[key]
+        if (!t || t.id !== sc.sessionId) continue
+        t.seq++
+        t.id = ''
+        t.pending = null
+        closePanelsByScope(key)
+        if (key === props.tabKey) {
+            remotePanel.value?.clear()
+            t.error = sc.reason || '连接已断开，请重新连接'
+        }
+        return
     }
 })
 
+function reconnect() {
+    const key = props.tabKey
+    if (!key) return
+    const t = tabs[key]
+    if (t) t.error = ''
+    void connectTab(key).then((ok) => {
+        if (ok) void panelGoHome()
+    })
+}
+
 onBeforeUnmount(() => {
     unSessionClosed?.()
-    disconnect()
+    // 逐个关闭仍由本组件持有的标签会话（各自的编辑器板块随之按 scope 关闭）
+    for (const key of Object.keys(tabs)) teardownTab(key)
 })
 
 transfers.bind()
 
 // ---------- 上传 ----------
+
+function basename(p: string): string {
+    const parts = p.split(/[\\/]/)
+    return parts[parts.length - 1] || p
+}
 
 function runTransfer(name: string, fn: () => Promise<void>) {
     return fn()
@@ -263,7 +372,7 @@ async function uploadBatch(items: { path: string; name: string; isDir: boolean }
         const target = joinPath(remoteDir, it.name, '/')
         const label = it.isDir ? `${it.name}/ (目录)` : it.name
         try {
-            await remoteBackend.upload(it.path, target)
+            await remoteBackend.value.upload(it.path, target)
             transfers.complete(sessionId.value, 'upload', label)
             ok++
         } catch (e: any) {
@@ -314,7 +423,7 @@ async function pickDirAndUpload() {
     if (!dir) return
     const name = basename(dir)
     await runTransfer(`${name}/ (目录)`, () =>
-        remoteBackend.upload(dir, joinPath(remoteDir, name, '/')),
+        remoteBackend.value.upload(dir, joinPath(remoteDir, name, '/')),
     )
     await remotePanel.value?.refresh()
 }
@@ -372,7 +481,7 @@ async function downloadBatch(items: { path: string; name: string; isDir: boolean
         const target = joinPath(dir, it.name, '/')
         const label = it.isDir ? `${it.name}/ (目录)` : it.name
         try {
-            await remoteBackend.download(it.path, target, it.isDir)
+            await remoteBackend.value.download(it.path, target, it.isDir)
             transfers.complete(sessionId.value, 'download', label)
             ok++
         } catch (e: any) {
@@ -409,15 +518,16 @@ async function onPanelAction(payload: PanelAction) {
             break
         }
         // 文档式编辑：双击文件 / 右键目录 → 跳到「远程编辑器」页打开（同独立 SFTP 页）
+        // 板块记下来源标签（scope），切标签不会关闭它，只有该标签关闭 / 会话断开才关闭。
         case 'open-file':
             if (payload.entry) {
-                openFileInEditor(remoteBackend, payload.entry)
+                openFileInEditor(remoteBackend.value, payload.entry, props.tabKey)
                 void router.push('/remote-editor')
             }
             break
         case 'open-in-editor':
             if (payload.entry?.isDir) {
-                openDirInEditor(remoteBackend, payload.entry.path)
+                openDirInEditor(remoteBackend.value, payload.entry.path, props.tabKey)
                 void router.push('/remote-editor')
             }
             break

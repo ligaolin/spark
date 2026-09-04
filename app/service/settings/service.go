@@ -67,15 +67,31 @@ func GetInt(key string, def int) int {
 	return n
 }
 
+// KeyAutoStartEnabled persists the user's 开机启动 preference in the settings
+// table. main() re-registers autostart on every startup while it is "1", which
+// keeps the Windows Run key pointing at the current executable across updates.
+const KeyAutoStartEnabled = "autostart.enabled"
+
 // SetAutoStart enables or disables launching the app at login/boot.
 // 复用 Wails v3 内置的 AutostartManager（Windows 注册表 Run 键 / macOS
-// SMAppService 或 LaunchAgent / Linux autostart）。
+// SMAppService 或 LaunchAgent / Linux autostart）。操作成功后把开关状态
+// 持久化到设置表，供下次启动恢复（见 main.go）。
 func (s *SettingsService) SetAutoStart(enabled bool) error {
 	am := application.Get().Autostart
+	var err error
 	if enabled {
-		return am.Enable()
+		err = am.Enable()
+	} else {
+		err = am.Disable()
 	}
-	return am.Disable()
+	if err != nil {
+		return err
+	}
+	v := "0"
+	if enabled {
+		v = "1"
+	}
+	return s.Set(KeyAutoStartEnabled, v)
 }
 
 // IsAutoStart reports whether the app is registered to start at login/boot.

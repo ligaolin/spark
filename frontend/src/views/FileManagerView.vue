@@ -93,7 +93,7 @@ import TransferDock from '../components/TransferDock.vue'
 import ConnectDialog from '../components/ConnectDialog.vue'
 import { useConnectionsStore } from '../stores/connections'
 import { useTransfersStore } from '../stores/transfers'
-import { openDirInEditor, openFileInEditor, closeAllPanels } from '../stores/remoteEditor'
+import { openDirInEditor, openFileInEditor, closePanelsByScope } from '../stores/remoteEditor'
 import {
   LocalService,
   SFTPFileService,
@@ -104,7 +104,7 @@ import {
 } from '../utils/wails'
 import type { ConnectOptions, SavedConnection } from '../utils/wails'
 import type { DropPayload, PanelAction } from '../types'
-import { joinPath, type FileBackend } from '../utils/fileBackend'
+import { joinPath, makeSftpBackend, makeFtpBackend, type FileBackend } from '../utils/fileBackend'
 import { resolveHostKeyIssue } from '../utils/hostkey'
 
 const props = defineProps<{ mode: 'sftp' | 'ftp' }>()
@@ -195,15 +195,30 @@ function basename(p: string): string {
   return parts[parts.length - 1] || p
 }
 
+// 本页自己的编辑器板块作用域：断开 / 会话结束 / 卸载时只关闭本页打开的板块，
+// 不误伤 SSH 终端 SFTP 等其他来源打开的板块。
+let fmSeq = 0
+const pageScope = `filemanager-${props.mode}-${Date.now()}-${++fmSeq}`
+
+// 打开编辑器板块时把当前会话固化为独立的快照后端：之后本页即使重新连接
+// 别的会话，也不会让旧板块落到新会话上（避免编辑内容指向错误服务器）。
+function snapshotBackend(): FileBackend {
+  const sid = currentSessionId.value
+  if (!sid) return remoteBackend
+  return props.mode === 'sftp'
+    ? makeSftpBackend(() => sid)
+    : makeFtpBackend(() => sid)
+}
+
 // 右键「用编辑器打开目录」：把整个目录加载到编辑器板块并跳转过去
 function openDirInEditorView(path: string) {
-  openDirInEditor(remoteBackend, path)
+  openDirInEditor(snapshotBackend(), path, pageScope)
   void router.push('/remote-editor')
 }
 
 // 双击远程文件：在编辑器板块中打开并跳转过去
 function openFileInEditorView(entry: { path: string; name: string }) {
-  openFileInEditor(remoteBackend, entry)
+  openFileInEditor(snapshotBackend(), entry, pageScope)
   void router.push('/remote-editor')
 }
 
@@ -296,8 +311,9 @@ async function disconnect() {
   currentSessionId.value = ''
   sessionLabel.value = ''
   remotePanel.value?.clear()
-  // 会话断开后编辑器板块不再可用，全部关闭（强制，不弹确认）
-  closeAllPanels()
+  // 会话断开后本页打开的编辑器板块不再可用，一并关闭（强制，不弹确认）；
+  // 其他来源（如 SSH 终端 SFTP）打开的板块不受影响。
+  closePanelsByScope(pageScope)
   ElMessage.info('已断开连接')
 }
 
@@ -500,7 +516,7 @@ unSessionClosed = Events.On(EVENTS.sessionClosed, (evt: any) => {
     currentSessionId.value = ''
     sessionLabel.value = ''
     remotePanel.value?.clear()
-    closeAllPanels()
+    closePanelsByScope(pageScope)
     ElMessage.warning(sc.reason || '连接已断开，请重新连接')
   }
 })
@@ -523,6 +539,8 @@ onActivated(async () => {
 
 onBeforeUnmount(() => {
   unSessionClosed?.()
+  // 页面卸载：本页编辑器板块随会话一起关闭（其他来源的板块不受影响）
+  closePanelsByScope(pageScope)
   const id = currentSessionId.value
   if (id) {
     if (props.mode === 'sftp') {

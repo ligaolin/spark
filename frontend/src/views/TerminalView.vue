@@ -60,7 +60,8 @@
                         </el-icon>
                     </div>
                     <div class="side-body">
-                        <SftpPanel v-show="panelTab === 'sftp'" :opts="activeTabOpts" :fav-key="activeTabConnId" />
+                        <SftpPanel v-show="panelTab === 'sftp'" :opts="activeTabOpts" :tab-key="store.activeKey"
+                            :fav-key="activeTabConnId" />
                         <ServerInfoView v-show="panelTab === 'info'" :session-id="activeSessionId"
                             :active="infoActive" />
                         <ProcessManagerView v-show="panelTab === 'processes'" :session-id="activeSessionId"

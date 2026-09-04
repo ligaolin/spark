@@ -127,6 +127,16 @@ func main() {
 		},
 	})
 
+	// 开机启动：设置里开启过则每次启动重新登记，使启动项始终指向当前 exe
+	// （升级 / 更换安装路径后自动修复；官方推荐做法，见
+	// https://v3.wails.io/features/autostart/basics/ —— Enable 可安全重复调用）。
+	// 必须在数据库就绪（settings 表可读）之后执行。
+	if settings.GetString(settings.KeyAutoStartEnabled, "") == "1" {
+		if err := app.Autostart.Enable(); err != nil {
+			log.Printf("登记开机启动失败: %v", err)
+		}
+	}
+
 	// 注册系统右键菜单（HKCU，跟随当前 exe 路径，升级后自动更新）。
 	if exe, err := os.Executable(); err == nil {
 		if err := shellmenu.Register(exe); err != nil {
