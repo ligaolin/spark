@@ -44,6 +44,8 @@
         <DialogHost />
         <!-- 新版本检查 / 下载弹窗 -->
         <UpdateDialog />
+        <!-- AI 结果弹窗（终端助手 / 编辑器 / 文档助手共用） -->
+        <AiResultDialog />
     </el-config-provider>
 </template>
 
@@ -66,6 +68,7 @@ import {
 } from '@element-plus/icons-vue'
 import DialogHost from './components/DialogHost.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
+import AiResultDialog from './components/AiResultDialog.vue'
 import { useShortcutsStore, eventToCombo } from './stores/shortcuts'
 import { useSettingsStore } from './stores/settings'
 import { useLocalTerminalStore } from './stores/localTerminal'

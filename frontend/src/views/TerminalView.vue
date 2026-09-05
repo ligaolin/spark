@@ -54,6 +54,7 @@
                             <el-radio-button value="commands">命令</el-radio-button>
                             <el-radio-button value="network">网络</el-radio-button>
                             <el-radio-button value="tunnel">转发 / 代理</el-radio-button>
+                            <el-radio-button value="ai">AI</el-radio-button>
                         </el-radio-group>
                         <el-icon class="side-close" @click="panelVisible = false">
                             <Close />
@@ -71,6 +72,7 @@
                             :active="networkActive" />
                         <TunnelView v-show="panelTab === 'tunnel'" :session-id="activeSessionId"
                             :active="tunnelActive" />
+                        <AiTerminalPanel v-show="panelTab === 'ai'" :session-id="activeSessionId" />
                     </div>
                 </aside>
             </div>
@@ -95,6 +97,7 @@ import ProcessManagerView from '../components/ProcessManagerView.vue'
 import CustomCommandsView from '../components/CustomCommandsView.vue'
 import NetworkView from '../components/NetworkView.vue'
 import TunnelView from '../components/TunnelView.vue'
+import AiTerminalPanel from '../components/AiTerminalPanel.vue'
 import ConnectDialog from '../components/ConnectDialog.vue'
 import { useTerminalStore, type TerminalTab } from '../stores/terminal'
 import { useConnectionsStore } from '../stores/connections'
@@ -115,7 +118,7 @@ const tabCtxIndex = ref(-1)
 
 // 右侧信息面板：SFTP 文件为默认页（打开 SSH 终端即同时打开 SFTP）
 const panelVisible = ref(true)
-const panelTab = ref<'sftp' | 'info' | 'processes' | 'commands' | 'network' | 'tunnel'>('sftp')
+const panelTab = ref<'sftp' | 'info' | 'processes' | 'commands' | 'network' | 'tunnel' | 'ai'>('sftp')
 const activeSessionId = computed(() => store.activeTab?.sessionId || '')
 // SFTP 面板跟随当前活动标签的连接参数
 const activeTabOpts = computed(() => store.activeTab?.opts ?? null)

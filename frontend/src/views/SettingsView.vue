@@ -14,6 +14,9 @@
       <el-tab-pane label="同步" name="database">
         <SettingsDatabase />
       </el-tab-pane>
+      <el-tab-pane label="AI 设置" name="ai">
+        <SettingsAi />
+      </el-tab-pane>
       <el-tab-pane label="关于" name="about">
         <SettingsAbout />
       </el-tab-pane>
@@ -22,13 +25,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsShortcuts from './SettingsShortcuts.vue'
 import SettingsDatabase from './SettingsDatabase.vue'
+import SettingsAi from './SettingsAi.vue'
 import SettingsAbout from './SettingsAbout.vue'
 
+const route = useRoute()
 const tab = ref('general')
+
+// 支持从其它页面直接跳转到指定设置页（如 AI 助手 → 设置 → AI 助手）
+watch(
+  () => route.query.tab,
+  (t) => {
+    if (typeof t === 'string' && t) tab.value = t
+  },
+  { immediate: true },
+)
 </script>
 
 <style scoped>

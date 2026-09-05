@@ -15,6 +15,20 @@
             <el-button size="small" :disabled="!selectedId" @click="renameSelected">重命名</el-button>
             <el-button size="small" type="danger" plain :disabled="!selectedId" @click="deleteSelected">删除</el-button>
 
+            <el-dropdown trigger="click" :disabled="!activeTab" @command="onAiCommand">
+                <el-button size="small" :disabled="!activeTab">
+                    <el-icon><MagicStick /></el-icon><span>AI</span>
+                </el-button>
+                <template #dropdown>
+                    <el-dropdown-menu>
+                        <el-dropdown-item command="summarize">总结全文</el-dropdown-item>
+                        <el-dropdown-item command="rewrite">改写选中 / 全文</el-dropdown-item>
+                        <el-dropdown-item command="translate">翻译选中 / 全文</el-dropdown-item>
+                        <el-dropdown-item command="generate">生成内容…</el-dropdown-item>
+                    </el-dropdown-menu>
+                </template>
+            </el-dropdown>
+
             <div class="toolbar-spacer" />
 
             <el-input v-model="keyword" size="small" placeholder="搜索文档（文件名 / 内容）" clearable style="width: 230px"
@@ -146,6 +160,7 @@ import {
     CloseBold,
     DArrowRight,
     CircleClose,
+    MagicStick,
 } from '@element-plus/icons-vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
@@ -154,6 +169,7 @@ import MarkdownEditor from '../components/MarkdownEditor.vue'
 import { DocumentService } from '../utils/wails'
 import type { DocNode } from '../utils/wails'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
+import { streamToDialog } from '../utils/ai'
 import { kindForName } from '../utils/fileKind'
 import { useSettingsStore } from '../stores/settings'
 import type { SearchResult } from '../types'
@@ -174,6 +190,10 @@ interface EditorApi {
     getContent(): string
     focus(): void
     jumpToLine(n?: number): void
+    // 代码编辑器额外支持（Markdown 编辑器无这些方法）
+    getSelection?(): string
+    replaceSelection?(text: string): void
+    insertAtCursor?(text: string): void
 }
 
 // 一个打开的文档标签
@@ -664,6 +684,100 @@ async function save(): Promise<boolean> {
         return false
     } finally {
         saving.value = false
+    }
+}
+
+// ---------- AI 助手 ----------
+
+function markActiveDirty() {
+    const tab = activeTab.value
+    if (!tab) return
+    const ed = editorRefs.value[tab.key]
+    if (ed) tab.dirty = ed.getContent() !== tab.original
+}
+
+async function onAiCommand(cmd: string) {
+    const tab = activeTab.value
+    if (!tab) return
+    const ed = editorRefs.value[tab.key]
+    if (!ed) return
+    const full = ed.getContent() ?? ''
+    const sel = ed.getSelection?.() ?? ''
+
+    if (cmd === 'summarize') {
+        const target = sel || full
+        if (!target.trim()) {
+            ElMessage.warning('当前文档为空')
+            return
+        }
+        streamToDialog('summarize', target, undefined, { title: '总结' })
+    } else if (cmd === 'rewrite') {
+        const target = sel || full
+        if (!target.trim()) {
+            ElMessage.warning('当前文档为空')
+            return
+        }
+        const values = await showInputDialog('改写', [
+            { key: 'req', label: '改写要求（可选）', type: 'textarea', optional: true },
+        ])
+        if (!values) return
+        if (sel && ed.replaceSelection) {
+            streamToDialog('rewrite-doc', target, values.req.trim(), {
+                title: '改写',
+                replaceLabel: '替换选中',
+                onReplace: (t) => {
+                    ed.replaceSelection?.(t)
+                    markActiveDirty()
+                },
+            })
+        } else {
+            streamToDialog('rewrite-doc', target, values.req.trim(), {
+                title: '改写',
+                replaceLabel: '替换全文',
+                onReplace: (t) => {
+                    ed.setContent(t)
+                    markActiveDirty()
+                },
+            })
+        }
+    } else if (cmd === 'translate') {
+        const target = sel || full
+        if (!target.trim()) {
+            ElMessage.warning('当前文档为空')
+            return
+        }
+        if (sel && ed.replaceSelection) {
+            streamToDialog('translate', target, undefined, {
+                title: '翻译',
+                replaceLabel: '替换选中',
+                onReplace: (t) => {
+                    ed.replaceSelection?.(t)
+                    markActiveDirty()
+                },
+            })
+        } else {
+            streamToDialog('translate', target, undefined, {
+                title: '翻译',
+                replaceLabel: '替换全文',
+                onReplace: (t) => {
+                    ed.setContent(t)
+                    markActiveDirty()
+                },
+            })
+        }
+    } else if (cmd === 'generate') {
+        const values = await showInputDialog('生成内容', [
+            { key: 'desc', label: '描述你想要的内容', type: 'textarea', placeholder: '如：写一段项目 README 简介' },
+        ])
+        if (!values) return
+        streamToDialog('generate-doc', values.desc.trim(), undefined, {
+            title: '生成内容',
+            insertLabel: '插入到文末',
+            onInsert: (t) => {
+                ed.setContent(full ? full + '\n' + t : t)
+                markActiveDirty()
+            },
+        })
     }
 }
 

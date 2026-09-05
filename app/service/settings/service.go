@@ -38,6 +38,11 @@ func (s *SettingsService) GetAll() (map[string]string, error) {
 
 // Set stores (or updates) a setting value.
 func (s *SettingsService) Set(key, value string) error {
+	return Set(key, value)
+}
+
+// Set stores (or updates) a setting value (package-level helper).
+func Set(key, value string) error {
 	if strings.TrimSpace(key) == "" {
 		return errors.New("配置键不能为空")
 	}
@@ -65,6 +70,19 @@ func GetInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// GetFloat reads a float setting, returning def when absent or invalid.
+func GetFloat(key string, def float64) float64 {
+	v := GetString(key, "")
+	if v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil {
+		return def
+	}
+	return f
 }
 
 // KeyAutoStartEnabled persists the user's 开机启动 preference in the settings

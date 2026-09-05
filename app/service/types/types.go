@@ -214,6 +214,76 @@ type Tunnel struct {
 	Error    string `json:"error,omitempty"`
 }
 
+// AIConfig holds the user's AI provider settings. The API key is never
+// returned to the frontend; HasKey reports whether a key is stored.
+type AIConfig struct {
+	BaseURL      string  `json:"baseUrl"`
+	Model        string  `json:"model"`
+	Temperature  float64 `json:"temperature"`
+	MaxTokens    int     `json:"maxTokens"`
+	SystemPrompt string  `json:"systemPrompt"`
+	HasKey       bool    `json:"hasKey"`
+}
+
+// ChatMessage is one turn in a chat conversation.
+type ChatMessage struct {
+	Role    string `json:"role"` // system | user | assistant
+	Content string `json:"content"`
+}
+
+// AIChatDelta is emitted for each streamed chunk of a chat completion.
+type AIChatDelta struct {
+	RequestID string `json:"requestId"`
+	Delta     string `json:"delta"`
+	Done      bool   `json:"done"`
+	Error     string `json:"error,omitempty"`
+}
+
+// AgentReply is a streamed AI text bubble in the terminal agent chat.
+type AgentReply struct {
+	SessionID string `json:"sessionId"`
+	Content   string `json:"content"` // 增量文本（Done 时为空）
+	Done      bool   `json:"done"`
+	Error     string `json:"error,omitempty"`
+}
+
+// AgentStep reports the agent's lifecycle progress (proposed command,
+// execution started, rejected, or informational messages).
+type AgentStep struct {
+	SessionID     string `json:"sessionId"`
+	Step          int    `json:"step"`
+	Status        string `json:"status"` // propose | running | rejected | info
+	Command       string `json:"command,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	NeedsApproval bool   `json:"needsApproval"`
+	Why           string `json:"why,omitempty"`
+}
+
+// AgentAsk asks the frontend to approve (or reject/edit) a proposed command.
+type AgentAsk struct {
+	SessionID string `json:"sessionId"`
+	Step      int    `json:"step"`
+	Command   string `json:"command"`
+	Reason    string `json:"reason"`
+	Why       string `json:"why"`
+}
+
+// AgentOutput reports the result of an executed command.
+type AgentOutput struct {
+	SessionID string `json:"sessionId"`
+	Step      int    `json:"step"`
+	Command   string `json:"command"`
+	Output    string `json:"output"`
+	ExitCode  int    `json:"exitCode"`
+}
+
+// AgentDone reports the agent turn completion.
+type AgentDone struct {
+	SessionID string `json:"sessionId"`
+	Summary   string `json:"summary,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
 // NewID returns a random hexadecimal session id.
 func NewID() string {
 	b := make([]byte, 12)
