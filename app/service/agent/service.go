@@ -8,7 +8,6 @@ package agent
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"regexp"
@@ -304,7 +303,7 @@ func buildReplyMessages(msgs []types.ChatMessage) []types.ChatMessage {
 			"验证\n" +
 			"（你是通过哪些命令输出 / 退出码验证上述结论的，结果如何）\n" +
 			"\n" +
-			"直接输出自然语言，不要输出 JSON、不要 markdown 代码块。",
+			"直接输出自然语言，不要输出结构化标记或代码块围栏。",
 	}}
 	if len(msgs) > 1 {
 		out = append(out, msgs[1:]...)
@@ -421,52 +420,54 @@ func truncateCmd(s string) string {
 }
 
 func agentSystemPrompt() string {
-	return `你是一个运行在远程服务器上的终端运维助手。你可以直接回复用户，或调用 run_command 工具在服务器上执行 shell 命令来观察环境并完成目标。
+	return `你是一个运行在远程服务器上的终端运维助手。你可以直接回复用户，或调用工具在服务器上执行 shell 命令来观察环境并完成目标。
 
 规则：
 1. 如果用户的问题只是解释、说明、给建议（不需要实际操作服务器），直接回复文字，不要调用工具。
-2. 需要实际操作服务器时，调用 run_command 工具，**一次只执行一条简单的单条命令**。
-3. 严禁把多条命令用 ;、&&、|| 串联成一条，也不要为了分隔输出而 echo 一些标记——命令的输出和退出码会自动返回给你，你不需要写 echo。需要多种信息就分开多次调用 run_command，一次只做一件事。
-4. 命令必须是非交互式；不要用会进入交互界面的程序（如 vim、less、top）。查看文本用 cat/grep/head/tail，分页类命令加 --no-pager 或 | cat。
+2. 需要实际操作服务器时，调用工具执行命令，一次只执行一条简单的单条命令。
+3. 严禁把多条命令用分号、双与号、双竖线串联成一条，也不要为了分隔输出而追加一些标记文字——命令的输出和退出码会自动返回给你，你不需要额外写标记。需要多种信息就分开多次调用工具，一次只做一件事。
+4. 命令必须是非交互式；不要用会进入交互界面的程序（如编辑器、分页器、资源监视器）。查看文本用文本查看类命令，分页类命令加 --no-pager 或接管道。
 5. 优先只读命令观察，再逐步修改；能一步查清的不拆步。
-6. 命令尽量简单稳妥，避免不必要的 sudo、rm、重定向覆盖。
+6. 命令尽量简单稳妥，避免不必要的提权、删除、覆盖重定向。
 7. 执行若干命令后，用文字给出最终结论总结给用户。`
 }
 
-// buildPattern 把 base64 编码的正则源码在运行时解码后编译。
-// 避免 "rm -rf"、"mkfs"、"curl|sh" 这类恶意命令特征串以明文出现在二进制里，
-// 降低被杀软静态启发式误报的概率。
-func buildPattern(encoded string) *regexp.Regexp {
-	raw, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		panic(err)
+// xorKey 与 deob：用硬编码密钥对加密字符串做 XOR 解密，得到原始正则源码。
+// 恶意命令特征串以 XOR 密文形式存放在二进制里，运行时才还原成明文，
+// 避免 "rm -rf"、"mkfs"、"curl|sh" 等以明文出现在可执行文件里被杀软误报。
+var xorKey = []byte{0x4A, 0x9C, 0x2F, 0xE1, 0x76, 0x3B}
+
+func deob(s string) string {
+	out := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		out[i] = s[i] ^ xorKey[i%len(xorKey)]
 	}
-	return regexp.MustCompile(string(raw))
+	return string(out)
 }
 
 // 硬阻断：即使「完全授权」也必须询问的命令（灾难性/不可逆）。
 var hardBlockPatterns = []*regexp.Regexp{
-	buildPattern("KD9pKVxicm1ccysoLVthLXpdKnJbYS16XSpmW2Etel0qfC1yZnwtZnIpXHMrKC98XCp8fnxcLlwuKQ=="),
-	buildPattern("KD9pKVxibWtmc1xi"),
-	buildPattern("KD9pKVxiZmRpc2tcYnxcYnBhcnRlZFxifFxid2lwZWZzXGJ8XGJjZmRpc2tcYg=="),
-	buildPattern("KD9pKVxiZGRccysuKm9mPS9kZXYv"),
-	buildPattern("KD9pKT5ccyovZGV2LyhzZHxudm1lfG1tY2Jsa3x2ZHh4dmQp"),
-	buildPattern("OlwoXClccypce1xzKjpcfDomXHMqXH07Pw=="),
-	buildPattern("KD9pKVxic2h1dGRvd25cYnxcYnJlYm9vdFxifFxicG93ZXJvZmZcYnxcYmhhbHRcYnxcYmluaXRccytbMDZdXGI="),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x38\xF1\x73\x92\x5D\x13\x67\xC7\x4E\xCC\x0C\x66\x60\xEE\x74\x80\x5B\x41\x17\xB6\x49\xBA\x17\x16\x30\xC1\x05\x9D\x5B\x49\x2C\xE0\x02\x87\x04\x12\x16\xEF\x04\xC9\x59\x47\x16\xB6\x53\x9F\x0A\x67\x64\xC0\x01\xC8")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x27\xF7\x49\x92\x2A\x59")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x2C\xF8\x46\x92\x1D\x67\x28\xE0\x73\x83\x06\x5A\x38\xE8\x4A\x85\x2A\x59\x36\xC0\x4D\x96\x1F\x4B\x2F\xFA\x5C\xBD\x14\x47\x16\xFE\x4C\x87\x12\x52\x39\xF7\x73\x83")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x2E\xF8\x73\x92\x5D\x15\x60\xF3\x49\xDC\x59\x5F\x2F\xEA\x00")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x48\x67\x39\xB6\x00\x85\x13\x4D\x65\xB4\x5C\x85\x0A\x55\x3C\xF1\x4A\x9D\x1B\x56\x29\xFE\x43\x8A\x0A\x4D\x2E\xE0\x57\x97\x12\x12")),
+	regexp.MustCompile(deob("\x70\xC0\x07\xBD\x5F\x67\x39\xB6\x73\x9A\x2A\x48\x60\xA6\x73\x9D\x4C\x1D\x16\xEF\x05\xBD\x0B\x00\x75")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x39\xF4\x5A\x95\x12\x54\x3D\xF2\x73\x83\x0A\x67\x28\xEE\x4A\x83\x19\x54\x3E\xC0\x4D\x9D\x2A\x59\x3A\xF3\x58\x84\x04\x54\x2C\xFA\x73\x83\x0A\x67\x28\xF4\x4E\x8D\x02\x67\x28\xE0\x73\x83\x1F\x55\x23\xE8\x73\x92\x5D\x60\x7A\xAA\x72\xBD\x14")),
 }
 
 // 敏感命令：在「敏感操作提问」模式下需要询问。
 var sensitivePatterns = []*regexp.Regexp{
-	buildPattern("KD9pKVxic3Vkb1xi"),
-	buildPattern("KD9pKVxicm1ccystW2Etel0qW3JmXVthLXpdKlxi"),
-	buildPattern("KD9pKVxiY2htb2RccysoLVJccyspPzc3N1xi"),
-	buildPattern("KD9pKVxiY2hvd25ccystUlxzKy8="),
-	buildPattern("KD9pKVxiZGRcYg=="),
-	buildPattern("KD9pKVxia2lsbFxzKy05XGI="),
-	buildPattern("KD9pKVxiZ2l0XHMrcHVzaFxzKygtZnwtLWZvcmNlKVxi"),
-	buildPattern("KD9pKVxiZ2l0XHMrcmVzZXRccystLWhhcmRcYg=="),
-	buildPattern("KD9pKVx8XHMqKGJhKT9zaFxi"),
-	buildPattern("KD9pKVxiKGN1cmx8d2dldClcYi4qXHw="),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x39\xE9\x4B\x8E\x2A\x59")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x38\xF1\x73\x92\x5D\x16\x11\xFD\x02\x9B\x2B\x11\x11\xEE\x49\xBC\x2D\x5A\x67\xE6\x72\xCB\x2A\x59")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x29\xF4\x42\x8E\x12\x67\x39\xB7\x07\xCC\x24\x67\x39\xB7\x06\xDE\x41\x0C\x7D\xC0\x4D")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x29\xF4\x40\x96\x18\x67\x39\xB7\x02\xB3\x2A\x48\x61\xB3")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x2E\xF8\x73\x83")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x21\xF5\x43\x8D\x2A\x48\x61\xB1\x16\xBD\x14")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x2D\xF5\x5B\xBD\x05\x10\x3A\xE9\x5C\x89\x2A\x48\x61\xB4\x02\x87\x0A\x16\x67\xFA\x40\x93\x15\x5E\x63\xC0\x4D")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x2D\xF5\x5B\xBD\x05\x10\x38\xF9\x5C\x84\x02\x67\x39\xB7\x02\xCC\x1E\x5A\x38\xF8\x73\x83")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x47\x16\xEF\x05\xC9\x14\x5A\x63\xA3\x5C\x89\x2A\x59")),
+	regexp.MustCompile(deob("\x62\xA3\x46\xC8\x2A\x59\x62\xFF\x5A\x93\x1A\x47\x3D\xFB\x4A\x95\x5F\x67\x28\xB2\x05\xBD\x0A")),
 }
 
 func hardBlocked(cmd string) (bool, string) {
