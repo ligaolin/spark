@@ -41,7 +41,8 @@ export function Set(key: string, value: string): $CancellablePromise<void> {
 /**
  * SetAutoStart enables or disables launching the app at login/boot.
  * 复用 Wails v3 内置的 AutostartManager（Windows 注册表 Run 键 / macOS
- * SMAppService 或 LaunchAgent / Linux autostart）。
+ * SMAppService 或 LaunchAgent / Linux autostart）。操作成功后把开关状态
+ * 持久化到设置表，供下次启动恢复（见 main.go）。
  */
 export function SetAutoStart(enabled: boolean): $CancellablePromise<void> {
     return $Call.ByID(3466416522, enabled);
