@@ -44,11 +44,11 @@
         <div class="at-bottom">
             <el-select v-model="model" size="small" class="at-model" filterable allow-create default-first-option
                 title="模型" @change="onModelChange">
-                <el-option v-for="m in MODEL_OPTIONS" :key="m" :label="m" :value="m" />
+                <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
             </el-select>
             <el-select v-model="authMode" size="small" class="at-auth" :disabled="running" title="授权模式">
-                <el-option label="可查看" value="ask" />
-                <el-option label="敏感提问" value="sensitive" />
+                <el-option label="仅可查看" value="ask" />
+                <el-option label="敏感操作询问" value="sensitive" />
                 <el-option label="完全授权" value="full" />
             </el-select>
             <div class="at-bottom-actions">
@@ -87,8 +87,14 @@ type Entry =
     | ExecEntry
 
 const authMode = ref<'ask' | 'sensitive' | 'full'>('sensitive')
-const MODEL_OPTIONS = ['deepseek-chat', 'gpt-4o-mini', 'qwen-plus', 'glm-4-flash']
 const model = ref('')
+// 模型列表从供应商 /models 接口动态获取（不内置）
+const modelList = ref<string[]>([])
+const modelOptions = computed<string[]>(() => {
+    const list = [...modelList.value]
+    if (model.value && !list.includes(model.value)) list.unshift(model.value)
+    return list
+})
 const input = ref('')
 const histories = reactive<Record<string, Entry[]>>({})
 const runningBySession = reactive<Record<string, boolean>>({})
@@ -283,7 +289,14 @@ function onDone(evt: any) {
 }
 
 onMounted(() => {
-    AIService.GetConfig().then((cfg) => { model.value = cfg.model }).catch(() => undefined)
+    AIService.GetConfig()
+        .then((cfg) => { model.value = cfg.model })
+        .catch(() => undefined)
+    AIService.ListModels()
+        .then((ids) => {
+            if (ids && ids.length) modelList.value = ids
+        })
+        .catch(() => undefined)
     unsubs.push(Events.On(EVENTS.agentReply, onReply))
     unsubs.push(Events.On(EVENTS.agentStep, onStep))
     unsubs.push(Events.On(EVENTS.agentAsk, onAsk))

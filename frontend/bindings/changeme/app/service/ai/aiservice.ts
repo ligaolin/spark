@@ -67,6 +67,15 @@ export function GetConfig(): $CancellablePromise<types$0.AIConfig> {
 }
 
 /**
+ * ListModels fetches the model IDs available on the configured provider
+ * (OpenAI-compatible GET /models). Used to populate the model selector instead
+ * of a hard-coded list.
+ */
+export function ListModels(): $CancellablePromise<string[] | null> {
+    return $Call.ByID(969810787);
+}
+
+/**
  * SaveConfig persists AI settings. When apiKey is empty the previously stored
  * key is kept; when non-empty it replaces the stored key (encrypted).
  */

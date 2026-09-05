@@ -3,7 +3,7 @@
     <el-form-item label="服务商预设">
       <el-select v-model="provider" style="width: 260px" @change="applyPreset">
         <el-option
-          v-for="p in PRESETS"
+          v-for="p in AI_PROVIDERS"
           :key="p.key"
           :value="p.key"
           :label="p.label"
@@ -22,7 +22,12 @@
     </el-form-item>
 
     <el-form-item label="模型名称">
-      <el-input v-model="form.model" placeholder="gpt-4o-mini" style="width: 360px" />
+      <el-select v-model="form.model" filterable allow-create default-first-option
+        placeholder="选择或输入模型" style="width: 300px">
+        <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
+      </el-select>
+      <el-button size="small" text :loading="loadingModels" @click="loadModels">刷新</el-button>
+      <div class="ai-note-inline">从服务商接口获取，也可手输</div>
     </el-form-item>
 
     <el-form-item label="API Key">
@@ -92,27 +97,36 @@ import { reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { AIService, makeAIConfig, type AIConfig } from '../utils/wails'
 import { showConfirmDialog } from '../utils/dialog'
-
-const PRESETS = [
-  { key: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  { key: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-  { key: 'qwen', label: '通义千问（阿里云）', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-  { key: 'zhipu', label: '智谱 AI', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
-  { key: 'custom', label: '自定义', baseUrl: '', model: '' },
-] as const
+import { AI_PROVIDERS, providerForBaseUrl } from '../utils/aiProviders'
 
 const form = reactive<AIConfig>(makeAIConfig())
 const apiKey = ref('')
 const provider = ref<string>('custom')
 const saving = ref(false)
 const clearing = ref(false)
+const modelOptions = ref<string[]>([])
+const loadingModels = ref(false)
+
+// 从供应商 /v1/models 接口拉取可用模型列表（不内置）。
+async function loadModels() {
+  loadingModels.value = true
+  try {
+    const ids = await AIService.ListModels()
+    modelOptions.value = ids && ids.length ? ids : []
+  } catch {
+    modelOptions.value = []
+  } finally {
+    loadingModels.value = false
+  }
+}
 
 function applyPreset(key: string) {
-  const p = PRESETS.find((x) => x.key === key)
+  const p = AI_PROVIDERS.find((x) => x.key === key)
   if (p) {
     form.baseUrl = p.baseUrl
     form.model = p.model
   }
+  void loadModels()
 }
 
 async function load() {
@@ -120,9 +134,9 @@ async function load() {
     const cfg = await AIService.GetConfig()
     Object.assign(form, cfg)
     // 根据保存的 baseUrl 反推服务商预设，避免每次进入都显示「自定义」
-    const curBase = (cfg.baseUrl || '').replace(/\/+$/, '')
-    const matched = PRESETS.find((p) => p.baseUrl && p.baseUrl.replace(/\/+$/, '') === curBase)
+    const matched = providerForBaseUrl(cfg.baseUrl)
     provider.value = matched ? matched.key : 'custom'
+    if (cfg.hasKey) void loadModels()
   } catch {
     /* 忽略，保留默认值 */
   }
@@ -143,6 +157,7 @@ async function save() {
     form.hasKey = true
     apiKey.value = ''
     ElMessage.success('已保存')
+    void loadModels()
   } catch (e: any) {
     ElMessage.error(`保存失败：${e?.message || e}`)
   } finally {

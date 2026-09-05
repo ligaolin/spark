@@ -102,6 +102,57 @@ func (s *AIService) ClearKey() error {
 	return settings.Set(keyAPIKey, "")
 }
 
+// ListModels fetches the model IDs available on the configured provider
+// (OpenAI-compatible GET /models). Used to populate the model selector instead
+// of a hard-coded list.
+func (s *AIService) ListModels() ([]string, error) {
+	cfg, err := s.GetConfig()
+	if err != nil {
+		return nil, err
+	}
+	apiKey, err := s.apiKey()
+	if err != nil {
+		return nil, err
+	}
+	if apiKey == "" {
+		return nil, errors.New("尚未配置 API Key")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(cfg.BaseURL, "/")+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("获取模型列表失败（HTTP %d）: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("解析模型列表失败: %w", err)
+	}
+	ids := make([]string, 0, len(out.Data))
+	for _, m := range out.Data {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids, nil
+}
+
 // ChatStream starts a streaming chat completion. Tokens are delivered to the
 // frontend through the "ai:delta" event keyed by requestID. This method
 // returns after the request is dispatched, or immediately with an error when
