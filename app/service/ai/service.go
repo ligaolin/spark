@@ -114,9 +114,6 @@ func (s *AIService) ListModels() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if apiKey == "" {
-		return nil, errors.New("尚未配置 API Key")
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -125,7 +122,7 @@ func (s *AIService) ListModels() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	setAuth(req, apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -173,9 +170,6 @@ func (s *AIService) ChatStream(requestID string, messages []types.ChatMessage) e
 	apiKey, err := s.apiKey()
 	if err != nil {
 		return err
-	}
-	if apiKey == "" {
-		return errors.New("尚未配置 API Key，请在「设置 → AI」中填写")
 	}
 
 	// Prepend the system prompt when configured.
@@ -228,9 +222,6 @@ func (s *AIService) chatTools(messages []types.ChatMessage, tools []Tool) (ToolR
 	if err != nil {
 		return ToolResponse{}, err
 	}
-	if apiKey == "" {
-		return ToolResponse{}, errors.New("尚未配置 API Key，请在「设置 → AI」中填写")
-	}
 
 	reqBody := struct {
 		Model       string              `json:"model"`
@@ -264,7 +255,7 @@ func (s *AIService) chatTools(messages []types.ChatMessage, tools []Tool) (ToolR
 		return ToolResponse{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	setAuth(req, apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -324,9 +315,6 @@ func (s *AIService) complete(messages []types.ChatMessage, jsonMode bool) (strin
 	if err != nil {
 		return "", err
 	}
-	if apiKey == "" {
-		return "", errors.New("尚未配置 API Key，请在「设置 → AI」中填写")
-	}
 
 	reqBody := chatRequest{
 		Model:       cfg.Model,
@@ -353,7 +341,7 @@ func (s *AIService) complete(messages []types.ChatMessage, jsonMode bool) (strin
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	setAuth(req, apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -405,9 +393,6 @@ func (s *AIService) CompleteStream(requestID, systemPrompt, userContent string) 
 	if err != nil {
 		return err
 	}
-	if apiKey == "" {
-		return errors.New("尚未配置 API Key，请在「设置 → AI」中填写")
-	}
 
 	msgs := []types.ChatMessage{}
 	if strings.TrimSpace(systemPrompt) != "" {
@@ -436,6 +421,16 @@ func (s *AIService) apiKey() (string, error) {
 		return "", nil
 	}
 	return secure.Decrypt(enc)
+}
+
+// setAuth attaches the bearer token only when a key is present. Local,
+// keyless OpenAI-compatible servers (LM Studio / llama.cpp / Ollama, etc.)
+// accept requests without an Authorization header, so a missing key must not
+// block the request — only remote providers that require a key will reject it.
+func setAuth(req *http.Request, apiKey string) {
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 }
 
 func (s *AIService) stream(requestID string, cfg types.AIConfig, apiKey string, msgs []types.ChatMessage) {
@@ -519,7 +514,7 @@ func (s *AIService) doStream(ctx context.Context, requestID string, cfg types.AI
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	setAuth(req, apiKey)
 
 	// No overall timeout: a stream stays open until it finishes or the request
 	// context is cancelled. Connection setup is bounded by the default
@@ -613,9 +608,6 @@ func (s *AIService) streamTo(ctx context.Context, messages []types.ChatMessage, 
 	if err != nil {
 		return err
 	}
-	if apiKey == "" {
-		return errors.New("尚未配置 API Key，请在「设置 → AI」中填写")
-	}
 
 	reqBody := chatRequest{
 		Model:       cfg.Model,
@@ -636,7 +628,7 @@ func (s *AIService) streamTo(ctx context.Context, messages []types.ChatMessage, 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	setAuth(req, apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

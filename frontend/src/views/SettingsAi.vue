@@ -113,8 +113,12 @@ async function loadModels() {
   try {
     const ids = await AIService.ListModels()
     modelOptions.value = ids && ids.length ? ids : []
-  } catch {
+    if (!ids || !ids.length) {
+      ElMessage.info('服务商未返回可用模型，可手动输入模型名称')
+    }
+  } catch (e: any) {
     modelOptions.value = []
+    ElMessage.error(`获取模型列表失败：${e?.message || e}`)
   } finally {
     loadingModels.value = false
   }
@@ -136,7 +140,7 @@ async function load() {
     // 根据保存的 baseUrl 反推服务商预设，避免每次进入都显示「自定义」
     const matched = providerForBaseUrl(cfg.baseUrl)
     provider.value = matched ? matched.key : 'custom'
-    if (cfg.hasKey) void loadModels()
+    void loadModels()
   } catch {
     /* 忽略，保留默认值 */
   }
