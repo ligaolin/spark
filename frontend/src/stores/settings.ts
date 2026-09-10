@@ -54,6 +54,12 @@ export const useSettingsStore = defineStore('settings', {
     theme(state): Theme {
       return state.values['app.theme'] === 'light' ? 'light' : 'dark'
     },
+    // 代码编辑器里 Ctrl+点击链接的打开方式：popup=保持 Monaco 默认（弹出窗口），
+    // browser=系统默认浏览器，window=应用内独立窗口
+    editorLinkOpenMode(state): 'popup' | 'browser' | 'window' {
+      const v = state.values['editor.linkOpenMode']
+      return v === 'browser' || v === 'window' ? v : 'popup'
+    },
   },
 
   actions: {

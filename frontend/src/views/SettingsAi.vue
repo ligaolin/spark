@@ -83,9 +83,28 @@
       />
     </el-form-item>
 
+    <el-divider content-position="left">终端 Agent（SSH 终端的 AI 面板）</el-divider>
+
+    <el-form-item label="允许命令串联">
+      <el-switch v-model="allowChain" :loading="savingAllowChain" @change="saveAllowChain" />
+      <div class="ai-note-inline">
+        开启后 AI 可以在一条命令里用 <span class="mono-inline">&&</span> /
+        <span class="mono-inline">;</span> 串联多个步骤，多步操作更利索——代价是「完全授权」模式下一次批准可能执行一连串命令。
+        关闭时一次只执行一条命令（工作目录仍会自动延续，不需要它写 cd 前缀）。保存后下一轮对话生效
+      </div>
+    </el-form-item>
+
+    <el-form-item label="附带终端上下文">
+      <el-switch v-model="terminalContext" :loading="savingTerminalContext" @change="saveTerminalContext" />
+      <div class="ai-note-inline">
+        把你在 SSH 终端窗口里最近看到的输出（含刚敲的命令与报错）一起发给模型，这样「帮我看看这个报错」才答得准。
+        终端里有敏感内容时可关闭。保存后下一轮对话生效
+      </div>
+    </el-form-item>
+
     <el-form-item>
       <div class="ai-actions">
-        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+        <el-button type="primary" :loading="saving" @click="save">保存模型配置</el-button>
         <el-button v-if="form.hasKey" :loading="clearing" @click="clearKey">清除 Key</el-button>
       </div>
     </el-form-item>
@@ -98,6 +117,7 @@ import { ElMessage } from 'element-plus'
 import { AIService, makeAIConfig, type AIConfig } from '../utils/wails'
 import { showConfirmDialog } from '../utils/dialog'
 import { AI_PROVIDERS, providerForBaseUrl } from '../utils/aiProviders'
+import { useSettingsStore } from '../stores/settings'
 
 const form = reactive<AIConfig>(makeAIConfig())
 const apiKey = ref('')
@@ -106,6 +126,39 @@ const saving = ref(false)
 const clearing = ref(false)
 const modelOptions = ref<string[]>([])
 const loadingModels = ref(false)
+
+// 终端 Agent 的两个开关存在通用的 settings 表里（key: ai.agent.*）
+const settings = useSettingsStore()
+const allowChain = ref(false)
+const terminalContext = ref(true)
+const savingAllowChain = ref(false)
+const savingTerminalContext = ref(false)
+
+async function saveAllowChain(v: string | number | boolean) {
+  savingAllowChain.value = true
+  try {
+    await settings.set('ai.agent.allowChain', v ? '1' : '0')
+    ElMessage.success(v ? '已保存：允许 AI 串联多条命令' : '已保存：AI 一次只执行一条命令')
+  } catch (e: any) {
+    allowChain.value = !v
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  } finally {
+    savingAllowChain.value = false
+  }
+}
+
+async function saveTerminalContext(v: string | number | boolean) {
+  savingTerminalContext.value = true
+  try {
+    await settings.set('ai.agent.terminalContext', v ? '1' : '0')
+    ElMessage.success(v ? '已保存：AI 会读取终端最近输出' : '已保存：AI 不再读取终端输出')
+  } catch (e: any) {
+    terminalContext.value = !v
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  } finally {
+    savingTerminalContext.value = false
+  }
+}
 
 // 从供应商 /v1/models 接口拉取可用模型列表（不内置）。
 async function loadModels() {
@@ -144,6 +197,9 @@ async function load() {
   } catch {
     /* 忽略，保留默认值 */
   }
+  await settings.load()
+  allowChain.value = settings.values['ai.agent.allowChain'] === '1'
+  terminalContext.value = settings.values['ai.agent.terminalContext'] !== '0'
 }
 
 async function save() {
@@ -201,6 +257,13 @@ onMounted(load)
   font-size: 12px;
   color: var(--text-secondary);
   margin-left: 10px;
+}
+
+.mono-inline {
+  font-family: var(--term-font);
+  background: var(--hover-bg);
+  border-radius: 3px;
+  padding: 0 3px;
 }
 
 .ai-actions {

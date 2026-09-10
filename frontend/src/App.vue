@@ -79,6 +79,7 @@ import { applyTheme, cacheTheme } from './utils/theme'
 import { emit } from './utils/bus'
 import { isAndroidApp } from './utils/platform'
 import { checkForUpdates } from './utils/updateCheck'
+import { installAnchorInterceptor } from './utils/openLink'
 import logoUrl from './assets/logo.png'
 
 const route = useRoute()
@@ -188,6 +189,9 @@ onMounted(() => {
         applyTheme(settings.theme)
         cacheTheme(settings.theme)
     })
+    // Markdown 预览 / AI 回复里的 <a> 链接：拦下 WebView 内的默认导航，
+    // 改按「编辑器链接打开方式」打开（否则会把整个应用页面顶掉）
+    installAnchorInterceptor()
     window.addEventListener('keydown', onKeyDown)
     // 系统右键菜单打开：订阅二次启动事件，并取走首次启动暂存的请求
     Events.On('app:open', (evt: any) => {

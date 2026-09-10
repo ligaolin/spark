@@ -6,6 +6,7 @@
  */
 export interface TunnelInfo {
     "id": string;
+    "connectionId": number;
     "connectionName": string;
 
     /**
@@ -17,4 +18,5 @@ export interface TunnelInfo {
      * 可在本机浏览器打开的 URL
      */
     "localUrl": string;
+    "lastError"?: string;
 }

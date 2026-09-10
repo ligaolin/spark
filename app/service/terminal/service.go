@@ -30,8 +30,9 @@ type TerminalService struct {
 	mu       sync.Mutex
 	sessions map[string]*sshSession
 
-	tunnelMu sync.Mutex
-	tunnels  map[string]*sshTunnel
+	tunnelMu  sync.Mutex
+	tunnels   map[string]*sshTunnel
+	tunnelSeq uint64 // 隧道创建序号（列表排序用）
 }
 
 type sshSession struct {
@@ -46,6 +47,9 @@ type sshSession struct {
 
 	mu     sync.Mutex
 	closed bool
+	// tail 是最近一段 PTY 原始输出（含 ANSI 控制序列），供 AI 助手读取
+	// "终端刚才发生了什么"（见 RecentOutput），避免它对着报错一问三不知。
+	tail []byte
 }
 
 // ServiceName implements application.ServiceName.
@@ -142,7 +146,7 @@ func (t *TerminalService) Connect(opts types.ConnectOptions) (string, error) {
 	}
 
 	// Merge stdout and stderr into one stream forwarded to the frontend.
-	out := &outputWriter{svc: t, id: id}
+	out := &outputWriter{svc: t, id: id, sess: s}
 	sess.Stdout = out
 	sess.Stderr = out
 
@@ -1250,19 +1254,83 @@ func (t *TerminalService) watch(s *sshSession) {
 
 // outputWriter forwards SSH output chunks to the frontend.
 type outputWriter struct {
-	svc *TerminalService
-	id  string
+	svc  *TerminalService
+	id   string
+	sess *sshSession
 }
+
+// maxTailBytes 每个会话保留的最近 PTY 输出上限。
+const maxTailBytes = 32 * 1024
 
 func (w *outputWriter) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	w.sess.appendTail(p)
 	application.Get().Event.Emit("terminal:output", types.TerminalOutput{
 		SessionID: w.id,
 		Data:      string(p),
 	})
 	return len(p), nil
+}
+
+// appendTail keeps a bounded copy of the most recent PTY output.
+func (s *sshSession) appendTail(p []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tail = append(s.tail, p...)
+	if len(s.tail) > maxTailBytes {
+		s.tail = append([]byte(nil), s.tail[len(s.tail)-maxTailBytes:]...)
+	}
+}
+
+// RecentOutput returns the tail of a session's PTY output with ANSI escape
+// sequences and carriage-return overwrites resolved, so it reads as plain
+// text. The terminal AI agent uses it as context: without it, "帮我看看这个
+// 报错" is unanswerable, because the agent only ever sees its own exec channel.
+func RecentOutput(id string, maxBytes int) string {
+	if global == nil {
+		return ""
+	}
+	s := global.get(id)
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	raw := string(s.tail)
+	s.mu.Unlock()
+	if raw == "" {
+		return ""
+	}
+	clean := stripANSI(raw)
+	if maxBytes > 0 && len(clean) > maxBytes {
+		clean = clean[len(clean)-maxBytes:]
+	}
+	return strings.TrimSpace(clean)
+}
+
+// ansiRe 匹配 CSI / OSC / 单字符转义序列（终端着色、光标移动、标题设置等）。
+var ansiRe = regexp.MustCompile(
+	"\x1b\\[[0-9;?]*[ -/]*[@-~]" + // CSI ... 终止符
+		"|\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)" + // OSC ... BEL / ST
+		"|\x1b[@-Z\\\\-_]", // 其它单字符转义
+)
+
+// stripANSI 去掉 ANSI 控制序列，并把 \r 覆盖（进度条刷新）折叠成最终内容。
+func stripANSI(s string) string {
+	s = ansiRe.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\x00", "")
+	if !strings.ContainsRune(s, '\r') {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		if idx := strings.LastIndexByte(ln, '\r'); idx >= 0 {
+			lines[i] = ln[idx+1:]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (t *TerminalService) ensureSessions() {

@@ -112,7 +112,7 @@ export function ListSites(): $CancellablePromise<model$0.Site[] | null> {
 }
 
 /**
- * ListTunnels 返回当前所有活动隧道。
+ * ListTunnels 返回当前所有活动隧道，按建立顺序排列。
  */
 export function ListTunnels(): $CancellablePromise<$models.TunnelInfo[] | null> {
     return $Call.ByID(1962510345);
@@ -154,8 +154,9 @@ export function OpenInBrowser(url: string): $CancellablePromise<void> {
 }
 
 /**
- * OpenTunnel 通过已保存的 SSH 连接建立本地端口转发：随机占用一个本机端口，
+ * OpenTunnel 通过已保存的 SSH 连接建立本地端口转发：占用一个本机端口，
  * 把访问该端口的 TCP 流经 SSH 转发到 targetURL 指向的 host:port（在服务器侧解析）。
+ * 同一个「连接 + 目标」已有活动隧道时直接复用，不会重复建连 / 重复开标签页。
  */
 export function OpenTunnel(connectionID: number, targetURL: string): $CancellablePromise<$models.TunnelInfo> {
     return $Call.ByID(129566844, connectionID, targetURL);

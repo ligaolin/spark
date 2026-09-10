@@ -121,6 +121,29 @@
 
     <div class="cfg-row">
       <div class="cfg-info">
+        <div class="cfg-label">编辑器链接打开方式</div>
+        <div class="cfg-desc">
+          代码编辑器（文档管理 / 本地文件 / SFTP / FTP 的编辑器）里
+          <b>Ctrl+点击</b> <span class="mono-inline">http(s)://</span> 链接时的打开方式：
+          <b>默认</b>=沿用编辑器自带行为（弹出窗口）；<b>系统浏览器</b>=交给系统默认浏览器打开；
+          <b>应用窗口</b>=在应用内独立窗口打开（顶层窗口、证书统一忽略、同名去重）。
+          保存后立即生效，只对之后点击的链接生效
+        </div>
+      </div>
+      <div class="cfg-ctrl">
+        <el-select v-model="linkOpenModeVal" size="small" style="width: 132px">
+          <el-option label="默认（弹出窗口）" value="popup" />
+          <el-option label="系统浏览器" value="browser" />
+          <el-option label="应用窗口" value="window" />
+        </el-select>
+        <el-button size="small" type="primary" :loading="savingLinkOpenMode" @click="saveLinkOpenMode">
+          保存
+        </el-button>
+      </div>
+    </div>
+
+    <div class="cfg-row">
+      <div class="cfg-info">
         <div class="cfg-label">点击窗口关闭按钮时</div>
         <div class="cfg-desc">
           「缩小到托盘」会把窗口隐藏到任务栏右下角的托盘区，程序继续在后台运行（连接保持不断）；
@@ -168,6 +191,7 @@ const wordWrapVal = ref(true)
 const wordSepVal = ref('')
 const treeFollowVal = ref(true)
 const searchExcludeVal = ref('')
+const linkOpenModeVal = ref<'popup' | 'browser' | 'window'>('popup')
 const closeActionVal = ref<'minimize' | 'exit'>('minimize')
 const autoStartVal = ref(false)
 const savingKeepalive = ref(false)
@@ -178,6 +202,7 @@ const savingWordWrap = ref(false)
 const savingWordSep = ref(false)
 const savingTreeFollow = ref(false)
 const savingSearchExclude = ref(false)
+const savingLinkOpenMode = ref(false)
 const savingCloseAction = ref(false)
 const savingAutoStart = ref(false)
 
@@ -191,6 +216,7 @@ onMounted(async () => {
   wordSepVal.value = settings.editorWordSeparators
   treeFollowVal.value = settings.editorTreeFollow
   searchExcludeVal.value = settings.searchExclude
+  linkOpenModeVal.value = settings.editorLinkOpenMode
   closeActionVal.value = settings.windowCloseAction
   autoStartVal.value = await SettingsService.IsAutoStart()
 })
@@ -302,6 +328,24 @@ async function saveSearchExclude() {
     ElMessage.error(`保存失败：${e?.message || e}`)
   } finally {
     savingSearchExclude.value = false
+  }
+}
+
+async function saveLinkOpenMode() {
+  savingLinkOpenMode.value = true
+  try {
+    await settings.set('editor.linkOpenMode', linkOpenModeVal.value)
+    const label =
+      linkOpenModeVal.value === 'browser'
+        ? '系统浏览器'
+        : linkOpenModeVal.value === 'window'
+          ? '应用窗口'
+          : '默认（弹出窗口）'
+    ElMessage.success(`已保存：编辑器里 Ctrl+点击链接将用「${label}」打开`)
+  } catch (e: any) {
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  } finally {
+    savingLinkOpenMode.value = false
   }
 }
 

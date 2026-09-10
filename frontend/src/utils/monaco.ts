@@ -14,11 +14,13 @@ import TsWorker from 'monaco-editor/language/typescript/ts.worker?worker'
 import JsonWorker from 'monaco-editor/language/json/json.worker?worker'
 import CssWorker from 'monaco-editor/language/css/css.worker?worker'
 import HtmlWorker from 'monaco-editor/language/html/html.worker?worker'
+import { openEditorLink } from './openLink'
 
 export type Monaco = typeof import('monaco-editor')
 
 let monacoPromise: Promise<Monaco> | null = null
 let envReady = false
+let linkOpenerReady = false
 
 function setupEnvironment(): void {
   if (envReady) return
@@ -81,6 +83,28 @@ function defineThemes(monaco: Monaco): void {
 }
 
 /**
+ * 接管「编辑器里 Ctrl+点击链接」的打开方式。
+ *
+ * Monaco 自带的链接打开器在 WebView 里表现为弹出一个新窗口；这里用
+ * editor.registerLinkOpener 注册一个优先级更高的打开器（后注册的先被调用），
+ * 具体分发见 utils/openLink.ts（跟随 设置 → 通用 → 编辑器链接打开方式）。
+ * 非 http/https（例如 file 链接）一律不接管。
+ */
+function setupLinkOpener(monaco: Monaco): void {
+  if (linkOpenerReady) return
+  linkOpenerReady = true
+  monaco.editor.registerLinkOpener({
+    open(resource): boolean {
+      const scheme = resource.scheme?.toLowerCase()
+      if (scheme !== 'http' && scheme !== 'https') return false
+      const url = resource.toString(true)
+      if (!url) return false
+      return openEditorLink(url)
+    },
+  })
+}
+
+/**
  * 懒加载 Monaco。返回同一个 Promise,多处同时调用只会加载一次。
  */
 export function loadMonaco(): Promise<Monaco> {
@@ -88,6 +112,7 @@ export function loadMonaco(): Promise<Monaco> {
     monacoPromise = import('monaco-editor').then((m) => {
       setupEnvironment()
       defineThemes(m)
+      setupLinkOpener(m)
       return m
     })
   }

@@ -38,6 +38,9 @@ import type {
   NetListener,
   NetRoute,
   Tunnel,
+  SystemForward,
+  SystemForwardStatus,
+  SystemForwardRequest,
 } from '../../bindings/changeme/app/service/types/models'
 import type {
   SavedConnection,
@@ -105,6 +108,9 @@ export type {
   NetListener,
   NetRoute,
   Tunnel,
+  SystemForward,
+  SystemForwardStatus,
+  SystemForwardRequest,
   DatabaseConfig,
   SshHost,
   ImportResult,

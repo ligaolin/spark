@@ -245,6 +245,7 @@
                             <span class="tunnel-target mono" :title="t.target">{{ t.target }}</span>
                         </div>
                         <div class="tunnel-url mono" :title="t.localUrl">{{ t.localUrl }}</div>
+                        <div v-if="t.lastError" class="tunnel-err" :title="t.lastError">{{ t.lastError }}</div>
                     </div>
                     <div class="tunnel-actions">
                         <el-button size="small" text type="primary" @click="openTunnelTab(t)">打开</el-button>
@@ -818,17 +819,20 @@ async function pickSshConnection(target: string): Promise<number | null> {
 }
 
 // 建立 SSH 本地端口转发，然后按 mode 在内嵌标签页或独立窗口打开
-async function openViaSsh(rawUrl: string, mode: 'tab' | 'window') {
+async function openViaSsh(rawUrl: string, mode: 'tab' | 'window', title = '') {
     const connectionId = await pickSshConnection(rawUrl)
     if (!connectionId) return
     try {
         const t = await SiteService.OpenTunnel(connectionId, rawUrl)
+        // 窗口标题用站点名，多个 SSH 窗口才分得清；同一隧道复用同一本地地址，
+        // 所以 OpenInApp 的按名去重能命中，重复点击是聚焦而不是再开一个窗口
+        const winTitle = title || t.connectionName || 'SSH 隧道'
         if (mode === 'window') {
-            await SiteService.OpenInApp(t.localUrl, 'SSH 隧道')
+            await SiteService.OpenInApp(t.localUrl, winTitle)
             ElMessage.success('已建立 SSH 隧道，并在独立窗口打开')
         } else {
             ElMessage.success(`隧道已建立：${t.localUrl}`)
-            openTab(`SSH · ${rawUrl}`, t.localUrl)
+            openTab(`SSH · ${title || rawUrl}`, t.localUrl)
         }
         tunnels.value = (await SiteService.ListTunnels()) ?? []
     } catch (e: any) {
@@ -837,11 +841,11 @@ async function openViaSsh(rawUrl: string, mode: 'tab' | 'window') {
 }
 
 function openLinkViaSsh(link: SiteLink) {
-    void openViaSsh(link.url, 'tab')
+    void openViaSsh(link.url, 'tab', link.name)
 }
 
 function openLinkViaSshWindow(link: SiteLink) {
-    void openViaSsh(link.url, 'window')
+    void openViaSsh(link.url, 'window', link.name)
 }
 
 async function openTunnelManager() {
@@ -1487,6 +1491,14 @@ async function openInSystemBrowser(url?: string) {
 .tunnel-url {
     font-size: 11.5px;
     color: var(--active-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tunnel-err {
+    font-size: 11.5px;
+    color: #f56c6c;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

@@ -84,7 +84,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Monitor, Close, Plus, InfoFilled, CloseBold, DArrowRight, CircleClose } from '@element-plus/icons-vue'
 import { on as busOn } from '../utils/bus'
@@ -173,9 +173,19 @@ onBeforeUnmount(() => {
     offShowSftp?.()
 })
 
-// 面板宽度：可拖拽调整，记住上次宽度
+// 面板宽度：可拖拽调整，记住上次宽度。
+// AI 页放 Markdown 对话更吃宽度，单独放宽上限；切回别的页时收窄回去。
 const panelWidth = ref(Number(localStorage.getItem('spark:panelWidth')) || 420)
 const resizingPanel = ref(false)
+
+const panelMaxWidth = computed(() => (panelTab.value === 'ai' ? 1100 : 640))
+
+watch(panelTab, () => {
+    if (panelWidth.value > panelMaxWidth.value) {
+        panelWidth.value = panelMaxWidth.value
+        localStorage.setItem('spark:panelWidth', String(panelWidth.value))
+    }
+})
 
 function startResize(e: MouseEvent) {
     e.preventDefault()
@@ -183,7 +193,7 @@ function startResize(e: MouseEvent) {
     document.body.style.userSelect = 'none'
     const onMove = (ev: MouseEvent) => {
         const w = window.innerWidth - ev.clientX
-        panelWidth.value = Math.min(640, Math.max(260, w))
+        panelWidth.value = Math.min(panelMaxWidth.value, Math.max(260, w))
     }
     const onUp = () => {
         resizingPanel.value = false

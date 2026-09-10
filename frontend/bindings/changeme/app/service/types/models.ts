@@ -78,7 +78,7 @@ export interface AgentStep {
     "step": number;
 
     /**
-     * propose | running | rejected | info
+     * thinking | propose | running | rejected | blocked | info
      */
     "status": string;
     "command"?: string;
@@ -360,6 +360,151 @@ export interface SessionClosed {
      */
     "type": string;
     "reason"?: string;
+}
+
+/**
+ * SystemForward describes one system-level (firewall NAT) port forwarding rule
+ * on the remote host. 与会话转发（ssh -L/-R/-D）不同，这类规则由远端服务器的
+ * 防火墙持久化，SSH 会话断开后依然生效。
+ */
+export interface SystemForward {
+    /**
+     * 规则标识（本应用创建=spark-fwd-xxx，其余为 sys-哈希）
+     */
+    "id": string;
+
+    /**
+     * tcp | udp
+     */
+    "proto": string;
+
+    /**
+     * 服务器对外监听端口
+     */
+    "srcPort": number;
+
+    /**
+     * 转发目标地址（IPv4）
+     */
+    "destIp": string;
+
+    /**
+     * 转发目标端口
+     */
+    "destPort": number;
+
+    /**
+     * 备注（记录在本应用的远端清单里）
+     */
+    "note"?: string;
+
+    /**
+     * firewalld | iptables | nftables
+     */
+    "backend": string;
+
+    /**
+     * firewalld 区域
+     */
+    "zone"?: string;
+
+    /**
+     * 由本应用创建（可整体撤销）
+     */
+    "managed": boolean;
+
+    /**
+     * 创建时间（本应用创建的规则）
+     */
+    "createdAt"?: string;
+
+    /**
+     * 原始规则文本，便于核对
+     */
+    "raw"?: string;
+}
+
+/**
+ * SystemForwardRequest is the payload for creating one system forwarding rule.
+ */
+export interface SystemForwardRequest {
+    /**
+     * tcp | udp
+     */
+    "proto": string;
+
+    /**
+     * 服务器对外端口
+     */
+    "srcPort": number;
+
+    /**
+     * 目标 IPv4
+     */
+    "destIp": string;
+
+    /**
+     * 目标端口
+     */
+    "destPort": number;
+    "note"?: string;
+
+    /**
+     * 仅 firewalld：区域，留空=默认区域
+     */
+    "zone"?: string;
+}
+
+/**
+ * SystemForwardStatus is the remote firewall state shown in the 系统转发 panel.
+ */
+export interface SystemForwardStatus {
+    /**
+     * firewalld | iptables | nftables | none
+     */
+    "backend": string;
+
+    /**
+     * 展示用名称
+     */
+    "backendName": string;
+
+    /**
+     * 后端可用且具备权限
+     */
+    "available": boolean;
+
+    /**
+     * root | sudo | none
+     */
+    "privilege": string;
+
+    /**
+     * net.ipv4.ip_forward
+     */
+    "ipForward": boolean;
+
+    /**
+     * 持久化方式说明
+     */
+    "persist": string;
+    "zone"?: string;
+
+    /**
+     * 本应用创建的规则数
+     */
+    "managed": number;
+
+    /**
+     * 全部转发规则数
+     */
+    "total": number;
+    "rules": SystemForward[] | null;
+
+    /**
+     * 不可用原因 / 提示
+     */
+    "message"?: string;
 }
 
 /**

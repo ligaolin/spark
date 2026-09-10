@@ -18,7 +18,7 @@ export function Cancel(sessionID: string): $CancellablePromise<void> {
 }
 
 /**
- * Clear resets the in-memory conversation for a session.
+ * Clear resets the in-memory conversation for a session (含环境快照与工作目录)。
  */
 export function Clear(sessionID: string): $CancellablePromise<void> {
     return $Call.ByID(3680764422, sessionID);

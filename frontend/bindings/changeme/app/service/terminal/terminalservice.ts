@@ -17,6 +17,13 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as types$0 from "../types/models.js";
 
 /**
+ * AddSystemForward 创建一条系统级（防火墙 NAT）端口转发规则并持久化。
+ */
+export function AddSystemForward(id: string, req: types$0.SystemForwardRequest): $CancellablePromise<types$0.SystemForwardStatus | null> {
+    return $Call.ByID(2909460938, id, req);
+}
+
+/**
  * CloseTunnel closes and releases a tunnel by id.
  */
 export function CloseTunnel(tunnelID: string): $CancellablePromise<void> {
@@ -92,6 +99,13 @@ export function ProcessList(id: string): $CancellablePromise<types$0.ProcessInfo
 }
 
 /**
+ * RemoveSystemForward 删除一条系统转发规则（按规则 ID）。
+ */
+export function RemoveSystemForward(id: string, ruleID: string): $CancellablePromise<types$0.SystemForwardStatus | null> {
+    return $Call.ByID(3650444753, id, ruleID);
+}
+
+/**
  * Resize adjusts the remote PTY size (rows x cols).
  */
 export function Resize(id: string, rows: number, cols: number): $CancellablePromise<void> {
@@ -116,7 +130,14 @@ export function ServerInfo(id: string): $CancellablePromise<types$0.ServerInfo |
 }
 
 /**
- * Tunnels returns all tunnels of a session.
+ * SystemForwardStatus 探测远端防火墙后端、权限与已有的转发规则。
+ */
+export function SystemForwardStatus(id: string): $CancellablePromise<types$0.SystemForwardStatus | null> {
+    return $Call.ByID(2911094587, id);
+}
+
+/**
+ * Tunnels returns all tunnels of a session, ordered by creation time.
  */
 export function Tunnels(sessionID: string): $CancellablePromise<types$0.Tunnel[] | null> {
     return $Call.ByID(3280445124, sessionID);

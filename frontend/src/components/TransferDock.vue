@@ -2,9 +2,14 @@
   <div class="transfer-dock" v-if="store.items.length > 0">
     <div class="dock-head">
       <span>传输队列（{{ store.items.length }}）</span>
-      <el-button size="small" text @click="store.clear()">清空</el-button>
+      <div class="dock-head-actions">
+        <el-button v-if="!stick" size="small" text type="primary" @click="scrollToLatest(true)">
+          最新 ↓
+        </el-button>
+        <el-button size="small" text @click="store.clear()">清空</el-button>
+      </div>
     </div>
-    <div class="dock-body">
+    <div ref="bodyRef" class="dock-body" @scroll.passive="onScroll">
       <div v-for="item in store.items" :key="item.key" class="tf-item">
         <span class="tf-icon" :class="item.status">
           <el-icon v-if="item.status === 'running'">
@@ -31,10 +36,45 @@
 </template>
 
 <script setup lang="ts">
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { Loading, CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
 import { useTransfersStore } from '../stores/transfers'
 
 const store = useTransfersStore()
+
+const bodyRef = ref<HTMLElement | null>(null)
+// 是否贴在底部：用户手动往上滚查看历史时置 false，滚回底部自动恢复
+const stick = ref(true)
+
+// 进度推进的指纹：百分比 / 状态变化时触发，用于持续跟随最新一条
+const progressSig = computed(() =>
+  store.items.map((i) => `${i.key}:${i.percent}:${i.status}`).join('|'),
+)
+
+function isAtBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= 24
+}
+
+function onScroll() {
+  const el = bodyRef.value
+  if (el) stick.value = isAtBottom(el)
+}
+
+// 滚到最新一条（force=true 时即使用户已上滑也拉回底部）
+function scrollToLatest(force = false) {
+  if (force) stick.value = true
+  if (!stick.value) return
+  void nextTick(() => {
+    const el = bodyRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+// 有新条目就滚到最后，确保始终能看到最新上传进度；已在底部时进度更新也继续跟随
+watch(() => store.items.length, () => scrollToLatest(true))
+watch(progressSig, () => scrollToLatest())
+
+onMounted(() => scrollToLatest(true))
 </script>
 
 <style scoped>
@@ -57,6 +97,12 @@ const store = useTransfersStore()
   font-size: 12px;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-color);
+}
+
+.dock-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .dock-body {

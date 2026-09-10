@@ -214,6 +214,48 @@ type Tunnel struct {
 	Error    string `json:"error,omitempty"`
 }
 
+// SystemForward describes one system-level (firewall NAT) port forwarding rule
+// on the remote host. 与会话转发（ssh -L/-R/-D）不同，这类规则由远端服务器的
+// 防火墙持久化，SSH 会话断开后依然生效。
+type SystemForward struct {
+	ID        string `json:"id"`                  // 规则标识（本应用创建=spark-fwd-xxx，其余为 sys-哈希）
+	Proto     string `json:"proto"`               // tcp | udp
+	SrcPort   int    `json:"srcPort"`             // 服务器对外监听端口
+	DestIP    string `json:"destIp"`              // 转发目标地址（IPv4）
+	DestPort  int    `json:"destPort"`            // 转发目标端口
+	Note      string `json:"note,omitempty"`      // 备注（记录在本应用的远端清单里）
+	Backend   string `json:"backend"`             // firewalld | iptables | nftables
+	Zone      string `json:"zone,omitempty"`      // firewalld 区域
+	Managed   bool   `json:"managed"`             // 由本应用创建（可整体撤销）
+	CreatedAt string `json:"createdAt,omitempty"` // 创建时间（本应用创建的规则）
+	Raw       string `json:"raw,omitempty"`       // 原始规则文本，便于核对
+}
+
+// SystemForwardStatus is the remote firewall state shown in the 系统转发 panel.
+type SystemForwardStatus struct {
+	Backend     string          `json:"backend"`     // firewalld | iptables | nftables | none
+	BackendName string          `json:"backendName"` // 展示用名称
+	Available   bool            `json:"available"`   // 后端可用且具备权限
+	Privilege   string          `json:"privilege"`   // root | sudo | none
+	IPForward   bool            `json:"ipForward"`   // net.ipv4.ip_forward
+	Persist     string          `json:"persist"`     // 持久化方式说明
+	Zone        string          `json:"zone,omitempty"`
+	Managed     int             `json:"managed"` // 本应用创建的规则数
+	Total       int             `json:"total"`   // 全部转发规则数
+	Rules       []SystemForward `json:"rules"`
+	Message     string          `json:"message,omitempty"` // 不可用原因 / 提示
+}
+
+// SystemForwardRequest is the payload for creating one system forwarding rule.
+type SystemForwardRequest struct {
+	Proto    string `json:"proto"`    // tcp | udp
+	SrcPort  int    `json:"srcPort"`  // 服务器对外端口
+	DestIP   string `json:"destIp"`   // 目标 IPv4
+	DestPort int    `json:"destPort"` // 目标端口
+	Note     string `json:"note,omitempty"`
+	Zone     string `json:"zone,omitempty"` // 仅 firewalld：区域，留空=默认区域
+}
+
 // AIConfig holds the user's AI provider settings. The API key is never
 // returned to the frontend; HasKey reports whether a key is stored.
 type AIConfig struct {
@@ -252,7 +294,7 @@ type AgentReply struct {
 type AgentStep struct {
 	SessionID     string `json:"sessionId"`
 	Step          int    `json:"step"`
-	Status        string `json:"status"` // propose | running | rejected | info
+	Status        string `json:"status"` // thinking | propose | running | rejected | blocked | info
 	Command       string `json:"command,omitempty"`
 	Reason        string `json:"reason,omitempty"`
 	NeedsApproval bool   `json:"needsApproval"`

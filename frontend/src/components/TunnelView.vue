@@ -1,61 +1,73 @@
 <template>
   <div class="tv-view">
-    <div class="tv-toolbar">
-      <el-button size="small" type="primary" plain :disabled="!sessionId" @click="openLocal">
-        本地转发
-      </el-button>
-      <el-button size="small" type="warning" plain :disabled="!sessionId" @click="openRemote">
-        远程转发
-      </el-button>
-      <el-button size="small" type="success" plain :disabled="!sessionId" @click="openSocks">
-        SOCKS5 代理
-      </el-button>
-      <el-button size="small" :loading="loading" @click="load">
-        <el-icon style="margin-right: 2px"><Refresh /></el-icon>
-      </el-button>
+    <!-- 会话转发：ssh -L/-R/-D，随会话存亡；系统转发：写服务器防火墙规则 -->
+    <div class="tv-mode">
+      <el-radio-group v-model="mode" size="small">
+        <el-radio-button value="session">会话转发</el-radio-button>
+        <el-radio-button value="system">系统转发</el-radio-button>
+      </el-radio-group>
     </div>
 
-    <div v-if="!sessionId" class="tv-hint">请先连接 SSH 会话，转发 / 代理将复用当前会话的连接</div>
+    <template v-if="mode === 'session'">
+      <div class="tv-toolbar">
+        <el-button size="small" type="primary" plain :disabled="!sessionId" @click="openLocal">
+          本地转发
+        </el-button>
+        <el-button size="small" type="warning" plain :disabled="!sessionId" @click="openRemote">
+          远程转发
+        </el-button>
+        <el-button size="small" type="success" plain :disabled="!sessionId" @click="openSocks">
+          SOCKS5 代理
+        </el-button>
+        <el-button size="small" :loading="loading" @click="load">
+          <el-icon style="margin-right: 2px"><Refresh /></el-icon>
+        </el-button>
+      </div>
 
-    <div class="tv-scroll">
-      <template v-if="tunnels.length">
-        <div v-for="t in tunnels" :key="t.id" class="tv-item">
-          <div class="tv-item-head">
-            <el-tag :type="kindTag(t.kind)" size="small">{{ kindLabel(t.kind) }}</el-tag>
-            <el-tag v-if="t.status === 'running'" size="small" type="success" effect="dark">运行中</el-tag>
-            <el-tag v-else-if="t.status === 'error'" size="small" type="danger">错误</el-tag>
-            <el-tag v-else size="small" type="info">{{ t.status }}</el-tag>
-            <span class="tv-actions">
-              <el-button size="small" text type="primary" @click="copy(t.bindAddr)">复制地址</el-button>
-              <el-button size="small" text type="danger" @click="close(t)">关闭</el-button>
-            </span>
+      <div v-if="!sessionId" class="tv-hint">请先连接 SSH 会话，转发 / 代理将复用当前会话的连接</div>
+
+      <div class="tv-scroll">
+        <template v-if="tunnels.length">
+          <div v-for="t in tunnels" :key="t.id" class="tv-item">
+            <div class="tv-item-head">
+              <el-tag :type="kindTag(t.kind)" size="small">{{ kindLabel(t.kind) }}</el-tag>
+              <el-tag v-if="t.status === 'running' && !t.error" size="small" type="success" effect="dark">运行中</el-tag>
+              <el-tag v-else-if="t.status === 'error' || t.error" size="small" type="warning">有错误</el-tag>
+              <el-tag v-else size="small" type="info">{{ t.status }}</el-tag>
+              <span class="tv-actions">
+                <el-button size="small" text type="primary" @click="copy(t.bindAddr)">复制地址</el-button>
+                <el-button size="small" text type="danger" @click="close(t)">关闭</el-button>
+              </span>
+            </div>
+
+            <div class="tv-rows">
+              <div class="tv-row">
+                <span class="tv-label">监听</span>
+                <span class="tv-value mono">{{ t.bindAddr }}</span>
+              </div>
+              <div class="tv-row">
+                <span class="tv-label">{{ t.kind === 'remote' ? '本机目标' : '目标' }}</span>
+                <span class="tv-value mono">{{ t.kind === 'socks' ? '动态（任意目标）' : t.target || '—' }}</span>
+              </div>
+              <div v-if="t.error" class="tv-row">
+                <span class="tv-label">最近失败</span>
+                <span class="tv-value tv-err">{{ t.error }}</span>
+              </div>
+            </div>
           </div>
+        </template>
 
-          <div class="tv-rows">
-            <div class="tv-row">
-              <span class="tv-label">监听</span>
-              <span class="tv-value mono">{{ t.bindAddr }}</span>
-            </div>
-            <div class="tv-row">
-              <span class="tv-label">{{ t.kind === 'remote' ? '本机目标' : '目标' }}</span>
-              <span class="tv-value mono">{{ t.kind === 'socks' ? '动态（任意目标）' : t.target || '—' }}</span>
-            </div>
-            <div v-if="t.error" class="tv-row">
-              <span class="tv-label">错误</span>
-              <span class="tv-value tv-err">{{ t.error }}</span>
-            </div>
-          </div>
-        </div>
-      </template>
+        <el-empty v-else-if="!loading" description="暂无转发 / 代理，点击上方按钮创建" :image-size="60" />
+      </div>
 
-      <el-empty v-else-if="!loading" description="暂无转发 / 代理，点击上方按钮创建" :image-size="60" />
-    </div>
+      <div class="tv-foot">
+        <span class="tv-info">
+          {{ kindHint }}
+        </span>
+      </div>
+    </template>
 
-    <div class="tv-foot">
-      <span class="tv-info">
-        {{ kindHint }}
-      </span>
-    </div>
+    <SystemForwardPanel v-else :session-id="sessionId" :active="!!active" />
   </div>
 </template>
 
@@ -67,11 +79,15 @@ import { Clipboard } from '@wailsio/runtime'
 import { TerminalService } from '../utils/wails'
 import type { Tunnel } from '../utils/wails'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
+import SystemForwardPanel from './SystemForwardPanel.vue'
 
 const props = defineProps<{
   sessionId: string
   active?: boolean
 }>()
+
+// session = 复用当前 SSH 会话的隧道；system = 服务器防火墙上的系统级转发
+const mode = ref<'session' | 'system'>('session')
 
 const tunnels = ref<Tunnel[]>([])
 const loading = ref(false)
@@ -168,7 +184,7 @@ async function copy(text: string) {
 
 function startTimer() {
   stopTimer()
-  if (!props.active || !props.sessionId) return
+  if (!props.active || !props.sessionId || mode.value !== 'session') return
   load()
   // 轻量轮询：仅读本地内存里的隧道表，会话断开后自动清空列表
   timer = setInterval(load, 3000)
@@ -182,6 +198,7 @@ function stopTimer() {
 }
 
 watch(() => props.active, startTimer)
+watch(mode, startTimer)
 watch(
   () => props.sessionId,
   () => {
@@ -199,6 +216,13 @@ onBeforeUnmount(stopTimer)
   flex-direction: column;
   height: 100%;
   min-height: 0;
+}
+
+.tv-mode {
+  display: flex;
+  align-items: center;
+  padding: 10px 10px 0;
+  flex-shrink: 0;
 }
 
 .tv-toolbar {
