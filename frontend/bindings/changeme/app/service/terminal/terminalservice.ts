@@ -109,7 +109,7 @@ export function RunCommand(id: string, command: string): $CancellablePromise<str
 
 /**
  * ServerInfo queries basic server information (OS, CPU, memory, disks).
- * 内置重试机制：首次失败后会等待 800ms 重试一次，提高不稳定网络下的成功率。
+ * 内置重试机制：首次失败后会短暂等待重试一次，提高不稳定网络下的成功率。
  */
 export function ServerInfo(id: string): $CancellablePromise<types$0.ServerInfo | null> {
     return $Call.ByID(2180983378, id);
