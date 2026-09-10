@@ -5,9 +5,12 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { editor as MonacoEditor } from 'monaco-editor'
+import { ElMessage } from 'element-plus'
 import { useSettingsStore } from '../stores/settings'
 import { loadMonaco, monacoTheme, type Monaco } from '../utils/monaco'
 import { registerTextMateGrammars } from '../utils/textmate'
+import { streamToDialog } from '../utils/ai'
+import { showInputDialog } from '../utils/dialog'
 
 const props = defineProps<{
   // 用于根据文件扩展名自动匹配语法高亮
@@ -90,6 +93,36 @@ onMounted(async () => {
 
   // Ctrl+S / Cmd+S 保存
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => emit('save'))
+
+  // AI 右键菜单动作
+  editor.addAction({
+    id: 'spark-ai-explain',
+    label: 'AI：解释选中代码',
+    contextMenuGroupId: 'spark-ai',
+    contextMenuOrder: 1,
+    run: () => void aiExplain(),
+  })
+  editor.addAction({
+    id: 'spark-ai-generate',
+    label: 'AI：生成代码…',
+    contextMenuGroupId: 'spark-ai',
+    contextMenuOrder: 2,
+    run: () => void aiGenerate(),
+  })
+  editor.addAction({
+    id: 'spark-ai-rewrite',
+    label: 'AI：改写选中代码…',
+    contextMenuGroupId: 'spark-ai',
+    contextMenuOrder: 3,
+    run: () => void aiRewrite(),
+  })
+  editor.addAction({
+    id: 'spark-ai-complete',
+    label: 'AI：补全代码…',
+    contextMenuGroupId: 'spark-ai',
+    contextMenuOrder: 4,
+    run: () => void aiComplete(),
+  })
 
   editor.onDidChangeModelContent(() => {
     if (!suppressChange) emit('change', editor!.getValue())
@@ -190,6 +223,98 @@ function setReadonly(readonly: boolean) {
   editor?.updateOptions({ readOnly: readonly })
 }
 
+// ---------- AI 助手 ----------
+
+function currentLanguage(): string {
+  return editor?.getModel()?.getLanguageId() || ''
+}
+
+function getSelection(): string {
+  if (!editor) return ''
+  const sel = editor.getSelection()
+  if (!sel || sel.isEmpty()) return ''
+  return editor.getModel()?.getValueInRange(sel) ?? ''
+}
+
+function applyEdit(text: string) {
+  if (!editor) return
+  const sel = editor.getSelection()
+  if (!sel) return
+  editor.executeEdits('ai', [{ range: sel, text }])
+  editor.focus()
+}
+
+function replaceSelection(text: string) {
+  applyEdit(text)
+}
+
+function insertAtCursor(text: string) {
+  applyEdit(text)
+}
+
+function aiExplain() {
+  const sel = getSelection()
+  if (!sel) {
+    ElMessage.warning('请先选中要解释的代码')
+    return
+  }
+  streamToDialog('explain-code', sel, currentLanguage(), { title: '解释代码' })
+}
+
+async function aiGenerate() {
+  const values = await showInputDialog('生成代码', [
+    {
+      key: 'desc',
+      label: '描述你想要生成的代码',
+      type: 'textarea',
+      placeholder: '如：一个用 Go 读取并解析 JSON 文件的小函数',
+    },
+  ])
+  if (!values) return
+  streamToDialog('generate-code', values.desc.trim(), currentLanguage(), {
+    title: '生成代码',
+    insertLabel: '插入到光标处',
+    onInsert: (t) => insertAtCursor(t),
+  })
+}
+
+async function aiRewrite() {
+  const sel = getSelection()
+  if (!sel) {
+    ElMessage.warning('请先选中要改写的代码')
+    return
+  }
+  const values = await showInputDialog('改写代码', [
+    {
+      key: 'req',
+      label: '改写要求（可选）',
+      type: 'textarea',
+      optional: true,
+      placeholder: '留空 = 优化质量与可读性',
+    },
+  ])
+  if (!values) return
+  streamToDialog('rewrite-code', sel, values.req.trim(), {
+    title: '改写代码',
+    replaceLabel: '替换选中',
+    onReplace: (t) => replaceSelection(t),
+  })
+}
+
+function aiComplete() {
+  const sel = getSelection()
+  const code = (sel || editor?.getValue() || '').slice(-8000)
+  if (!code.trim()) {
+    ElMessage.warning('当前无代码内容')
+    return
+  }
+  streamToDialog('complete-code', code, undefined, {
+    title: '补全代码',
+    insertLabel: '插入到光标处',
+    onInsert: (t) => insertAtCursor(t),
+  })
+}
+
 onBeforeUnmount(() => {
   const model = editor?.getModel()
   editor?.dispose()
@@ -198,7 +323,7 @@ onBeforeUnmount(() => {
   monaco = null
 })
 
-defineExpose({ setContent, getContent, focus, jumpToLine, setReadonly })
+defineExpose({ setContent, getContent, focus, jumpToLine, setReadonly, getSelection, insertAtCursor, replaceSelection })
 </script>
 
 <style scoped>

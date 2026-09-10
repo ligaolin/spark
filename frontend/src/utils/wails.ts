@@ -1,5 +1,7 @@
 // Wails 绑定集中出口：前端所有对 Go 服务的调用都从这里导入。
 // 绑定由 `wails3 generate bindings -ts -i` 生成（TS 接口版），勿手改。
+import { AgentService } from '../../bindings/changeme/app/service/agent'
+import { AIService } from '../../bindings/changeme/app/service/ai'
 import { TerminalService } from '../../bindings/changeme/app/service/terminal'
 import { SFTPFileService } from '../../bindings/changeme/app/service/sftp'
 import { FTPFileService } from '../../bindings/changeme/app/service/ftp'
@@ -19,6 +21,14 @@ import { ShellMenuService } from '../../bindings/changeme/app/service/shellmenu'
 import type { LaunchRequest } from '../../bindings/changeme/app/service/shellmenu/models'
 
 import type {
+  AgentReply,
+  AgentStep,
+  AgentAsk,
+  AgentOutput,
+  AgentDone,
+  AIConfig,
+  ChatMessage,
+  AIChatDelta,
   ConnectOptions,
   ServerInfo,
   ProcessInfo,
@@ -47,6 +57,8 @@ import type { SshHost, ImportResult } from '../../bindings/changeme/app/service/
 import type { DedupResult } from '../../bindings/changeme/app/service/connections/models'
 
 export {
+  AgentService,
+  AIService,
   TerminalService,
   SFTPFileService,
   FTPFileService,
@@ -65,6 +77,14 @@ export {
   ShellMenuService,
 }
 export type {
+  AgentReply,
+  AgentStep,
+  AgentAsk,
+  AgentOutput,
+  AgentDone,
+  AIConfig,
+  ChatMessage,
+  AIChatDelta,
   ConnectOptions,
   SavedConnection,
   CustomCommand,
@@ -174,8 +194,30 @@ export function makeDatabaseConfig(partial: Partial<DatabaseConfig> = {}): Datab
   }
 }
 
+export function makeAIConfig(partial: Partial<AIConfig> = {}): AIConfig {
+  return {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    temperature: 0.7,
+    maxTokens: 2048,
+    systemPrompt: '你是一个乐于助人的助手。',
+    hasKey: false,
+    ...partial,
+  }
+}
+
+export function makeChatMessage(role: string, content: string): ChatMessage {
+  return { role, content }
+}
+
 // 后端事件名
 export const EVENTS = {
+  aiDelta: 'ai:delta',
+  agentReply: 'agent:reply',
+  agentStep: 'agent:step',
+  agentAsk: 'agent:ask',
+  agentOutput: 'agent:output',
+  agentDone: 'agent:done',
   terminalOutput: 'terminal:output',
   terminalExit: 'terminal:exit',
   localTerminalOutput: 'localTerminal:output',

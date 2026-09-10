@@ -51,6 +51,30 @@ type sshSession struct {
 // ServiceName implements application.ServiceName.
 func (t *TerminalService) ServiceName() string { return "TerminalService" }
 
+// Shared instance so the terminal AI agent can run commands on existing
+// sessions without a frontend round-trip.
+var global *TerminalService
+
+// SetGlobal registers the shared TerminalService instance (called from main).
+func SetGlobal(t *TerminalService) { global = t }
+
+// IsSessionConnected reports whether a session id is alive (agent pre-check).
+func IsSessionConnected(id string) bool {
+	if global == nil {
+		return false
+	}
+	return global.IsConnected(id)
+}
+
+// ExecCommand runs a command on an existing session through a fresh SSH exec
+// channel, returning combined output and exit code.
+func ExecCommand(id, command string) (string, int, error) {
+	if global == nil {
+		return "", -1, errors.New("终端服务未初始化")
+	}
+	return global.runCommandWithTimeout(id, command, 180*time.Second)
+}
+
 // Connect establishes an SSH connection and starts an interactive shell.
 // It returns the new session id.
 func (t *TerminalService) Connect(opts types.ConnectOptions) (string, error) {
@@ -230,9 +254,23 @@ func (t *TerminalService) runCommandWithTimeout(id, command string, timeout time
 	}
 	defer sess.Close()
 
-	var buf bytes.Buffer
-	sess.Stdout = &buf
-	sess.Stderr = &buf
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		return "", -1, fmt.Errorf("获取标准输出失败: %w", err)
+	}
+	stderr, err := sess.StderrPipe()
+	if err != nil {
+		return "", -1, fmt.Errorf("获取标准错误失败: %w", err)
+	}
+
+	// 用 StdoutPipe/StderrPipe 显式读取，并用 WaitGroup 等读取协程写完。
+	// 否则 x/crypto/ssh 的 Wait() 可能在输出协程写完前就返回，导致
+	// 命令输出为空或截断（df -h 这类短输出尤其容易踩到）。
+	var out, errBuf bytes.Buffer
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); _, _ = io.Copy(&out, stdout) }()
+	go func() { defer wg.Done(); _, _ = io.Copy(&errBuf, stderr) }()
 
 	if err := sess.Start(command); err != nil {
 		return "", -1, fmt.Errorf("启动命令失败: %w", err)
@@ -242,17 +280,19 @@ func (t *TerminalService) runCommandWithTimeout(id, command string, timeout time
 
 	select {
 	case err := <-done:
+		wg.Wait()
 		if err != nil {
 			var exitErr *xssh.ExitError
 			if errors.As(err, &exitErr) {
-				return buf.String(), exitErr.ExitStatus(), nil
+				return out.String(), exitErr.ExitStatus(), nil
 			}
 			return "", -1, fmt.Errorf("执行命令失败: %w", err)
 		}
-		return buf.String(), 0, nil
+		return out.String(), 0, nil
 	case <-time.After(timeout):
 		_ = sess.Signal(xssh.SIGKILL)
-		return buf.String(), -1, fmt.Errorf("命令执行超时（%d 秒），已终止", int(timeout.Seconds()))
+		wg.Wait()
+		return out.String(), -1, fmt.Errorf("命令执行超时（%d 秒），已终止", int(timeout.Seconds()))
 	}
 }
 

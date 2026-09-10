@@ -17,6 +17,9 @@ build.log
 *.sqlite
 *.sqlite3
 changeme.exe
+# Android 签名（含私钥，严禁提交到仓库）
+spark-release.keystore
+android-signing.txt
 /.pnpm-store/
 /.npm-cache/
 /.gocache/

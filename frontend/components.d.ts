@@ -11,6 +11,8 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AiResultDialog: typeof import('./src/components/AiResultDialog.vue')['default']
+    AiTerminalPanel: typeof import('./src/components/AiTerminalPanel.vue')['default']
     CodeEditor: typeof import('./src/components/CodeEditor.vue')['default']
     ConfirmDialog: typeof import('./src/components/ConfirmDialog.vue')['default']
     ConnectDialog: typeof import('./src/components/ConnectDialog.vue')['default']
@@ -22,6 +24,9 @@ declare module 'vue' {
     ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
     ElConfigProvider: typeof import('element-plus/es')['ElConfigProvider']
     ElDialog: typeof import('element-plus/es')['ElDialog']
+    ElDropdown: typeof import('element-plus/es')['ElDropdown']
+    ElDropdownItem: typeof import('element-plus/es')['ElDropdownItem']
+    ElDropdownMenu: typeof import('element-plus/es')['ElDropdownMenu']
     ElEmpty: typeof import('element-plus/es')['ElEmpty']
     ElForm: typeof import('element-plus/es')['ElForm']
     ElFormItem: typeof import('element-plus/es')['ElFormItem']

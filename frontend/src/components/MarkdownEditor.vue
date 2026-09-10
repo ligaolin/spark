@@ -109,6 +109,8 @@ defineExpose({ setContent, getContent, focus, jumpToLine, setReadonly: (v: boole
 
 .md-editor-wrap :deep(.md-editor) {
   border-radius: 0;
+  /* 根背景变量：md-editor-v3 用 --md-bk-color 作为编辑器根背景（含全屏时） */
+  --md-bk-color: var(--editor-bg);
   --md-color: var(--text-primary);
   --md-hover-color: var(--active-text);
   --md-border-color: var(--border-color);
@@ -116,6 +118,12 @@ defineExpose({ setContent, getContent, focus, jumpToLine, setReadonly: (v: boole
   --md-background-color: var(--editor-bg);
   --md-box-shadow: none;
   --md-input-bg-color: var(--editor-bg);
+}
+
+/* 全屏时强制铺满视口、背景不透明，避免底下内容透出 */
+.md-editor-wrap :deep(.md-editor-fullscreen) {
+  background-color: var(--editor-bg) !important;
+  z-index: 10000;
 }
 
 .md-editor-wrap :deep(.md-editor-toolbar) {

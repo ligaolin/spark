@@ -12,6 +12,12 @@ import type * as types$0 from "../../../../../changeme/app/service/types/models.
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
+            "agent:ask": types$0.AgentAsk;
+            "agent:done": types$0.AgentDone;
+            "agent:output": types$0.AgentOutput;
+            "agent:reply": types$0.AgentReply;
+            "agent:step": types$0.AgentStep;
+            "ai:delta": types$0.AIChatDelta;
             "localTerminal:exit": types$0.TerminalExit;
             "localTerminal:output": types$0.TerminalOutput;
             "session:closed": types$0.SessionClosed;

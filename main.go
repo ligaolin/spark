@@ -7,6 +7,8 @@ import (
 	"runtime"
 
 	"changeme/app/model"
+	"changeme/app/service/agent"
+	"changeme/app/service/ai"
 	"changeme/app/service/connections"
 	"changeme/app/service/customcmd"
 	"changeme/app/service/databases"
@@ -47,6 +49,12 @@ func init() {
 	application.RegisterEvent[types.TerminalExit]("localTerminal:exit")
 	application.RegisterEvent[types.TransferProgress]("transfer:progress")
 	application.RegisterEvent[types.SessionClosed]("session:closed")
+	application.RegisterEvent[types.AIChatDelta]("ai:delta")
+	application.RegisterEvent[types.AgentReply]("agent:reply")
+	application.RegisterEvent[types.AgentStep]("agent:step")
+	application.RegisterEvent[types.AgentAsk]("agent:ask")
+	application.RegisterEvent[types.AgentOutput]("agent:output")
+	application.RegisterEvent[types.AgentDone]("agent:done")
 }
 
 func main() {
@@ -77,11 +85,17 @@ func main() {
 
 	var win *application.WebviewWindow
 
+	// 终端服务共享实例：AI Agent 需要通过它在已有会话上执行命令
+	termSvc := &terminal.TerminalService{}
+	terminal.SetGlobal(termSvc)
+
 	app := application.New(application.Options{
 		Name:        "spark 终端",
 		Description: "终端 - SSH / SFTP / FTP",
 		Services: []application.Service{
-			application.NewService(&terminal.TerminalService{}),
+			application.NewService(&ai.AIService{}),
+			application.NewService(&agent.AgentService{}),
+			application.NewService(termSvc),
 			application.NewService(&localterminal.LocalTerminalService{}),
 			application.NewService(&sftp.SFTPFileService{}),
 			application.NewService(&ftp.FTPFileService{}),
