@@ -93,6 +93,8 @@ interface TabSftp {
     seq: number
     pending: Promise<void> | null
     backend: FileBackend | null
+    // 切走前记住的当前目录，切回来时恢复
+    cwd?: string
 }
 
 const tabs = reactive<Record<string, TabSftp>>({})
@@ -241,7 +243,15 @@ const nullBackend: FileBackend = {
 // ---------- 标签生命周期 ----------
 
 // 活动标签切换：只把面板视图切到该标签的会话，不关闭旧标签会话与编辑器板块
+let lastKey = ''
+
 async function activateTab(key: string) {
+    // 切走前保存旧标签的当前目录
+    if (lastKey && lastKey !== key && tabs[lastKey]) {
+        tabs[lastKey].cwd = remotePanel.value?.currentPath || undefined
+    }
+    lastKey = key
+
     if (!key) {
         remotePanel.value?.clear()
         return
@@ -251,7 +261,13 @@ async function activateTab(key: string) {
     if (props.tabKey !== key) return // 拨号期间又切换了标签，交给最新的激活流程
     remotePanel.value?.clear()
     if (ok) {
-        await panelGoHome()
+        const savedCwd = tabs[key]?.cwd
+        if (savedCwd) {
+            await nextTick()
+            remotePanel.value?.cd?.(savedCwd)
+        } else {
+            await panelGoHome()
+        }
     }
 }
 

@@ -37,8 +37,9 @@
 
             <div class="terminal-body">
                 <div class="term-area">
-                    <TerminalPane v-for="tab in store.tabs" v-show="tab.key === store.activeKey" :key="tab.key"
-                        :tab="tab" />
+                    <KeepAlive :max="8">
+                        <TerminalPane v-if="store.activeTab" :key="store.activeKey" :tab="store.activeTab!" />
+                    </KeepAlive>
                 </div>
 
                 <!-- v-show（而非 v-if）：收起面板时 SFTP 面板保持挂载、连接不断 -->

@@ -48,6 +48,15 @@ export function List(): $CancellablePromise<model$0.DocNode[] | null> {
 }
 
 /**
+ * ListChildren returns only the direct children of parentID (0 = root),
+ * without content, ordered by sort then name. Used by the frontend to
+ * lazy-load the document tree one level at a time.
+ */
+export function ListChildren(parentID: number): $CancellablePromise<model$0.DocNode[] | null> {
+    return $Call.ByID(1311599609, parentID);
+}
+
+/**
  * Move moves a node to a new parent (0 = root). Moving a folder into its own
  * descendant is rejected. The node is appended to the end of the new parent.
  */

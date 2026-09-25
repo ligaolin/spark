@@ -40,6 +40,8 @@ export interface SearchResult {
   size: number
   modTime: string
   isDir: boolean
+  id: number
+  kind: string
   lineNo?: number
   line?: string
 }

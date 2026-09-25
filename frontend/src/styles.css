@@ -89,14 +89,6 @@ body,
 body {
     background: var(--app-bg);
     color: var(--text-primary);
-    user-select: none;
-}
-
-.el-table,
-.el-input,
-.el-button,
-.el-dropdown {
-    user-select: text;
 }
 
 .el-button+.el-button {

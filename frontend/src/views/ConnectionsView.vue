@@ -414,7 +414,7 @@ function connToOpts(conn: SavedConnection): ConnectOptions {
 }
 
 function openTerminal(conn: SavedConnection) {
-    termStore.addTab(connToOpts(conn), conn.id ?? undefined)
+    termStore.addTab(connToOpts(conn), conn.id ?? undefined, conn.name)
     // 通知终端页：展开右侧面板并切到 SFTP 页（打开 SSH 默认两个都打开）
     sessionStorage.setItem('spark:open-terminal-panel', '1')
     router.push('/terminal')

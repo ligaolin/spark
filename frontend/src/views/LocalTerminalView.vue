@@ -48,8 +48,9 @@
           </div>
         </div>
         <div class="term-area">
-          <LocalTerminalPane v-for="tab in store.tabs" v-show="tab.key === store.activeKey" :key="tab.key"
-            :tab="tab" />
+          <KeepAlive :max="6">
+            <LocalTerminalPane v-if="store.activeTab" :key="store.activeKey" :tab="store.activeTab!" />
+          </KeepAlive>
         </div>
       </template>
     </template>

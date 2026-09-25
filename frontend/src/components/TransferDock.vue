@@ -36,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Loading, CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
 import { useTransfersStore } from '../stores/transfers'
 
@@ -60,11 +60,15 @@ function onScroll() {
   if (el) stick.value = isAtBottom(el)
 }
 
-// 滚到最新一条（force=true 时即使用户已上滑也拉回底部）
+// 滚到最新一条（force=true 时即使用户已上滑也拉回底部）；用 RAF 合并同一帧的高频调用
+let scrollRafId: number | null = null
+
 function scrollToLatest(force = false) {
   if (force) stick.value = true
   if (!stick.value) return
-  void nextTick(() => {
+  if (scrollRafId !== null) return
+  scrollRafId = requestAnimationFrame(() => {
+    scrollRafId = null
     const el = bodyRef.value
     if (el) el.scrollTop = el.scrollHeight
   })
@@ -75,6 +79,9 @@ watch(() => store.items.length, () => scrollToLatest(true))
 watch(progressSig, () => scrollToLatest())
 
 onMounted(() => scrollToLatest(true))
+onBeforeUnmount(() => {
+  if (scrollRafId !== null) cancelAnimationFrame(scrollRafId)
+})
 </script>
 
 <style scoped>

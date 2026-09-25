@@ -61,6 +61,8 @@ type SearchResult struct {
 	Size    int64     `json:"size"`
 	ModTime time.Time `json:"modTime"`
 	IsDir   bool      `json:"isDir"`
+	ID      uint      `json:"id"`
+	Kind    string    `json:"kind"`
 
 	// Content search only
 	LineNo int    `json:"lineNo,omitempty"`

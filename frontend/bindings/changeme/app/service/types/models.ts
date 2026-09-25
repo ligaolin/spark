@@ -303,6 +303,8 @@ export interface SearchResult {
     "size": number;
     "modTime": string;
     "isDir": boolean;
+    "id": number;
+    "kind": string;
 
     /**
      * Content search only

@@ -1,6 +1,6 @@
 <template>
     <div class="ai-chat">
-        <!-- 顶部：标题 + 模型 -->
+        <!-- 顶部：标题 -->
         <div class="ai-head">
             <span class="ai-title">
                 <el-icon>
@@ -8,10 +8,6 @@
                 </el-icon>
                 AI 助手
             </span>
-            <el-select v-model="model" size="small" class="ai-model" filterable allow-create default-first-option
-                placeholder="选择模型" title="模型" @change="onModelChange">
-                <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
-            </el-select>
         </div>
 
         <!-- 消息区 -->
@@ -135,6 +131,10 @@
                 :placeholder="sessionId ? '描述你的目标，Enter 发送，Shift+Enter 换行' : '请先连接 SSH 会话'"
                 :disabled="!sessionId" @keydown.enter.exact.prevent="send" />
             <div class="composer-bar">
+                <el-select v-model="model" size="small" class="ai-model" filterable allow-create default-first-option
+                    placeholder="选择模型" title="模型" @change="onModelChange">
+                    <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
+                </el-select>
                 <el-select v-model="authMode" size="small" class="ai-auth" :disabled="running" title="授权模式">
                     <el-option label="仅可查看" value="ask" />
                     <el-option label="敏感操作询问" value="sensitive" />
@@ -158,7 +158,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watchEffect } from 'vue'
 import { Events, Clipboard } from '@wailsio/runtime'
 import { ElMessage } from 'element-plus'
 import {
@@ -233,24 +233,14 @@ const startedBySession = reactive<Record<string, number>>({})
 const scrollRef = ref<HTMLElement | null>(null)
 const stick = ref(true)
 const unsubs: Array<() => void> = []
-// 每秒 +1，仅用于让「思考中（3s）」这类计时文案保持刷新
-const tick = ref(0)
-let timer: number | null = null
 
 const entries = computed<Entry[]>(() => histories[props.sessionId] ?? [])
 const running = computed(() => !!runningBySession[props.sessionId])
 const pending = computed(() => pendingBySession[props.sessionId] ?? null)
 const canSend = computed(() => input.value.trim().length > 0 && !running.value && !!props.sessionId)
 
-const thinkingLabel = computed(() => {
-    void tick.value
-    const base = thinkingBySession[props.sessionId]
-    if (!running.value || !base) return ''
-    const started = startedBySession[props.sessionId]
-    if (!started) return base
-    const secs = Math.max(1, Math.round((Date.now() - started) / 1000))
-    return `${base}（${secs}s）`
-})
+const thinkingLabel = ref('')
+let thinkingTimer: ReturnType<typeof setInterval> | null = null
 
 function ensure(sid: string): Entry[] {
     if (!histories[sid]) histories[sid] = []
@@ -264,6 +254,8 @@ function push(sid: string, e: Entry) {
 
 // ---------- 滚动 ----------
 
+let scrollRafId: number | null = null
+
 function isAtBottom(el: HTMLElement): boolean {
     return el.scrollHeight - el.scrollTop - el.clientHeight <= 32
 }
@@ -276,7 +268,9 @@ function onScroll() {
 function scrollToLatest(force = false) {
     if (force) stick.value = true
     if (!stick.value) return
-    void nextTick(() => {
+    if (scrollRafId !== null) return
+    scrollRafId = requestAnimationFrame(() => {
+        scrollRafId = null
         const el = scrollRef.value
         if (el) el.scrollTop = el.scrollHeight
     })
@@ -540,23 +534,49 @@ onMounted(() => {
     unsubs.push(Events.On(EVENTS.agentAsk, onAsk))
     unsubs.push(Events.On(EVENTS.agentOutput, onOutput))
     unsubs.push(Events.On(EVENTS.agentDone, onDone))
+    unsubs.push(Events.On(EVENTS.sessionClosed, (evt: any) => {
+        const sid = evt?.data?.sessionId
+        if (sid) {
+            delete histories[sid]
+            delete runningBySession[sid]
+            delete pendingBySession[sid]
+            delete thinkingBySession[sid]
+            delete startedBySession[sid]
+        }
+    }))
 })
 
-// 只在对话进行中开计时器，闲着不占资源
-watch(running, (v) => {
-    if (v) {
-        if (timer === null) timer = window.setInterval(() => (tick.value += 1), 1000)
-    } else if (timer !== null) {
-        window.clearInterval(timer)
-        timer = null
+// 只在对话进行中开启计时器更新「思考中（N s）」文案，闲着不占资源
+watchEffect((onCleanup) => {
+    if (!running.value) {
+        thinkingLabel.value = ''
+        return
     }
+    const sid = props.sessionId
+    const update = () => {
+        const base = thinkingBySession[sid]
+        if (!base) { thinkingLabel.value = ''; return }
+        const started = startedBySession[sid]
+        if (!started) { thinkingLabel.value = base; return }
+        const secs = Math.max(1, Math.round((Date.now() - started) / 1000))
+        thinkingLabel.value = `${base}（${secs}s）`
+    }
+    update()
+    thinkingTimer = setInterval(update, 1000)
+    onCleanup(() => {
+        if (thinkingTimer !== null) {
+            clearInterval(thinkingTimer)
+            thinkingTimer = null
+        }
+    })
 })
 
 onBeforeUnmount(() => {
     unsubs.forEach((u) => u())
-    if (timer !== null) {
-        window.clearInterval(timer)
-        timer = null
+    if (scrollRafId !== null) cancelAnimationFrame(scrollRafId)
+    if (thinkingTimer !== null) {
+        clearInterval(thinkingTimer)
+        thinkingTimer = null
     }
 })
 </script>
@@ -592,8 +612,8 @@ onBeforeUnmount(() => {
 }
 
 .ai-model {
-    flex: 1;
-    min-width: 0;
+    width: 140px;
+    flex-shrink: 0;
 }
 
 /* ---------- 消息区 ---------- */

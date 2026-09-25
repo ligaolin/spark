@@ -46,17 +46,22 @@
                 <el-splitter-panel size="26%" :min="200">
                     <div class="doc-left">
                         <div class="left-tabs">
-                            <div class="left-tab" :class="{ active: leftTab === 'tree' }" @click="leftTab = 'tree'">文件
-                            </div>
+                            <div class="left-tab" :class="{ active: leftTab === 'tree' }" @click="leftTab = 'tree'">文件</div>
                             <div class="left-tab" :class="{ active: leftTab === 'search' }" @click="leftTab = 'search'">
                                 搜索<span v-if="results.length" class="tab-badge">{{ results.length }}</span>
+                            </div>
+                            <div class="left-tab-action">
+                                <el-button size="small" text @click="reload">
+                                    <el-icon :class="{ spinning: reloading }"><Refresh /></el-icon>
+                                </el-button>
                             </div>
                         </div>
 
                         <div v-show="leftTab === 'tree'" class="tree-wrap" @contextmenu="onBlankContext">
                             <el-tree ref="treeRef" :data="treeData" node-key="id"
-                                :props="{ label: 'name', children: 'children' }" highlight-current default-expand-all
-                                :expand-on-click-node="true" draggable :allow-drop="allowDrop" @node-click="onNodeClick"
+                                :props="{ label: 'name', children: 'children' }" highlight-current
+                                :expand-on-click-node="true" draggable lazy :load="loadNode"
+                                :allow-drop="allowDrop" @node-click="onNodeClick"
                                 @node-contextmenu="onNodeContext" @node-drop="onNodeDrop"
                                 empty-text="暂无文档，点击上方「新建文件」开始">
                                 <template #default="{ data }">
@@ -118,16 +123,18 @@
                         </div>
 
                         <div class="editor-area">
-                            <!-- 编辑器按文档类型（kind）选择：md → Markdown 编辑器，
-                                 其余类型默认走代码编辑器。以后新增类型在 utils/fileKind.ts
-                                 加扩展名映射，并在此增加对应编辑器的渲染分支 -->
-                            <div v-for="t in tabs" v-show="t.key === activeKey" :key="t.key" class="doc-pane">
-                                <MarkdownEditor v-if="t.kind === 'md'" :ref="(el: any) => setEditorRef(t.key, el)"
-                                    @change="(v: string) => onChange(t, v)" @save="save" />
-                                <CodeEditor v-else :filename="t.name" :wrap="settings.editorWordWrap"
-                                    :ref="(el: any) => setEditorRef(t.key, el)"
-                                    @change="(v: string) => onChange(t, v)" @save="save" />
-                            </div>
+                            <KeepAlive :max="6">
+                                <MarkdownEditor v-if="activeTab?.kind === 'md'" :key="'md-' + activeKey!"
+                                    class="doc-pane"
+                                    :ref="(el: any) => setEditorRef(activeKey!, el)"
+                                    @change="(v: string) => onChange(activeTab!, v)" @save="save" />
+                                <CodeEditor v-else-if="activeTab" :key="'code-' + activeKey!"
+                                    class="doc-pane"
+                                    :filename="activeTab.name"
+                                    :wrap="settings.editorWordWrap"
+                                    :ref="(el: any) => setEditorRef(activeKey!, el)"
+                                    @change="(v: string) => onChange(activeTab!, v)" @save="save" />
+                            </KeepAlive>
                             <div v-if="!tabs.length" class="editor-empty">
                                 <el-icon :size="40">
                                     <Document />
@@ -147,7 +154,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
     Folder,
@@ -161,6 +168,7 @@ import {
     DArrowRight,
     CircleClose,
     MagicStick,
+    Refresh,
 } from '@element-plus/icons-vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
@@ -181,6 +189,7 @@ interface TreeNode {
     type: string
     kind: string
     sort: number
+    path: string
     children?: TreeNode[]
 }
 
@@ -208,8 +217,8 @@ interface DocTab {
     dirty: boolean
 }
 
-const nodes = ref<DocNode[]>([])
 const treeRef = ref()
+const reloading = ref(false)
 const settings = useSettingsStore()
 
 const tabs = ref<DocTab[]>([])
@@ -243,80 +252,77 @@ const tabCtxItems = ref<(CtxItem | 'divider')[]>([])
 const tabCtxTab = ref<DocTab | null>(null)
 const tabCtxIndex = ref(-1)
 
-// ---------- 数据加载 / 树构建 ----------
+// ---------- 懒加载节点缓存 ----------
 
-const parentMap = computed(() => {
-    const m = new Map<number, DocNode>()
-    for (const n of nodes.value) m.set(n.id, n)
-    return m
-})
+const nodeCache = reactive<Record<number, TreeNode>>({})
 
-function fullPathOf(node: { name: string; parentId: number }): string {
-    const parts: string[] = []
-    let cur: { name: string; parentId: number } | undefined = node
-    while (cur) {
-        parts.unshift(cur.name)
-        cur = cur.parentId ? parentMap.value.get(cur.parentId) : undefined
+function toTreeNode(n: DocNode, parentPath: string): TreeNode {
+    const path = parentPath ? parentPath + '/' + n.name : '/' + n.name
+    return {
+        id: n.id,
+        parentId: n.parentId,
+        name: n.name,
+        type: n.type,
+        kind: n.kind || kindForName(n.name),
+        sort: n.sort || 0,
+        path,
     }
-    return '/' + parts.join('/')
 }
 
-const pathMap = computed(() => {
-    const m = new Map<string, DocNode>()
-    for (const n of nodes.value) m.set(fullPathOf(n), n)
-    return m
-})
+function sortTreeNodes(arr: TreeNode[]) {
+    arr.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+        if (a.sort !== b.sort) return a.sort - b.sort
+        return a.name.localeCompare(b.name)
+    })
+}
 
-const treeData = computed<TreeNode[]>(() => {
-    const map = new Map<number, TreeNode>()
-    for (const n of nodes.value) {
-        map.set(n.id, {
-            id: n.id,
-            parentId: n.parentId,
-            name: n.name,
-            type: n.type,
-            kind: n.kind || kindForName(n.name),
-            sort: n.sort || 0,
-            children: [],
-        })
+async function loadNode(
+    node: { level: number; data?: TreeNode },
+    resolve: (data: TreeNode[]) => void,
+) {
+    const parentId = node.level === 0 ? 0 : (node.data?.id ?? 0)
+    const parentPath = node.level === 0 ? '' : (node.data?.path ?? '')
+    try {
+        const list = await DocumentService.ListChildren(parentId)
+        const children = (list ?? []).map((n) => toTreeNode(n, parentPath))
+        sortTreeNodes(children)
+        for (const c of children) {
+            nodeCache[c.id] = c
+        }
+        resolve(children)
+    } catch {
+        resolve([])
     }
-    const roots: TreeNode[] = []
-    for (const n of nodes.value) {
-        const node = map.get(n.id)!
-        const parent = n.parentId ? map.get(n.parentId) : undefined
-        if (parent) parent.children!.push(node)
-        else roots.push(node)
-    }
-    const sortRec = (arr: TreeNode[]) => {
-        arr.sort((a, b) => {
-            if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
-            if (a.sort !== b.sort) return a.sort - b.sort
-            return a.name.localeCompare(b.name)
-        })
-        arr.forEach((c) => c.children && sortRec(c.children))
-    }
-    sortRec(roots)
-    return roots
-})
+}
 
-function selectedNode(): DocNode | null {
-    return nodes.value.find((n) => n.id === selectedId.value) ?? null
+const treeData = ref<TreeNode[]>([])
+
+function selectedNode(): TreeNode | null {
+    if (selectedId.value == null) return null
+    return nodeCache[selectedId.value] ?? null
 }
 
 async function reload() {
+    reloading.value = true
     try {
-        nodes.value = (await DocumentService.List()) ?? []
+        // 清缓存并重新加载根节点
+        for (const key of Object.keys(nodeCache)) {
+            delete nodeCache[key]
+        }
+        const list = await DocumentService.ListChildren(0)
+        const children = (list ?? []).map((n) => toTreeNode(n, ''))
+        sortTreeNodes(children)
+        for (const c of children) {
+            nodeCache[c.id] = c
+        }
+        treeData.value = children
+        // 重新展开当前选中节点路径
+        await nextTick()
     } catch (e: any) {
         ElMessage.error(`加载文档失败：${e?.message || e}`)
-    }
-    await nextTick()
-    expandAll()
-}
-
-function expandAll() {
-    const tree = treeRef.value as any
-    if (tree?.store?.nodesMap) {
-        for (const k in tree.store.nodesMap) tree.store.nodesMap[k].expanded = true
+    } finally {
+        reloading.value = false
     }
 }
 
@@ -333,19 +339,33 @@ function toolbarCreate(type: 'file' | 'folder') {
     void createNode(type, createTargetParentId())
 }
 
+async function reloadParent(id: number) {
+    const list = await DocumentService.ListChildren(id)
+    const parent = id === 0 ? undefined : nodeCache[id]
+    const parentPath = parent?.path ?? ''
+    const children = (list ?? []).map((n) => toTreeNode(n, parentPath))
+    sortTreeNodes(children)
+    for (const c of children) {
+        nodeCache[c.id] = c
+    }
+    if (id === 0) {
+        treeData.value = children
+    } else {
+        treeRef.value?.updateKeyChildren(id, children)
+    }
+}
+
 async function createNode(type: 'file' | 'folder', parentId = 0) {
     const label = type === 'file' ? '新建文件' : '新建文件夹'
-    // 文件类型无需专门选择：由文件名扩展名决定（.md → Markdown 编辑器）
     const values = await showInputDialog(label, [{ key: 'name', label: '名称' }])
     if (!values) return
     const name = values.name.trim()
     if (!name) return
     try {
-        // 文件类型由后端按扩展名自动判定（.md → Markdown），无需前端传类型
         const created = await DocumentService.Create(parentId, name, type)
-        await reload()
+        await reloadParent(parentId)
         if (created.type === 'file') {
-            await openDocument(created)
+            await openDocument({ id: created.id, name: created.name, type: 'file', parentId, kind: created.kind })
         } else {
             selectedId.value = created.id
             treeRef.value?.setCurrentKey(created.id)
@@ -368,22 +388,23 @@ async function renameNode(node: { id: number; name: string; type: string }) {
     if (!name || name === node.name) return
     try {
         await DocumentService.Rename(node.id, name)
-        await reload()
+        const cached = nodeCache[node.id]
+        const parentId = cached?.parentId ?? 0
+        await reloadParent(parentId)
         // 打开的标签被重命名时同步名称 / 类型（如 .txt → .md 切换编辑器类型）
         const tabIdx = tabs.value.findIndex((t) => t.id === node.id)
         if (tabIdx >= 0) {
-            const fresh = nodes.value.find((n) => n.id === node.id)
+            const fresh = nodeCache[node.id]
             if (fresh) {
                 const old = tabs.value[tabIdx]
                 const content = editorRefs.value[old.key]?.getContent() ?? old.original
-                const newKind = fresh.kind || kindForName(fresh.name)
                 const key = String(fresh.id)
                 tabs.value.splice(tabIdx, 1, {
                     ...old,
                     key,
                     name: fresh.name,
-                    path: fullPathOf(fresh),
-                    kind: newKind,
+                    path: fresh.path,
+                    kind: fresh.kind,
                     original: content,
                 })
                 delete editorRefs.value[old.key]
@@ -411,10 +432,13 @@ async function deleteNode(node: { id: number; name: string; type: string }) {
     const ok = await showConfirmDialog('删除', tip, true, '删除')
     if (!ok) return
     try {
+        const cached = nodeCache[node.id]
+        const parentId = cached?.parentId ?? 0
         await DocumentService.Delete(node.id)
-        removeTabByDocId(node.id) // 删除后标签一并关闭
+        removeTabByDocId(node.id)
         if (selectedId.value === node.id) selectedId.value = null
-        await reload()
+        delete nodeCache[node.id]
+        await reloadParent(parentId)
     } catch (e: any) {
         ElMessage.error(`删除失败：${e?.message || e}`)
     }
@@ -423,7 +447,12 @@ async function deleteNode(node: { id: number; name: string; type: string }) {
 async function reorderNode(id: number, newParentId: number, targetId: number, position: string) {
     try {
         await DocumentService.Reorder(id, newParentId, targetId, position)
-        await reload()
+        await reloadParent(newParentId)
+        // 如果移动到不同父节点，也需要刷新原父节点的子节点
+        const cached = nodeCache[id]
+        if (cached && cached.parentId !== newParentId) {
+            await reloadParent(cached.parentId)
+        }
     } catch (e: any) {
         ElMessage.error(`移动失败：${e?.message || e}`)
         await reload()
@@ -612,13 +641,13 @@ async function openDocument(
     }
     try {
         const content = await DocumentService.GetContent(node.id)
-        // 类型以后端存储为准，缺失时按扩展名兜底判定（.md → Markdown 编辑器）
         const kind = node.kind || kindForName(node.name)
+        const docPath = nodeCache[node.id]?.path ?? ('/' + node.name)
         const tab: DocTab = {
             key,
             id: node.id,
             name: node.name,
-            path: fullPathOf(node),
+            path: docPath,
             kind,
             original: content,
             dirty: false,
@@ -801,10 +830,14 @@ async function runSearch() {
 }
 
 function openResult(row: SearchResult) {
-    const node = pathMap.value.get(row.path)
-    if (!node) {
-        ElMessage.warning('找不到对应文档')
-        return
+    // 优先从缓存取完整节点；否则用搜索结果字段构造最小节点
+    const cached = nodeCache[row.id]
+    const node = cached ?? {
+        id: row.id,
+        name: row.name,
+        type: 'file',
+        parentId: 0,
+        kind: row.kind || kindForName(row.name),
     }
     void openDocument(node, row.lineNo)
 }
@@ -892,6 +925,21 @@ function openResult(row: SearchResult) {
     background: var(--hover-strong);
     border-radius: 8px;
     padding: 0 6px;
+}
+
+.left-tab-action {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 6px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.spinning {
+    animation: spin 0.8s linear infinite;
 }
 
 .tree-wrap,

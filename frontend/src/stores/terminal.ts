@@ -29,11 +29,11 @@ export const useTerminalStore = defineStore('terminal', {
   },
 
   actions: {
-    addTab(opts: ConnectOptions, connId?: number): TerminalTab {
+    addTab(opts: ConnectOptions, connId?: number, connName?: string): TerminalTab {
       const tab: TerminalTab = {
         key: `tab-${tabSeq++}`,
         sessionId: '',
-        title: opts.host ? `${opts.username}@${opts.host}:${opts.port || 22}` : '新会话',
+        title: connName || (opts.host ? `${opts.username}@${opts.host}:${opts.port || 22}` : '新会话'),
         status: 'connecting',
         opts: { ...opts },
         ...(connId ? { connId } : {}),

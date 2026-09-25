@@ -44,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
 import { Terminal } from 'xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import 'xterm/css/xterm.css'
@@ -180,6 +180,7 @@ async function onCtxPick(item: CtxItem) {
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let observer: ResizeObserver | null = null
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
 let unOutput: (() => void) | null = null
 let unExit: (() => void) | null = null
 
@@ -298,7 +299,7 @@ onMounted(async () => {
         }
     })
 
-    // 容器尺寸变化 -> fit + 通知后端 resize
+    // 容器尺寸变化 -> fit + 通知后端 resize（防抖 120ms，避免拖拽时高频 RPC）
     observer = new ResizeObserver(() => {
         if (!term || !fitAddon) return
         const oldRows = term.rows
@@ -309,10 +310,15 @@ onMounted(async () => {
             return
         }
         if (term.rows !== oldRows || term.cols !== oldCols) {
-            const id = sessionIdRef.value
-            if (id) {
-                TerminalService.Resize(id, term.rows, term.cols).catch(() => undefined)
-            }
+            if (resizeTimer !== null) clearTimeout(resizeTimer)
+            resizeTimer = setTimeout(() => {
+                resizeTimer = null
+                if (!term) return
+                const id = sessionIdRef.value
+                if (id) {
+                    TerminalService.Resize(id, term.rows, term.cols).catch(() => undefined)
+                }
+            }, 120)
         }
     })
     observer.observe(termRef.value!)
@@ -323,6 +329,19 @@ onMounted(async () => {
         sessionIdRef.value = props.tab.sessionId
         await loadIpStatus()
     }
+})
+
+// KeepAlive 缓存恢复时：DOM 重新插入文档，xterm 的关联元素已回到文档中，
+// 触发 fit 确保终端尺寸匹配当前容器
+onActivated(() => {
+    if (!term || !fitAddon || !termRef.value) return
+    nextTick(() => {
+        fitAddon!.fit()
+        const id = sessionIdRef.value
+        if (id) {
+            TerminalService.Resize(id, term!.rows, term!.cols).catch(() => undefined)
+        }
+    })
 })
 
 // 设置里调整终端字号后即时生效
@@ -353,6 +372,10 @@ watch(
 
 onBeforeUnmount(() => {
     observer?.disconnect()
+    if (resizeTimer !== null) {
+        clearTimeout(resizeTimer)
+        resizeTimer = null
+    }
     unOutput?.()
     unExit?.()
     term?.dispose()

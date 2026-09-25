@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Terminal } from 'xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import 'xterm/css/xterm.css'
@@ -143,6 +143,7 @@ async function onCtxPick(item: CtxItem) {
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let observer: ResizeObserver | null = null
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
 let unOutput: (() => void) | null = null
 let unExit: (() => void) | null = null
 let createSeq = 0
@@ -227,10 +228,15 @@ onMounted(async () => {
       return
     }
     if (term.rows !== oldRows || term.cols !== oldCols) {
-      const id = props.tab.sessionId
-      if (id) {
-        LocalTerminalService.Resize(id, term.rows, term.cols).catch(() => undefined)
-      }
+      if (resizeTimer !== null) clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null
+        if (!term) return
+        const id = props.tab.sessionId
+        if (id) {
+          LocalTerminalService.Resize(id, term.rows, term.cols).catch(() => undefined)
+        }
+      }, 120)
     }
   })
   observer.observe(termRef.value!)
@@ -238,6 +244,18 @@ onMounted(async () => {
   if (props.tab.status === 'starting') {
     await create()
   }
+})
+
+// KeepAlive 缓存恢复时重新 fit
+onActivated(() => {
+  if (!term || !fitAddon || !termRef.value) return
+  nextTick(() => {
+    fitAddon!.fit()
+    const id = props.tab.sessionId
+    if (id) {
+      LocalTerminalService.Resize(id, term!.rows, term!.cols).catch(() => undefined)
+    }
+  })
 })
 
 watch(
@@ -263,6 +281,10 @@ watch(
 onBeforeUnmount(() => {
   createSeq++
   observer?.disconnect()
+  if (resizeTimer !== null) {
+    clearTimeout(resizeTimer)
+    resizeTimer = null
+  }
   unOutput?.()
   unExit?.()
   term?.dispose()

@@ -27,6 +27,18 @@ func (s *DocumentService) List() ([]model.DocNode, error) {
 	return list, err
 }
 
+// ListChildren returns only the direct children of parentID (0 = root),
+// without content, ordered by sort then name. Used by the frontend to
+// lazy-load the document tree one level at a time.
+func (s *DocumentService) ListChildren(parentID uint) ([]model.DocNode, error) {
+	var list []model.DocNode
+	err := db.GetDB().Omit("content").
+		Where("parent_id = ?", parentID).
+		Order("sort asc, name asc").
+		Find(&list).Error
+	return list, err
+}
+
 // fileKindByExt 按扩展名判定文档类型（大小写不敏感）。新增类型时在这里加一条，
 // 并在前端 utils/fileKind.ts 同步（两侧保持一致），然后在 DocumentsView 增加
 // 对应编辑器的渲染分支。
@@ -251,6 +263,8 @@ func (s *DocumentService) Search(pattern, mode string) ([]types.SearchResult, er
 					Name:    n.Name,
 					Size:    int64(len(n.Content)),
 					ModTime: n.UpdatedAt,
+					ID:      n.ID,
+					Kind:    n.Kind,
 					LineNo:  h.LineNo,
 					Line:    h.Line,
 				})
@@ -269,6 +283,8 @@ func (s *DocumentService) Search(pattern, mode string) ([]types.SearchResult, er
 				Size:    size,
 				ModTime: n.UpdatedAt,
 				IsDir:   n.Type == "folder",
+				ID:      n.ID,
+				Kind:    n.Kind,
 			})
 		}
 	}
