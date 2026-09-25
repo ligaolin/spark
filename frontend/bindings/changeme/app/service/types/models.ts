@@ -180,6 +180,19 @@ export interface FileEntry {
 }
 
 /**
+ * FormFile represents a single file in a multipart upload.
+ */
+export interface FormFile {
+    "fieldName": string;
+    "fileName": string;
+
+    /**
+     * absolute path on disk
+     */
+    "filePath": string;
+}
+
+/**
  * IpStatus reports the remote host's IPs for the terminal status bar.
  */
 export interface IpStatus {
@@ -187,6 +200,14 @@ export interface IpStatus {
      * 服务器网卡上的全部 IPv4（去重，不含回环/链路本地）
      */
     "ips": string[] | null;
+}
+
+/**
+ * KV 表示一个键值对（Headers / Query Params / 公共请求头等）。
+ */
+export interface KV {
+    "key": string;
+    "value": string;
 }
 
 /**
@@ -283,6 +304,52 @@ export interface ReplaceResult {
 }
 
 /**
+ * RestEnvItem is a saved environment (base URL + common headers).
+ */
+export interface RestEnvItem {
+    "id": number;
+    "name": string;
+    "baseUrl": string;
+    "commonHeaders": KV[] | null;
+    "isDefault": boolean;
+    "sort": number;
+}
+
+/**
+ * RestItem is the full content of a saved REST request returned to the frontend
+ * for editing / sending.
+ */
+export interface RestItem {
+    "id": number;
+    "folderId": number;
+    "name": string;
+    "method": string;
+    "url": string;
+    "headers": KV[] | null;
+    "params": KV[] | null;
+    "body": string;
+}
+
+/**
+ * RestNode is a node in the REST tree returned to the frontend.
+ * Folders and requests are mixed; the frontend distinguishes them by Type.
+ */
+export interface RestNode {
+    "id": number;
+    "parentId": number;
+    "name": string;
+
+    /**
+     * "folder" | "request"
+     */
+    "type": string;
+    "method"?: string;
+    "url"?: string;
+    "leaf": boolean;
+    "sort": number;
+}
+
+/**
  * RestRequest describes an HTTP request issued from the REST client tab.
  */
 export interface RestRequest {
@@ -298,6 +365,16 @@ export interface RestRequest {
      * seconds, 0 = default 30s
      */
     "timeout": number;
+
+    /**
+     * multipart files
+     */
+    "formFiles"?: FormFile[] | null;
+
+    /**
+     * multipart form fields
+     */
+    "formData"?: { [_ in string]?: string } | null;
 }
 
 /**
@@ -314,6 +391,41 @@ export interface RestResponse {
      */
     "duration": number;
     "error"?: string;
+
+    /**
+     * SSE/chunked
+     */
+    "streaming"?: boolean;
+
+    /**
+     * polling key
+     */
+    "streamId"?: string;
+}
+
+/**
+ * RestSaveEnv is used to save/update an environment from the frontend.
+ */
+export interface RestSaveEnv {
+    "id": number;
+    "name": string;
+    "baseUrl": string;
+    "commonHeaders": KV[] | null;
+    "isDefault": boolean;
+}
+
+/**
+ * RestSaveRequest is used to save/update a request from the frontend.
+ */
+export interface RestSaveRequest {
+    "id": number;
+    "folderId": number;
+    "name": string;
+    "method": string;
+    "url": string;
+    "headers": KV[] | null;
+    "params": KV[] | null;
+    "body": string;
 }
 
 /**
@@ -396,6 +508,73 @@ export interface SessionClosed {
      */
     "type": string;
     "reason"?: string;
+}
+
+/**
+ * StreamChunk is returned by ReadStreamChunks for SSE polling.
+ */
+export interface StreamChunk {
+    "data": string;
+    "done": boolean;
+    "error"?: string;
+}
+
+/**
+ * StressTestLatency holds statistical latency values (in milliseconds).
+ */
+export interface StressTestLatency {
+    "min": number;
+    "max": number;
+    "avg": number;
+    "p50": number;
+    "p95": number;
+    "p99": number;
+}
+
+/**
+ * StressTestRequest is the input for the stress-test runner.
+ */
+export interface StressTestRequest {
+    "method": string;
+    "url": string;
+    "headers": { [_ in string]?: string } | null;
+    "body": string;
+
+    /**
+     * seconds per request
+     */
+    "timeout": number;
+
+    /**
+     * concurrent goroutines
+     */
+    "concurrency": number;
+
+    /**
+     * total requests to send
+     */
+    "total": number;
+}
+
+/**
+ * StressTestResult is the summary returned from a stress-test run.
+ */
+export interface StressTestResult {
+    "total": number;
+    "success": number;
+    "failure": number;
+
+    /**
+     * wall-clock ms
+     */
+    "duration": number;
+    "qps": number;
+    "latency": StressTestLatency;
+
+    /**
+     * e.g. {"200": 150, "500": 2}
+     */
+    "statuses": { [_ in string]?: number } | null;
 }
 
 /**
@@ -601,4 +780,49 @@ export interface Tunnel {
      */
     "status": string;
     "error"?: string;
+}
+
+/**
+ * WSConnectRequest is the input for WebSocket client connect.
+ */
+export interface WSConnectRequest {
+    "url": string;
+    "headers": { [_ in string]?: string } | null;
+}
+
+/**
+ * WSConnectResult is the result of WSConnect.
+ */
+export interface WSConnectResult {
+    "connId": string;
+    "headers"?: { [_ in string]?: string } | null;
+    "error"?: string;
+}
+
+/**
+ * WSMessage represents a single WebSocket message in the log.
+ */
+export interface WSMessage {
+    /**
+     * "text" | "binary" | "error" | "close"
+     */
+    "type": string;
+    "data": string;
+
+    /**
+     * unix millis
+     */
+    "time": number;
+
+    /**
+     * true = we sent, false = received
+     */
+    "sent": boolean;
+}
+
+/**
+ * WSReadResult is returned by WSReadMessages (polling model).
+ */
+export interface WSReadResult {
+    "messages": WSMessage[] | null;
 }

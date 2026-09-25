@@ -36,46 +36,55 @@
             </div>
 
             <div class="terminal-body">
-                <div class="term-area">
-                    <KeepAlive>
-                        <TerminalPane v-if="store.activeTab" :key="store.activeKey" :tab="store.activeTab!" />
-                    </KeepAlive>
-                </div>
+                <el-splitter layout="horizontal" class="term-splitter">
+                    <el-splitter-panel :min="260">
+                        <div class="term-area">
+                            <KeepAlive>
+                                <TerminalPane v-if="store.activeTab" :key="store.activeKey" :tab="store.activeTab!" />
+                            </KeepAlive>
+                        </div>
+                    </el-splitter-panel>
 
-                <!-- v-show（而非 v-if）：收起面板时 SFTP 面板保持挂载、连接不断 -->
-                <aside v-show="panelVisible" class="side-panel" :class="{ resizing: resizingPanel }"
-                    :style="{ width: panelWidth + 'px' }">
-                    <div class="resize-handle" title="拖拽调整宽度" @mousedown="startResize" />
-                    <div class="side-head">
-                        <el-radio-group v-model="panelTab" size="small">
-                            <!-- SFTP 文件放在最左侧（服务信息切换的左边）：打开 SSH 默认两个都打开 -->
-                            <el-radio-button value="sftp">SFTP</el-radio-button>
-                            <el-radio-button value="info">信息</el-radio-button>
-                            <el-radio-button value="processes">进程</el-radio-button>
-                            <el-radio-button value="commands">命令</el-radio-button>
-                            <el-radio-button value="network">网络</el-radio-button>
-                            <el-radio-button value="tunnel">转发 / 代理</el-radio-button>
-                            <el-radio-button value="ai">AI</el-radio-button>
-                        </el-radio-group>
-                        <el-icon class="side-close" @click="panelVisible = false">
-                            <Close />
-                        </el-icon>
-                    </div>
-                    <div class="side-body">
-                        <SftpPanel v-show="panelTab === 'sftp'" :opts="activeTabOpts" :tab-key="store.activeKey"
-                            :fav-key="activeTabConnId" />
-                        <ServerInfoView v-show="panelTab === 'info'" :session-id="activeSessionId"
-                            :active="infoActive" />
-                        <ProcessManagerView v-show="panelTab === 'processes'" :session-id="activeSessionId"
-                            :active="processActive" />
-                        <CustomCommandsView v-show="panelTab === 'commands'" :session-id="activeSessionId" />
-                        <NetworkView v-show="panelTab === 'network'" :session-id="activeSessionId"
-                            :active="networkActive" />
-                        <TunnelView v-show="panelTab === 'tunnel'" :session-id="activeSessionId"
-                            :active="tunnelActive" />
-                        <AiTerminalPanel v-show="panelTab === 'ai'" :session-id="activeSessionId" />
-                    </div>
-                </aside>
+                    <el-splitter-panel
+                        v-show="panelVisible"
+                        :size="panelSize"
+                        :min="260"
+                        :max="panelMaxWidth"
+                        collapsible
+                        @resize="onPanelResize"
+                    >
+                        <aside class="side-panel">
+                            <div class="side-head">
+                                <el-radio-group v-model="panelTab" size="small">
+                                    <el-radio-button value="sftp">SFTP</el-radio-button>
+                                    <el-radio-button value="info">信息</el-radio-button>
+                                    <el-radio-button value="processes">进程</el-radio-button>
+                                    <el-radio-button value="commands">命令</el-radio-button>
+                                    <el-radio-button value="network">网络</el-radio-button>
+                                    <el-radio-button value="tunnel">转发 / 代理</el-radio-button>
+                                    <el-radio-button value="ai">AI</el-radio-button>
+                                </el-radio-group>
+                                <el-icon class="side-close" @click="panelVisible = false">
+                                    <Close />
+                                </el-icon>
+                            </div>
+                            <div class="side-body">
+                                <SftpPanel v-show="panelTab === 'sftp'" :opts="activeTabOpts" :tab-key="store.activeKey"
+                                    :fav-key="activeTabConnId" />
+                                <ServerInfoView v-show="panelTab === 'info'" :session-id="activeSessionId"
+                                    :active="infoActive" />
+                                <ProcessManagerView v-show="panelTab === 'processes'" :session-id="activeSessionId"
+                                    :active="processActive" />
+                                <CustomCommandsView v-show="panelTab === 'commands'" :session-id="activeSessionId" />
+                                <NetworkView v-show="panelTab === 'network'" :session-id="activeSessionId"
+                                    :active="networkActive" />
+                                <TunnelView v-show="panelTab === 'tunnel'" :session-id="activeSessionId"
+                                    :active="tunnelActive" />
+                                <AiTerminalPanel v-show="panelTab === 'ai'" :session-id="activeSessionId" />
+                            </div>
+                        </aside>
+                    </el-splitter-panel>
+                </el-splitter>
             </div>
         </template>
 
@@ -174,37 +183,17 @@ onBeforeUnmount(() => {
     offShowSftp?.()
 })
 
-// 面板宽度：可拖拽调整，记住上次宽度。
-// AI 页放 Markdown 对话更吃宽度，单独放宽上限；切回别的页时收窄回去。
-const panelWidth = ref(Number(localStorage.getItem('spark:panelWidth')) || 420)
-const resizingPanel = ref(false)
-
+const panelSize = ref(Number(localStorage.getItem('spark:panelWidth')) || 420)
 const panelMaxWidth = computed(() => (panelTab.value === 'ai' ? 1100 : 640))
 
 watch(panelTab, () => {
-    if (panelWidth.value > panelMaxWidth.value) {
-        panelWidth.value = panelMaxWidth.value
-        localStorage.setItem('spark:panelWidth', String(panelWidth.value))
+    if (panelSize.value > panelMaxWidth.value) {
+        panelSize.value = panelMaxWidth.value
     }
 })
 
-function startResize(e: MouseEvent) {
-    e.preventDefault()
-    resizingPanel.value = true
-    document.body.style.userSelect = 'none'
-    const onMove = (ev: MouseEvent) => {
-        const w = window.innerWidth - ev.clientX
-        panelWidth.value = Math.min(panelMaxWidth.value, Math.max(260, w))
-    }
-    const onUp = () => {
-        resizingPanel.value = false
-        document.body.style.userSelect = ''
-        localStorage.setItem('spark:panelWidth', String(panelWidth.value))
-        window.removeEventListener('mousemove', onMove)
-        window.removeEventListener('mouseup', onUp)
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
+function onPanelResize(newSize: number) {
+    localStorage.setItem('spark:panelWidth', String(Math.round(newSize)))
 }
 
 function openDialog() {
@@ -416,10 +405,37 @@ async function onConnect(opts: ConnectOptions, save: boolean) {
     display: flex;
 }
 
+.term-splitter {
+    height: 100%;
+    width: 100%;
+}
+
+.term-splitter :deep(.el-splitter-panel) {
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.term-splitter :deep(.el-splitter-panel > div) {
+    height: 100%;
+}
+
+.term-splitter :deep(.el-splitter-bar__dragger:before) {
+    background-color: var(--border-color);
+}
+
+.term-splitter :deep(.el-splitter-bar:hover .el-splitter-bar__dragger:before) {
+    background-color: var(--el-color-primary);
+}
+
+.term-splitter :deep(.el-splitter-bar__dragger:hover) {
+    background: transparent;
+}
+
 .term-area {
-    flex: 1;
     min-width: 0;
     position: relative;
+    height: 100%;
 }
 
 .term-area>* {
@@ -428,44 +444,11 @@ async function onConnect(opts: ConnectOptions, save: boolean) {
 }
 
 .side-panel {
-    flex-shrink: 0;
-    border-left: 1px solid var(--border-color);
     background: var(--panel-bg);
     display: flex;
     flex-direction: column;
     min-height: 0;
-    position: relative;
-}
-
-.side-panel.resizing {
-    user-select: none;
-}
-
-.resize-handle {
-    position: absolute;
-    left: -5px;
-    top: 0;
-    bottom: 0;
-    width: 10px;
-    cursor: col-resize;
-    z-index: 10;
-}
-
-.resize-handle::after {
-    content: '';
-    position: absolute;
-    left: 3px;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    border-radius: 1px;
-    background: transparent;
-    transition: background 0.15s;
-}
-
-.resize-handle:hover::after,
-.side-panel.resizing .resize-handle::after {
-    background: var(--accent);
+    height: 100%;
 }
 
 .side-head {

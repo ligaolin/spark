@@ -6,6 +6,8 @@ export type {
     CustomCommand,
     DocNode,
     Favorite,
+    RestFolder,
+    RestRequestModel,
     SavedConnection,
     Site,
     SiteAccount,

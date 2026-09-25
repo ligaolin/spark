@@ -1114,6 +1114,14 @@ async function openInSystemBrowser(url?: string) {
     padding-right: 8px;
 }
 
+.sites-body :deep(.el-splitter-bar__dragger:before) {
+    background-color: var(--border-color);
+}
+
+.sites-body :deep(.el-splitter-bar:hover .el-splitter-bar__dragger:before) {
+    background-color: var(--el-color-primary);
+}
+
 .tree-pane {
     height: 100%;
     overflow: auto;

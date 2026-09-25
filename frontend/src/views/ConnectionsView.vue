@@ -31,106 +31,112 @@
         </div>
 
         <div class="conn-body">
-            <!-- 分组侧栏 -->
-            <aside class="group-side">
-                <div class="group-side-head">
-                    <span class="group-side-title">分组</span>
-                    <el-button size="small" text type="primary" @click="createGroup">
-                        <el-icon style="margin-right: 3px">
-                            <Plus />
-                        </el-icon>
-                        新建
-                    </el-button>
-                </div>
-                <div class="group-list">
-                    <div class="group-item" :class="{ active: selectedGroup === ALL }" @click="selectedGroup = ALL">
-                        <el-icon class="group-icon">
-                            <Menu />
-                        </el-icon>
-                        <span class="group-name">全部</span>
-                        <span class="group-count">{{ connStore.list.length }}</span>
-                    </div>
-                    <div class="group-item" :class="{ active: selectedGroup === NONE }" @click="selectedGroup = NONE">
-                        <el-icon class="group-icon">
-                            <Folder />
-                        </el-icon>
-                        <span class="group-name">未分组</span>
-                        <span class="group-count">{{ noneCount }}</span>
-                    </div>
-                    <div v-for="g in connStore.groups" :key="g.name" class="group-item"
-                        :class="{ active: selectedGroup === g.name }" @click="selectedGroup = g.name">
-                        <el-icon class="group-icon">
-                            <Folder />
-                        </el-icon>
-                        <span class="group-name" :title="g.name">{{ g.name }}</span>
-                        <span class="group-count">{{ groupCount(g.name) }}</span>
-                        <span class="group-actions">
-                            <el-icon title="重命名" @click.stop="renameGroup(g.name)">
-                                <Edit />
-                            </el-icon>
-                            <el-icon title="删除分组" class="danger" @click.stop="removeGroup(g.name)">
-                                <Delete />
-                            </el-icon>
-                        </span>
-                    </div>
-                </div>
-            </aside>
-
-            <!-- 连接表格 -->
-            <div class="conn-main">
-                <el-alert v-if="undecryptedCount > 0" type="warning" :closable="false" show-icon class="decrypt-warn"
-                    :title="`${undecryptedCount} 个连接的密码无法解密（可能同步密钥不匹配，或数据来自设置了其他密钥的机器）`"
-                    description="请在「设置 → 数据库」确认同步密钥与来源机器一致；或编辑这些连接重新填写密码（保存后会用当前密钥重新加密）。" />
-                <el-table :data="filteredList" size="small" :loading="connStore.loading" empty-text="还没有保存的连接">
-                    <el-table-column label="名称">
-                        <template #default="{ row }">
-                            <span class="conn-name">{{ row.name }}</span>
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="分组" width="180">
-                        <template #default="{ row }">
-                            <el-select :model-value="row.group" size="small" filterable allow-create clearable
-                                default-first-option placeholder="未分组" @change="(v: string) => setRowGroup(row, v)">
-                                <el-option v-for="g in connStore.groupNames" :key="g" :label="g" :value="g" />
-                            </el-select>
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="类型" width="60">
-                        <template #default="{ row }">
-                            <el-tag :type="row.type === 'ssh' ? 'primary' : 'warning'" size="small" effect="dark">
-                                {{ row.type.toUpperCase() }}
-                            </el-tag>
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="地址">
-                        <template #default="{ row }">
-                            <span class="mono dim">{{ row.host }}:{{ row.port }}</span>
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="用户名">
-                        <template #default="{ row }">
-                            <span class="dim">{{ row.username }}</span>
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="认证" width="60" align="center">
-                        <template #default="{ row }">
-                            <el-tag v-if="row.useKey" size="small" type="info">密钥</el-tag>
-                            <el-tag v-else size="small" type="info" effect="plain">密码</el-tag>
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="操作" align="right" width="180">
-                        <template #default="{ row }">
-                            <div class="conn-actions">
-                                <el-button v-if="row.type === 'ssh'" size="small" type="primary" plain
-                                    @click="openTerminal(row)">ssh</el-button>
-                                <el-button v-else size="small" @click="openFtp(row)">FTP</el-button>
-                                <el-button size="small" @click="openEdit(row)">编辑</el-button>
-                                <el-button size="small" type="danger" plain @click="remove(row)">删除</el-button>
+            <el-splitter>
+                <el-splitter-panel size="200px" :min="160" :max="400">
+                    <!-- 分组侧栏 -->
+                    <aside class="group-side">
+                        <div class="group-side-head">
+                            <span class="group-side-title">分组</span>
+                            <el-button size="small" text type="primary" @click="createGroup">
+                                <el-icon style="margin-right: 3px">
+                                    <Plus />
+                                </el-icon>
+                                新建
+                            </el-button>
+                        </div>
+                        <div class="group-list">
+                            <div class="group-item" :class="{ active: selectedGroup === ALL }" @click="selectedGroup = ALL">
+                                <el-icon class="group-icon">
+                                    <Menu />
+                                </el-icon>
+                                <span class="group-name">全部</span>
+                                <span class="group-count">{{ connStore.list.length }}</span>
                             </div>
-                        </template>
-                    </el-table-column>
-                </el-table>
-            </div>
+                            <div class="group-item" :class="{ active: selectedGroup === NONE }" @click="selectedGroup = NONE">
+                                <el-icon class="group-icon">
+                                    <Folder />
+                                </el-icon>
+                                <span class="group-name">未分组</span>
+                                <span class="group-count">{{ noneCount }}</span>
+                            </div>
+                            <div v-for="g in connStore.groups" :key="g.name" class="group-item"
+                                :class="{ active: selectedGroup === g.name }" @click="selectedGroup = g.name">
+                                <el-icon class="group-icon">
+                                    <Folder />
+                                </el-icon>
+                                <span class="group-name" :title="g.name">{{ g.name }}</span>
+                                <span class="group-count">{{ groupCount(g.name) }}</span>
+                                <span class="group-actions">
+                                    <el-icon title="重命名" @click.stop="renameGroup(g.name)">
+                                        <Edit />
+                                    </el-icon>
+                                    <el-icon title="删除分组" class="danger" @click.stop="removeGroup(g.name)">
+                                        <Delete />
+                                    </el-icon>
+                                </span>
+                            </div>
+                        </div>
+                    </aside>
+                </el-splitter-panel>
+
+                <el-splitter-panel :min="300">
+                    <!-- 连接表格 -->
+                    <div class="conn-main">
+                        <el-alert v-if="undecryptedCount > 0" type="warning" :closable="false" show-icon class="decrypt-warn"
+                            :title="`${undecryptedCount} 个连接的密码无法解密（可能同步密钥不匹配，或数据来自设置了其他密钥的机器）`"
+                            description="请在「设置 → 数据库」确认同步密钥与来源机器一致；或编辑这些连接重新填写密码（保存后会用当前密钥重新加密）。" />
+                        <el-table :data="filteredList" size="small" :loading="connStore.loading" empty-text="还没有保存的连接">
+                            <el-table-column label="名称">
+                                <template #default="{ row }">
+                                    <span class="conn-name">{{ row.name }}</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="分组" width="180">
+                                <template #default="{ row }">
+                                    <el-select :model-value="row.group" size="small" filterable allow-create clearable
+                                        default-first-option placeholder="未分组" @change="(v: string) => setRowGroup(row, v)">
+                                        <el-option v-for="g in connStore.groupNames" :key="g" :label="g" :value="g" />
+                                    </el-select>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="类型" width="60">
+                                <template #default="{ row }">
+                                    <el-tag :type="row.type === 'ssh' ? 'primary' : 'warning'" size="small" effect="dark">
+                                        {{ row.type.toUpperCase() }}
+                                    </el-tag>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="地址">
+                                <template #default="{ row }">
+                                    <span class="mono dim">{{ row.host }}:{{ row.port }}</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="用户名">
+                                <template #default="{ row }">
+                                    <span class="dim">{{ row.username }}</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="认证" width="60" align="center">
+                                <template #default="{ row }">
+                                    <el-tag v-if="row.useKey" size="small" type="info">密钥</el-tag>
+                                    <el-tag v-else size="small" type="info" effect="plain">密码</el-tag>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="操作" align="right" width="180">
+                                <template #default="{ row }">
+                                    <div class="conn-actions">
+                                        <el-button v-if="row.type === 'ssh'" size="small" type="primary" plain
+                                            @click="openTerminal(row)">ssh</el-button>
+                                        <el-button v-else size="small" @click="openFtp(row)">FTP</el-button>
+                                        <el-button size="small" @click="openEdit(row)">编辑</el-button>
+                                        <el-button size="small" type="danger" plain @click="remove(row)">删除</el-button>
+                                    </div>
+                                </template>
+                            </el-table-column>
+                        </el-table>
+                    </div>
+                </el-splitter-panel>
+            </el-splitter>
         </div>
 
         <ConnectDialog v-model="dialogVisible" :mode="dialogMode" :conn-type="dialogType" :connection="editing"
@@ -517,13 +523,28 @@ function escapeHtml(s: string) {
 .conn-body {
     flex: 1;
     min-height: 0;
-    display: flex;
-    gap: 12px;
+}
+
+.conn-body :deep(.el-splitter) {
+    height: 100%;
+}
+
+.conn-body :deep(.el-splitter-panel) {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.conn-body :deep(.el-splitter-bar__dragger:before) {
+    background-color: var(--border-color);
+}
+
+.conn-body :deep(.el-splitter-bar:hover .el-splitter-bar__dragger:before) {
+    background-color: var(--el-color-primary);
 }
 
 .group-side {
-    width: 200px;
-    flex-shrink: 0;
+    height: 100%;
+    margin-right: 8px;
     display: flex;
     flex-direction: column;
     border: 1px solid var(--border-color);
@@ -628,11 +649,13 @@ function escapeHtml(s: string) {
 }
 
 .conn-main {
-    flex: 1;
+    height: 100%;
+    margin-left: 8px;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    overflow: hidden;
 }
 
 .decrypt-warn {

@@ -328,13 +328,22 @@ type AgentDone struct {
 	Error     string `json:"error,omitempty"`
 }
 
+// FormFile represents a single file in a multipart upload.
+type FormFile struct {
+	FieldName string `json:"fieldName"`
+	FileName  string `json:"fileName"`
+	FilePath  string `json:"filePath"` // absolute path on disk
+}
+
 // RestRequest describes an HTTP request issued from the REST client tab.
 type RestRequest struct {
-	Method  string            `json:"method"` // GET | POST | PUT | DELETE | PATCH | HEAD | OPTIONS
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers"`
-	Body    string            `json:"body"`
-	Timeout int               `json:"timeout"` // seconds, 0 = default 30s
+	Method    string            `json:"method"` // GET | POST | PUT | DELETE | PATCH | HEAD | OPTIONS
+	URL       string            `json:"url"`
+	Headers   map[string]string `json:"headers"`
+	Body      string            `json:"body"`
+	Timeout   int               `json:"timeout"`             // seconds, 0 = default 30s
+	FormFiles []FormFile        `json:"formFiles,omitempty"` // multipart files
+	FormData  map[string]string `json:"formData,omitempty"`  // multipart form fields
 }
 
 // RestResponse is the result of a REST client request, returned synchronously.
@@ -345,6 +354,136 @@ type RestResponse struct {
 	Body       string            `json:"body"`
 	Duration   int64             `json:"duration"` // milliseconds
 	Error      string            `json:"error,omitempty"`
+	Streaming  bool              `json:"streaming,omitempty"` // SSE/chunked
+	StreamID   string            `json:"streamId,omitempty"`  // polling key
+}
+
+// StreamChunk is returned by ReadStreamChunks for SSE polling.
+type StreamChunk struct {
+	Data  string `json:"data"`
+	Done  bool   `json:"done"`
+	Error string `json:"error,omitempty"`
+}
+
+// WSConnectRequest is the input for WebSocket client connect.
+type WSConnectRequest struct {
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
+}
+
+// WSConnectResult is the result of WSConnect.
+type WSConnectResult struct {
+	ConnID  string            `json:"connId"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Error   string            `json:"error,omitempty"`
+}
+
+// WSMessage represents a single WebSocket message in the log.
+type WSMessage struct {
+	Type string `json:"type"` // "text" | "binary" | "error" | "close"
+	Data string `json:"data"`
+	Time int64  `json:"time"` // unix millis
+	Sent bool   `json:"sent"` // true = we sent, false = received
+}
+
+// WSReadResult is returned by WSReadMessages (polling model).
+type WSReadResult struct {
+	Messages []WSMessage `json:"messages"`
+}
+
+// KV 表示一个键值对（Headers / Query Params / 公共请求头等）。
+type KV struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// RestNode is a node in the REST tree returned to the frontend.
+// Folders and requests are mixed; the frontend distinguishes them by Type.
+type RestNode struct {
+	ID       uint   `json:"id"`
+	ParentID uint   `json:"parentId"`
+	Name     string `json:"name"`
+	Type     string `json:"type"` // "folder" | "request"
+	Method   string `json:"method,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Leaf     bool   `json:"leaf"`
+	Sort     int    `json:"sort"`
+}
+
+// RestItem is the full content of a saved REST request returned to the frontend
+// for editing / sending.
+type RestItem struct {
+	ID       uint   `json:"id"`
+	FolderID uint   `json:"folderId"`
+	Name     string `json:"name"`
+	Method   string `json:"method"`
+	URL      string `json:"url"`
+	Headers  []KV   `json:"headers"`
+	Params   []KV   `json:"params"`
+	Body     string `json:"body"`
+}
+
+// RestEnvItem is a saved environment (base URL + common headers).
+type RestEnvItem struct {
+	ID            uint   `json:"id"`
+	Name          string `json:"name"`
+	BaseURL       string `json:"baseUrl"`
+	CommonHeaders []KV   `json:"commonHeaders"`
+	IsDefault     bool   `json:"isDefault"`
+	Sort          int    `json:"sort"`
+}
+
+// RestSaveRequest is used to save/update a request from the frontend.
+type RestSaveRequest struct {
+	ID       uint   `json:"id"`
+	FolderID uint   `json:"folderId"`
+	Name     string `json:"name"`
+	Method   string `json:"method"`
+	URL      string `json:"url"`
+	Headers  []KV   `json:"headers"`
+	Params   []KV   `json:"params"`
+	Body     string `json:"body"`
+}
+
+// RestSaveEnv is used to save/update an environment from the frontend.
+type RestSaveEnv struct {
+	ID            uint   `json:"id"`
+	Name          string `json:"name"`
+	BaseURL       string `json:"baseUrl"`
+	CommonHeaders []KV   `json:"commonHeaders"`
+	IsDefault     bool   `json:"isDefault"`
+}
+
+// StressTestRequest is the input for the stress-test runner.
+type StressTestRequest struct {
+	Method      string            `json:"method"`
+	URL         string            `json:"url"`
+	Headers     map[string]string `json:"headers"`
+	Body        string            `json:"body"`
+	Timeout     int               `json:"timeout"`     // seconds per request
+	Concurrency int               `json:"concurrency"` // concurrent goroutines
+	Total       int               `json:"total"`       // total requests to send
+}
+
+// StressTestLatency holds statistical latency values (in milliseconds).
+type StressTestLatency struct {
+	Min int64 `json:"min"`
+	Max int64 `json:"max"`
+	Avg int64 `json:"avg"`
+	P50 int64 `json:"p50"`
+	P95 int64 `json:"p95"`
+	P99 int64 `json:"p99"`
+}
+
+// StressTestResult is the summary returned from a stress-test run.
+type StressTestResult struct {
+	Total    int64             `json:"total"`
+	Success  int64             `json:"success"`
+	Failure  int64             `json:"failure"`
+	Duration int64             `json:"duration"` // wall-clock ms
+	QPS      float64           `json:"qps"`
+	Latency  StressTestLatency `json:"latency"`
+	Statuses map[string]int64  `json:"statuses"` // e.g. {"200": 150, "500": 2}
 }
 
 // NewID returns a random hexadecimal session id.

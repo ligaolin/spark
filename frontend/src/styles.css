@@ -222,8 +222,6 @@ body {
 .md-editor,
 .ͼ1m,
 .ͼm,
-.md-editor-resize-operate,
-.el-splitter-bar__dragger:before,
-.el-splitter-bar__dragger:after {
+.md-editor-resize-operate {
     background-color: rgba(0, 0, 0, 0) !important;
 }

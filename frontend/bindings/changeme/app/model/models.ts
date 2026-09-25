@@ -75,6 +75,62 @@ export interface Favorite {
 }
 
 /**
+ * RestFolder is a folder node in the REST request tree. Folders and child folders
+ * form a multi-level directory structure; leaf nodes are RestRequestModel entries
+ * that belong to a folder via FolderID.
+ */
+export interface RestFolder {
+    "id": number;
+
+    /**
+     * 0 = root
+     */
+    "parentId": number;
+    "name": string;
+    "sort": number;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+/**
+ * RestRequestModel is a saved REST request. Each request lives under a folder
+ * (FolderID). The request body, headers, and params are stored as JSON text.
+ */
+export interface RestRequestModel {
+    "id": number;
+
+    /**
+     * 0 = root level (no folder)
+     */
+    "folderId": number;
+    "name": string;
+
+    /**
+     * GET | POST | PUT | DELETE | PATCH | HEAD | OPTIONS
+     */
+    "method": string;
+
+    /**
+     * path relative to environment base URL, or absolute
+     */
+    "url": string;
+
+    /**
+     * JSON: [{"key":"...","value":"..."}]
+     */
+    "headers": string;
+
+    /**
+     * JSON: [{"key":"...","value":"..."}]
+     */
+    "params": string;
+    "body": string;
+    "sort": number;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+/**
  * SavedConnection stores a connection profile (SSH terminal / SFTP / FTP)
  * so users can reconnect without retyping the details.
  * Sensitive fields (Password / Passphrase / PrivateKey) are encrypted with a

@@ -37,7 +37,16 @@ func InitDB() (err error) {
 	}
 	migrateLegacyData(path)
 	db, err = gorm.Open(sqlite.Open(path), &gorm.Config{})
-	return err
+	if err != nil {
+		return err
+	}
+	sqlDB, err := db.DB()
+	if err == nil {
+		sqlDB.SetMaxOpenConns(1)
+		db.Exec("PRAGMA journal_mode=WAL")
+		db.Exec("PRAGMA busy_timeout=5000")
+	}
+	return nil
 }
 
 // dataSourcePath returns the SQLite file path. On mobile (Android/iOS) the

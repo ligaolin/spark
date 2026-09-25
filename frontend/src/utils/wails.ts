@@ -236,4 +236,5 @@ export const EVENTS = {
   localTerminalExit: 'localTerminal:exit',
   transferProgress: 'transfer:progress',
   sessionClosed: 'session:closed',
+  restWsMessage: 'rest:ws:message',
 } as const
