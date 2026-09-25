@@ -12,6 +12,9 @@
                     <FolderAdd />
                 </el-icon><span>新建文件夹</span>
             </el-button>
+            <el-button size="small" :loading="reloading" @click="reload">
+                <el-icon><Refresh /></el-icon><span>刷新</span>
+            </el-button>
             <el-button size="small" :disabled="!selectedId" @click="renameSelected">重命名</el-button>
             <el-button size="small" type="danger" plain :disabled="!selectedId" @click="deleteSelected">删除</el-button>
 
@@ -49,11 +52,6 @@
                             <div class="left-tab" :class="{ active: leftTab === 'tree' }" @click="leftTab = 'tree'">文件</div>
                             <div class="left-tab" :class="{ active: leftTab === 'search' }" @click="leftTab = 'search'">
                                 搜索<span v-if="results.length" class="tab-badge">{{ results.length }}</span>
-                            </div>
-                            <div class="left-tab-action">
-                                <el-button size="small" text @click="reload">
-                                    <el-icon :class="{ spinning: reloading }"><Refresh /></el-icon>
-                                </el-button>
                             </div>
                         </div>
 
@@ -509,6 +507,8 @@ function buildCtx(data: TreeNode | null): (CtxItem | 'divider')[] {
         items.push({ key: 'new-file', label: '新建文件', icon: DocumentAdd })
         items.push({ key: 'new-folder', label: '新建文件夹', icon: FolderAdd })
         items.push('divider')
+        items.push({ key: 'refresh', label: '刷新', icon: Refresh })
+        items.push('divider')
     }
     items.push({ key: 'rename', label: '重命名', icon: Edit })
     items.push({ key: 'delete', label: '删除', icon: Delete, danger: true })
@@ -532,6 +532,9 @@ async function onCtxPick(item: CtxItem) {
             break
         case 'new-folder':
             await createNode('folder', target && target.type === 'folder' ? target.id : 0)
+            break
+        case 'refresh':
+            if (target) await reloadParent(target.id)
             break
         case 'rename':
             if (target) await renameNode(target)
@@ -944,21 +947,6 @@ function openResult(row: SearchResult) {
     background: var(--hover-strong);
     border-radius: 8px;
     padding: 0 6px;
-}
-
-.left-tab-action {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    padding: 0 6px;
-}
-
-@keyframes spin {
-    to { transform: rotate(360deg); }
-}
-
-.spinning {
-    animation: spin 0.8s linear infinite;
 }
 
 .tree-wrap,

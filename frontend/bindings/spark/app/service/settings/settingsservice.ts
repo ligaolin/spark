@@ -47,3 +47,10 @@ export function Set(key: string, value: string): $CancellablePromise<void> {
 export function SetAutoStart(enabled: boolean): $CancellablePromise<void> {
     return $Call.ByID(1250324383, enabled);
 }
+
+/**
+ * SetTitleBarTheme 运行时切换 Windows 标题栏明暗。theme 为 "light" 或 "dark"。
+ */
+export function SetTitleBarTheme(theme: string): $CancellablePromise<void> {
+    return $Call.ByID(3140481422, theme);
+}

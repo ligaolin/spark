@@ -304,14 +304,14 @@ export interface ReplaceResult {
 }
 
 /**
- * RestEnvItem is a saved environment (base URL + common headers).
+ * RestFolderEnvItem is a named base URL entry for a folder.
  */
-export interface RestEnvItem {
+export interface RestFolderEnvItem {
     "id": number;
+    "folderId": number;
     "name": string;
     "baseUrl": string;
-    "commonHeaders": KV[] | null;
-    "isDefault": boolean;
+    "isActive": boolean;
     "sort": number;
 }
 
@@ -361,6 +361,11 @@ export interface RestNode {
     "method"?: string;
     "url"?: string;
     "baseUrl"?: string;
+
+    /**
+     * 文件夹当前激活的基础链接（仅在 type=folder 时有效）
+     */
+    "activeBaseUrl"?: string;
 
     /**
      * JSON: 文件夹的公共请求头（仅在 type=folder 时有效）
@@ -430,14 +435,14 @@ export interface RestResponse {
 }
 
 /**
- * RestSaveEnv is used to save/update an environment from the frontend.
+ * RestSaveFolderEnv is used to save/update a folder environment entry.
  */
-export interface RestSaveEnv {
+export interface RestSaveFolderEnv {
     "id": number;
+    "folderId": number;
     "name": string;
     "baseUrl": string;
-    "commonHeaders": KV[] | null;
-    "isDefault": boolean;
+    "isActive": boolean;
 }
 
 /**

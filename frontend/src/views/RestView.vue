@@ -2,28 +2,7 @@
   <div class="rest-view">
     <el-splitter :layout="'horizontal'" class="root-splitter">
       <el-splitter-panel :size="sidebarSize" :min="180" :max="520" @resize="onSidebarResize">
-        <!-- 左侧边栏：目录树 + 环境 -->
         <div class="rest-sidebar">
-          <!-- 环境选择器 -->
-          <div class="sidebar-env">
-            <el-select
-              v-model="activeEnvId"
-              class="env-select"
-              placeholder="选择环境"
-              clearable
-              @change="onEnvChange"
-            >
-              <el-option
-                v-for="env in environments"
-                :key="env.id"
-                :label="env.name + (env.isDefault ? ' (默认)' : '')"
-                :value="env.id"
-              />
-            </el-select>
-            <el-button size="small" text :icon="Setting" @click="showEnvDialog = true" title="管理环境" />
-          </div>
-
-          <!-- 树搜索 -->
           <div class="sidebar-search">
             <el-input
               v-model="treeFilter"
@@ -37,7 +16,6 @@
             </el-input>
           </div>
 
-          <!-- 树 -->
           <div class="sidebar-tree" @contextmenu.prevent="onBlankContext">
             <el-tree
               ref="treeRef"
@@ -65,6 +43,7 @@
                     :class="'method-' + (data.method || 'get').toLowerCase()"
                   >{{ data.method }}</span>
                   <span class="tree-node-name" :title="data.name">{{ data.name }}</span>
+                  <span v-if="data.type === 'folder' && data.activeBaseUrl" class="tree-base-url-tag">{{ data.activeBaseUrl }}</span>
                 </span>
               </template>
             </el-tree>
@@ -104,7 +83,7 @@
           断开
         </el-button>
         <el-button @click="saveCurrentRequest" :loading="saving">
-          <el-icon><Plus /></el-icon>
+          <el-icon><Select /></el-icon>
           <span>保存</span>
         </el-button>
         <el-dropdown trigger="click" class="toolbar-more">
@@ -118,9 +97,6 @@
               </el-dropdown-item>
               <el-dropdown-item @click="genCurl">
                 <el-icon><CopyDocument /></el-icon>生成 curl
-              </el-dropdown-item>
-              <el-dropdown-item divided @click="showBaseUrlDialog = true">
-                <el-icon><Connection /></el-icon>设置请求基础链接
               </el-dropdown-item>
               <el-dropdown-item divided @click="showStressDialog = true">
                 <el-icon><TrendCharts /></el-icon>压力测试
@@ -342,63 +318,50 @@
       </el-splitter-panel>
     </el-splitter>
 
-    <!-- 环境管理弹窗 -->
-    <el-dialog v-model="showEnvDialog" title="环境管理" width="650px" destroy-on-close>
-      <div class="env-list">
-        <div class="env-item" v-for="env in environments" :key="env.id">
-          <div class="env-item-row">
-            <span class="env-name">{{ env.name }}</span>
-            <span class="env-url" :title="env.baseUrl">{{ env.baseUrl || '(无基础链接)' }}</span>
-            <el-tag v-if="env.isDefault" size="small" type="success">默认</el-tag>
-            <div class="env-actions">
-              <el-button size="small" text @click="editEnv(env)">编辑</el-button>
-              <el-button v-if="!env.isDefault" size="small" text @click="setDefaultEnv(env.id)">设为默认</el-button>
-              <el-button size="small" text type="danger" @click="deleteEnv(env.id)">删除</el-button>
-            </div>
-          </div>
-          <div class="env-headers" v-if="env.commonHeaders && env.commonHeaders.length">
-            <span class="env-headers-label">公共请求头：</span>
-            <el-tag v-for="h in env.commonHeaders" :key="h.key" size="small" class="env-header-tag">
-              {{ h.key }}: {{ h.value }}
-            </el-tag>
-          </div>
+    <!-- 设置环境弹窗（目录右键：基础链接 + 公共请求头，同一页面） -->
+    <el-dialog v-model="showEnvDialog" :title="'设置环境 - ' + (envTargetNode?.name || '')" width="750px" destroy-on-close>
+      <!-- 基础链接区域 -->
+      <el-divider content-position="left">
+        <el-icon><Connection /></el-icon>
+        <span style="margin-left:4px">基础链接</span>
+      </el-divider>
+      <p class="env-tab-hint">
+        <el-icon><InfoFilled /></el-icon>
+        可配置多个基础链接（如正式/测试），标记一个为「当前使用」。为空则继承上级目录。
+      </p>
+      <div class="env-base-url-list">
+        <div class="env-base-item" v-for="(item, i) in folderEnvList" :key="item.id || ('new_'+i)">
+          <el-input v-model="item.name" class="env-base-name" placeholder="名称（如：正式、测试）" size="small" />
+          <el-input v-model="item.baseUrl" class="env-base-url" placeholder="https://api.example.com" size="small" />
+          <el-tag v-if="item.isActive" size="small" type="success" class="env-active-tag">当前使用</el-tag>
+          <el-button v-else size="small" text type="primary" @click="setActiveEnvItem(item, i)">启用</el-button>
+          <el-button size="small" text type="danger" :icon="Delete" @click="removeEnvItem(i)" />
         </div>
-        <p v-if="!environments.length" class="env-empty">暂无环境，点击下方按钮新建</p>
+        <el-button size="small" :icon="Plus" @click="addEnvItem">添加基础链接</el-button>
+      </div>
+
+      <!-- 公共请求头区域 -->
+      <el-divider content-position="left" style="margin-top:20px">
+        <el-icon><Setting /></el-icon>
+        <span style="margin-left:4px">公共请求头</span>
+      </el-divider>
+      <p class="env-tab-hint">
+        <el-icon><InfoFilled /></el-icon>
+        文件夹级公共请求头，所有子请求自动携带。优先级：请求自身 Headers > 文件夹公共请求头。同 key 由高优先级覆盖。
+      </p>
+      <div class="kv-editor" style="height: auto; max-height: 300px; border: 1px solid var(--border-color); border-radius: 6px;">
+        <div class="kv-row" v-for="(row, i) in folderHeadersForm" :key="i">
+          <el-input v-model="row.key" class="kv-key" placeholder="Header 名" size="small" />
+          <el-input v-model="row.value" class="kv-val" placeholder="Header 值" size="small" />
+          <el-button size="small" :icon="Delete" circle @click="folderHeadersForm.splice(i, 1)" />
+        </div>
+        <el-button size="small" :icon="Plus" @click="folderHeadersForm.push({ key: '', value: '', enabled: true })">
+          添加请求头
+        </el-button>
       </div>
       <template #footer>
-        <el-button @click="editEnv(null)">新建环境</el-button>
-        <el-button @click="showEnvDialog = false">关闭</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 环境编辑弹窗 -->
-    <el-dialog v-model="envEditVisible" :title="editingEnvId ? '编辑环境' : '新建环境'" width="600px" destroy-on-close>
-      <el-form label-width="90px" v-if="envEditVisible">
-        <el-form-item label="名称">
-          <el-input v-model="envForm.name" placeholder="例如：生产环境" />
-        </el-form-item>
-        <el-form-item label="基础链接">
-          <el-input v-model="envForm.baseUrl" placeholder="例如：https://api.example.com" />
-        </el-form-item>
-        <el-form-item label="默认环境">
-          <el-switch v-model="envForm.isDefault" />
-        </el-form-item>
-        <el-form-item label="公共请求头">
-          <div class="kv-editor">
-            <div class="kv-row" v-for="(row, i) in envForm.commonHeaders" :key="i">
-              <el-input v-model="row.key" class="kv-key" placeholder="Header 名" />
-              <el-input v-model="row.value" class="kv-val" placeholder="Header 值" />
-              <el-button size="small" :icon="Delete" circle @click="envForm.commonHeaders.splice(i, 1)" />
-            </div>
-            <el-button size="small" :icon="Plus" @click="envForm.commonHeaders.push({ key: '', value: '' })">
-              添加公共请求头
-            </el-button>
-          </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="envEditVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveEnv">保存</el-button>
+        <el-button @click="showEnvDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveEnvSettings" :loading="savingEnv">保存</el-button>
       </template>
     </el-dialog>
 
@@ -508,59 +471,6 @@
       </template>
     </el-dialog>
 
-    <!-- 基础链接编辑弹窗 -->
-    <el-dialog v-model="showBaseUrlDialog" :title="baseUrlTargetType === 'folder' ? '设置文件夹基础链接' : '设置请求基础链接'" width="550px" destroy-on-close>
-      <el-form label-width="100px" v-if="showBaseUrlDialog">
-        <el-form-item label="节点名称">
-          <span class="baseurl-node-name">{{ baseUrlTargetNode?.name || '（未选中）' }}</span>
-        </el-form-item>
-        <el-form-item label="基础链接">
-          <el-input v-model="baseUrlForm" placeholder="例如：https://api.github.com（留空则继承上级）" clearable />
-        </el-form-item>
-        <el-form-item label="">
-          <span class="baseurl-hint">
-            <el-icon><InfoFilled /></el-icon>
-            优先级：请求基础链接 > 文件夹基础链接 > 全局环境。留空将自动继承上级。
-          </span>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showBaseUrlDialog = false">取消</el-button>
-        <el-button type="primary" @click="saveBaseUrl">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 文件夹公共请求头编辑弹窗 -->
-    <el-dialog v-model="showFolderHeadersDialog" title="设置文件夹公共请求头" width="650px" destroy-on-close>
-      <el-form label-width="110px" v-if="showFolderHeadersDialog">
-        <el-form-item label="文件夹">
-          <span class="baseurl-node-name">{{ folderHeadersTargetNode?.name || '（未选中）' }}</span>
-        </el-form-item>
-        <el-form-item label="公共请求头">
-          <div class="kv-editor" style="height: auto; max-height: 400px">
-            <div class="kv-row" v-for="(row, i) in folderHeadersForm" :key="i">
-              <el-input v-model="row.key" class="kv-key" placeholder="Header 名" />
-              <el-input v-model="row.value" class="kv-val" placeholder="Header 值" />
-              <el-button size="small" :icon="Delete" circle @click="folderHeadersForm.splice(i, 1)" />
-            </div>
-            <el-button size="small" :icon="Plus" @click="folderHeadersForm.push({ key: '', value: '', enabled: true })">
-              添加请求头
-            </el-button>
-          </div>
-        </el-form-item>
-        <el-form-item label="">
-          <span class="baseurl-hint">
-            <el-icon><InfoFilled /></el-icon>
-            优先级：请求自身 Headers > 文件夹公共请求头 > 全局环境。同 key 由高优先级覆盖。
-          </span>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showFolderHeadersDialog = false">取消</el-button>
-        <el-button type="primary" @click="saveFolderHeaders">保存</el-button>
-      </template>
-    </el-dialog>
-
     <!-- 右键菜单 -->
     <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
   </div>
@@ -570,13 +480,13 @@
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Events } from '@wailsio/runtime'
-import { Delete, Plus, Promotion, Setting, Connection, Folder, Download, CopyDocument, MoreFilled, TrendCharts, Search, InfoFilled, Document } from '@element-plus/icons-vue'
+import { Delete, Select, Plus, Promotion, Setting, Connection, Folder, Download, CopyDocument, MoreFilled, TrendCharts, Search, InfoFilled, Document } from '@element-plus/icons-vue'
 import CodeEditor from '../components/CodeEditor.vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
 import { EVENTS } from '../utils/wails'
 import * as RestService from '../../bindings/spark/app/service/rest/restservice.js'
-import type { RestRequest, RestResponse, StressTestRequest, StressTestResult } from '../../bindings/spark/app/service/types/models'
+import type { RestRequest, RestResponse, StressTestRequest, StressTestResult } from '../../bindings/spark/app/service/types/models.js'
 
 interface StressProgress {
   current: number
@@ -597,18 +507,19 @@ interface TreeNode {
   method?: string
   url?: string
   baseUrl?: string
+  activeBaseUrl?: string
   commonHeaders?: string
   leaf: boolean
   sort: number
   children?: TreeNode[]
 }
 
-interface EnvItem {
+interface FolderEnvItem {
   id: number
+  folderId: number
   name: string
   baseUrl: string
-  commonHeaders: KV[]
-  isDefault: boolean
+  isActive: boolean
   sort: number
 }
 
@@ -636,23 +547,9 @@ const treeRef = ref()
 const treeData = ref<TreeNode[]>([])
 const treeFilter = ref('')
 const editingNode = ref<TreeNode | null>(null)
-const editingRequestId = ref<number>(0) // ID of the RestRequestModel being edited
-const requestBaseUrl = ref('')   // 当前请求自身的 baseUrl
-const folderEffectiveBaseUrl = ref('') // 所属文件夹层级继承的 baseUrl
-const folderCommonHeaders = ref<KV[]>([]) // 文件夹层级合并的公共请求头
-
-// 环境
-const environments = ref<EnvItem[]>([])
-const activeEnvId = ref<number | null>(null)
-const showEnvDialog = ref(false)
-const envEditVisible = ref(false)
-const editingEnvId = ref<number>(0)
-const envForm = ref({
-  name: '',
-  baseUrl: '',
-  isDefault: false,
-  commonHeaders: [] as KV[],
-})
+const editingRequestId = ref<number>(0)
+const folderEffectiveBaseUrl = ref('')
+const folderCommonHeaders = ref<KV[]>([])
 
 // 右键菜单
 const ctxVisible = ref(false)
@@ -673,16 +570,12 @@ const stressProgress = ref<StressProgress>({ current: 0, total: 0 })
 const stressResult = ref<StressTestResult | null>(null)
 let stressTimer: ReturnType<typeof setInterval> | null = null
 
-// 基础链接编辑
-const showBaseUrlDialog = ref(false)
-const baseUrlForm = ref('')
-const baseUrlTargetType = ref<'folder' | 'request'>('request')
-const baseUrlTargetNode = ref<TreeNode | null>(null)
-
-// 文件夹公共请求头编辑
-const showFolderHeadersDialog = ref(false)
+// 设置环境弹窗（目录右键：基础链接 + 公共请求头）
+const showEnvDialog = ref(false)
+const envTargetNode = ref<TreeNode | null>(null)
+const folderEnvList = ref<FolderEnvItem[]>([])
 const folderHeadersForm = ref<KV[]>([])
-const folderHeadersTargetNode = ref<TreeNode | null>(null)
+const savingEnv = ref(false)
 
 // HTML 预览
 const htmlPreview = ref(true)
@@ -699,7 +592,7 @@ const urlencodedFields = ref<KV[]>([])
 const formFiles = ref<{ fieldName: string; fileName: string; filePath: string }[]>([])
 const binaryFilePath = ref('')
 
-// Splitter 尺寸（el-splitter 的 size 支持像素或百分比，用字符串）
+// Splitter 尺寸
 const sidebarSize = ref(parseInt(localStorage.getItem('rest.sidebarWidth') || '260'))
 const requestSize = ref(parseInt(localStorage.getItem('rest.requestPercent') || '50') + '%')
 
@@ -738,13 +631,8 @@ const curlEditorRef = ref<InstanceType<typeof CodeEditor> | null>(null)
 // 计算
 const methodClass = computed(() => 'method-' + current.value.method.toLowerCase())
 
-const activeEnv = computed(() => {
-  if (!activeEnvId.value) return null
-  return environments.value.find((e) => e.id === activeEnvId.value) ?? null
-})
-
 const effectiveDisplayBase = computed(() => {
-  return requestBaseUrl.value || folderEffectiveBaseUrl.value || activeEnv.value?.baseUrl || ''
+  return folderEffectiveBaseUrl.value || ''
 })
 
 const statusTagType = computed(() => {
@@ -819,7 +707,6 @@ function filterTreeNode(value: string, data: TreeNode) {
 }
 
 onMounted(async () => {
-  await loadEnvironments()
   await loadRoot()
 })
 
@@ -878,6 +765,7 @@ function toTreeNode(n: any): TreeNode {
     method: n.method,
     url: n.url,
     baseUrl: n.baseUrl,
+    activeBaseUrl: n.activeBaseUrl,
     commonHeaders: n.commonHeaders,
     leaf: n.leaf,
     sort: n.sort,
@@ -939,11 +827,7 @@ function buildCtx(data: TreeNode): (CtxItem | 'divider')[] {
     items.push({ key: 'new-folder', label: '新建子文件夹', icon: Folder })
     items.push({ key: 'new-request', label: '新建请求', icon: Plus })
     items.push('divider')
-    items.push({ key: 'set-folder-baseurl', label: '设置基础链接', icon: Connection })
-    items.push({ key: 'set-folder-headers', label: '设置公共请求头', icon: Document })
-    items.push('divider')
-  } else {
-    items.push({ key: 'set-request-baseurl', label: '设置基础链接', icon: Connection })
+    items.push({ key: 'set-folder-env', label: '设置环境', icon: Setting })
     items.push('divider')
   }
   items.push({ key: 'rename', label: '重命名', icon: 'Edit' })
@@ -973,14 +857,8 @@ async function onCtxPick(item: CtxItem) {
       await createRequest(parentId)
       break
     }
-    case 'set-folder-baseurl':
-      if (target) openBaseUrlEditor('folder', target)
-      break
-    case 'set-folder-headers':
-      if (target) openFolderHeadersEditor(target)
-      break
-    case 'set-request-baseurl':
-      if (target) openBaseUrlEditor('request', target)
+    case 'set-folder-env':
+      if (target) openEnvEditor(target)
       break
     case 'rename':
       if (target) await renameNode(target)
@@ -1065,7 +943,6 @@ async function loadRequest(node: TreeNode) {
     editingRequestId.value = item.id
     current.value.method = item.method || 'GET'
     current.value.url = item.url || ''
-    requestBaseUrl.value = item.baseUrl || ''
     folderEffectiveBaseUrl.value = item.effectiveBaseUrl || ''
     folderCommonHeaders.value = item.folderCommonHeaders
       ? JSON.parse(JSON.stringify(item.folderCommonHeaders)).map((h: KV) => ({ enabled: true, ...h }))
@@ -1127,7 +1004,7 @@ async function saveCurrentRequest() {
       name: editingNode.value!.name,
       method: current.value.method,
       url: current.value.url,
-      baseUrl: requestBaseUrl.value,
+      baseUrl: '',
       headers: current.value.headers,
       params: current.value.params,
       body: current.value.body,
@@ -1143,7 +1020,6 @@ async function saveCurrentRequest() {
 function resetEditor() {
   editingNode.value = null
   editingRequestId.value = 0
-  requestBaseUrl.value = ''
   folderEffectiveBaseUrl.value = ''
   folderCommonHeaders.value = []
   current.value.method = 'GET'
@@ -1154,180 +1030,108 @@ function resetEditor() {
   bodyEditorRef.value?.setContent('')
 }
 
-// ========== 基础链接编辑 ==========
+// ========== 设置环境（目录右键：基础链接 + 公共请求头） ==========
 
-function openBaseUrlEditor(type: 'folder' | 'request', node?: TreeNode) {
-  baseUrlTargetType.value = type
-  if (type === 'request' && editingNode.value) {
-    baseUrlTargetNode.value = editingNode.value
-    baseUrlForm.value = requestBaseUrl.value
-  } else if (node) {
-    baseUrlTargetNode.value = node
-    baseUrlForm.value = node.baseUrl || ''
-  } else {
-    baseUrlTargetNode.value = null
-    baseUrlForm.value = ''
-  }
-  showBaseUrlDialog.value = true
-}
+async function openEnvEditor(node: TreeNode) {
+  envTargetNode.value = node
 
-async function saveBaseUrl() {
-  const target = baseUrlTargetNode.value
-  if (!target) return
-  const url = baseUrlForm.value.trim()
-
+  // 加载基础链接列表
   try {
-    if (baseUrlTargetType.value === 'folder') {
-      await RestService.SetFolderBaseURL(target.id, url)
-      // 更新本地节点缓存
-      target.baseUrl = url
-      await reloadParent(target.parentId)
-      ElMessage.success('文件夹基础链接已更新')
-    } else {
-      await RestService.SetRequestBaseURL(target.id, url)
-      requestBaseUrl.value = url
-      // 同时更新树节点缓存
-      const node = findNodeById(target.id)
-      if (node) node.baseUrl = url
-      // 刷新 effectiveBaseUrl
-      if (editingNode.value) {
-        try {
-          const eff = await RestService.GetEffectiveBaseURL(editingNode.value.parentId)
-          folderEffectiveBaseUrl.value = eff || ''
-        } catch { /* ignore */ }
-      }
-      ElMessage.success('请求基础链接已更新')
-    }
-    showBaseUrlDialog.value = false
-  } catch (e: any) {
-    ElMessage.error('保存失败: ' + (e?.message || e))
+    const list = await RestService.ListFolderEnvs(node.id)
+    folderEnvList.value = (list ?? []) as FolderEnvItem[]
+  } catch {
+    folderEnvList.value = []
   }
-}
 
-// ========== 文件夹公共请求头编辑 ==========
-
-function openFolderHeadersEditor(node: TreeNode) {
-  folderHeadersTargetNode.value = node
+  // 加载公共请求头
   try {
     if (node.commonHeaders) {
-      folderHeadersForm.value = JSON.parse(JSON.stringify(node.commonHeaders)).map((h: KV) => ({ enabled: true, ...h }))
+      folderHeadersForm.value = JSON.parse(node.commonHeaders).map((h: KV) => ({ enabled: true, ...h }))
     } else {
       folderHeadersForm.value = []
     }
   } catch {
     folderHeadersForm.value = []
   }
-  showFolderHeadersDialog.value = true
+
+  showEnvDialog.value = true
 }
 
-async function saveFolderHeaders() {
-  const target = folderHeadersTargetNode.value
+function addEnvItem() {
+  folderEnvList.value.push({
+    id: 0,
+    folderId: envTargetNode.value?.id ?? 0,
+    name: '',
+    baseUrl: '',
+    isActive: folderEnvList.value.length === 0,
+    sort: folderEnvList.value.length,
+  })
+}
+
+function removeEnvItem(index: number) {
+  folderEnvList.value.splice(index, 1)
+}
+
+async function setActiveEnvItem(item: FolderEnvItem, _index: number) {
+  if (item.id) {
+    try {
+      await RestService.SetActiveFolderEnv(item.id)
+      for (const e of folderEnvList.value) {
+        e.isActive = e.id === item.id
+      }
+    } catch (e: any) {
+      ElMessage.error('设置失败: ' + (e?.message || e))
+    }
+  } else {
+    // 新条目，先标记
+    for (const e of folderEnvList.value) {
+      e.isActive = e === item
+    }
+  }
+}
+
+async function saveEnvSettings() {
+  const target = envTargetNode.value
   if (!target) return
 
-  const validHeaders = folderHeadersForm.value.filter((h) => h.key.trim())
+  savingEnv.value = true
   try {
+    // 1. 保存所有基础链接
+    for (const item of folderEnvList.value) {
+      await RestService.SaveFolderEnv({
+        id: item.id,
+        folderId: target.id,
+        name: item.name.trim(),
+        baseUrl: item.baseUrl.trim(),
+        isActive: item.isActive,
+      })
+    }
+    // 删除已移除的基础链接（需要后台支持，这里先跳过）
+
+    // 2. 保存公共请求头
+    const validHeaders = folderHeadersForm.value.filter((h) => h.key.trim())
     await RestService.SetFolderCommonHeaders(target.id, JSON.stringify(validHeaders))
-    ElMessage.success('文件夹公共请求头已更新')
-    showFolderHeadersDialog.value = false
+
+    showEnvDialog.value = false
     await reloadParent(target.parentId)
-    // 如果当前编辑的请求属于该文件夹层级，刷新有效公共请求头
+
+    // 刷新当前编辑请求的有效公共请求头
     if (editingNode.value) {
       try {
         const eff = await RestService.GetEffectiveCommonHeaders(editingNode.value.parentId)
         folderCommonHeaders.value = (eff || []).map((h: KV) => ({ enabled: true, ...h }))
       } catch { /* ignore */ }
+      try {
+        const eff = await RestService.GetEffectiveBaseURL(editingNode.value.parentId)
+        folderEffectiveBaseUrl.value = eff || ''
+      } catch { /* ignore */ }
     }
+
+    ElMessage.success('环境设置已保存')
   } catch (e: any) {
     ElMessage.error('保存失败: ' + (e?.message || e))
-  }
-}
-
-// ========== 环境 ==========
-
-async function loadEnvironments() {
-  try {
-    const list = await RestService.ListEnvironments()
-    environments.value = (list ?? []) as EnvItem[]
-    // 默认环境自动选中
-    const def = environments.value.find((e) => e.isDefault)
-    if (def) {
-      activeEnvId.value = def.id
-    }
-  } catch (e: any) {
-    // ignore
-  }
-}
-
-function onEnvChange() {
-  // 切换环境时无需额外操作，发送时自动拼接基础链接和公共请求头
-}
-
-function editEnv(env: EnvItem | null) {
-  if (env) {
-    editingEnvId.value = env.id
-    envForm.value = {
-      name: env.name,
-      baseUrl: env.baseUrl,
-      isDefault: env.isDefault,
-      commonHeaders: env.commonHeaders
-        ? JSON.parse(JSON.stringify(env.commonHeaders)).map((h) => ({ enabled: true, ...h }))
-        : [],
-    }
-  } else {
-    editingEnvId.value = 0
-    envForm.value = {
-      name: '',
-      baseUrl: '',
-      isDefault: environments.value.length === 0,
-      commonHeaders: [],
-    }
-  }
-  envEditVisible.value = true
-}
-
-async function saveEnv() {
-  if (!envForm.value.name.trim()) {
-    ElMessage.warning('请输入环境名称')
-    return
-  }
-  try {
-    await RestService.SaveEnvironment({
-      id: editingEnvId.value,
-      name: envForm.value.name.trim(),
-      baseUrl: envForm.value.baseUrl.trim(),
-      commonHeaders: envForm.value.commonHeaders.filter((h) => h.key.trim()),
-      isDefault: envForm.value.isDefault,
-    })
-    envEditVisible.value = false
-    await loadEnvironments()
-    ElMessage.success(editingEnvId.value ? '环境已更新' : '环境已创建')
-  } catch (e: any) {
-    ElMessage.error('保存环境失败: ' + (e?.message || e))
-  }
-}
-
-async function setDefaultEnv(id: number) {
-  try {
-    await RestService.SetDefaultEnvironment(id)
-    await loadEnvironments()
-    ElMessage.success('已设为默认环境')
-  } catch (e: any) {
-    ElMessage.error('设置失败: ' + (e?.message || e))
-  }
-}
-
-async function deleteEnv(id: number) {
-  try {
-    await ElMessageBox.confirm('确定删除该环境？', '删除', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
-    await RestService.DeleteEnvironment(id)
-    await loadEnvironments()
-    ElMessage.success('环境已删除')
-  } catch {
-    // 取消
+  } finally {
+    savingEnv.value = false
   }
 }
 
@@ -1344,11 +1148,7 @@ function buildURL(): string {
   const isWS = current.value.method === 'WS'
   const defaultProto = isWS ? 'ws://' : 'https://'
 
-  // 优先级: 请求自身 baseUrl > 文件夹继承 baseUrl > 全局环境 baseUrl
-  let effectiveBase = requestBaseUrl.value || folderEffectiveBaseUrl.value
-  if (!effectiveBase && activeEnv.value && activeEnv.value.baseUrl) {
-    effectiveBase = activeEnv.value.baseUrl
-  }
+  let effectiveBase = folderEffectiveBaseUrl.value
 
   if (!isAbsoluteURL(url) && effectiveBase) {
     const base = effectiveBase.replace(/\/+$/, '')
@@ -1371,23 +1171,14 @@ function buildURL(): string {
 function buildHeaders(): Record<string, string> {
   const h: Record<string, string> = {}
 
-  // Layer 1: 全局环境公共请求头（最低优先级）
-  if (activeEnv.value && activeEnv.value.commonHeaders) {
-    for (const row of activeEnv.value.commonHeaders) {
-      if (row.key.trim() && row.enabled !== false) {
-        h[row.key.trim()] = row.value
-      }
-    }
-  }
-
-  // Layer 2: 文件夹层级合并的公共请求头（覆盖环境）
+  // Layer 1: 文件夹层级合并的公共请求头
   for (const row of folderCommonHeaders.value) {
     if (row.key.trim() && row.enabled !== false) {
       h[row.key.trim()] = row.value
     }
   }
 
-  // Layer 3: 请求自身的 headers（最高优先级，覆盖以上所有）
+  // Layer 2: 请求自身的 headers（最高优先级，覆盖以上所有）
   for (const row of current.value.headers) {
     if (row.key.trim() && row.enabled !== false) {
       h[row.key.trim()] = row.value
@@ -1427,6 +1218,7 @@ async function send() {
     headers,
     body: reqBody,
     timeout: 30,
+    insecure: false,
     formFiles: bodyType.value === 'form' ? formFiles.value.filter(f => f.filePath).map(f => ({
       fieldName: f.fieldName,
       fileName: f.fileName,
@@ -1448,7 +1240,6 @@ async function send() {
     if (resp.error) {
       ElMessage.warning(resp.error)
     }
-    // SSE 流式处理
     if (resp.streaming && resp.streamId) {
       if (sseTimer) clearInterval(sseTimer)
       sseTimer = setInterval(async () => {
@@ -1574,14 +1365,9 @@ function parseCurl(cmd: string): { method: string; url: string; headers: KV[]; b
     params: [],
   }
 
-  // 预处理：去掉换行符的反斜杠续行，合并为一行
   let s = cmd.replace(/\\(\r?\n|$)/g, ' ')
-
-  // 去掉开头的 "curl "
   s = s.replace(/^curl\s+/i, '')
 
-  // 提取 URL（第一个非选项参数）
-  // 先提取所有 token
   const tokens = tokenize(s)
 
   let i = 0
@@ -1625,14 +1411,12 @@ function parseCurl(cmd: string): { method: string; url: string; headers: KV[]; b
     } else if (t === '--compressed') {
       result.headers.push({ key: 'Accept-Encoding', value: 'gzip, deflate' })
     } else if (!t.startsWith('-') && !result.url) {
-      // 第一个非选项参数当作 URL
       result.url = t
     }
 
     i++
   }
 
-  // 如果没找到 URL，尝试从 tokens 中匹配 http(s) 开头的内容
   if (!result.url) {
     for (const tk of tokens) {
       if (/^https?:\/\//i.test(tk)) {
@@ -1642,7 +1426,6 @@ function parseCurl(cmd: string): { method: string; url: string; headers: KV[]; b
     }
   }
 
-  // 从 URL 中提取 query 参数
   if (result.url) {
     const qIdx = result.url.indexOf('?')
     if (qIdx >= 0) {
@@ -1666,12 +1449,10 @@ function parseCurl(cmd: string): { method: string; url: string; headers: KV[]; b
   return result
 }
 
-// 将 shell 命令 tokenize，处理单引号和双引号
 function tokenize(s: string): string[] {
   const tokens: string[] = []
   let i = 0
   while (i < s.length) {
-    // 跳过空白
     while (i < s.length && /\s/.test(s[i])) i++
     if (i >= s.length) break
 
@@ -1682,7 +1463,7 @@ function tokenize(s: string): string[] {
         val += s[i]
         i++
       }
-      i++ // 跳过结束的单引号
+      i++
       tokens.push(val)
     } else if (s[i] === '"') {
       i++
@@ -1696,7 +1477,7 @@ function tokenize(s: string): string[] {
           i++
         }
       }
-      i++ // 跳过结束的双引号
+      i++
       tokens.push(val)
     } else {
       let val = ''
@@ -1889,7 +1670,6 @@ async function runStress() {
   stressRunning.value = true
   stressProgress.value = { current: 0, total: stressForm.value.total }
 
-  // Simulate progress with a timer since Go call is blocking
   stressTimer = setInterval(() => {
     if (stressProgress.value.current < stressForm.value.total) {
       stressProgress.value.current = Math.min(
@@ -1908,6 +1688,7 @@ async function runStress() {
       timeout: stressForm.value.timeout,
       concurrency: stressForm.value.concurrency,
       total: stressForm.value.total,
+      insecure: false,
     }
     const result = await RestService.StressTest(req)
     stressResult.value = result
@@ -1952,11 +1733,6 @@ function stopStress() {
   overflow: hidden;
 }
 
-.root-splitter :deep(.el-splitter-panel > div),
-.body-splitter :deep(.el-splitter-panel > div) {
-  height: 100%;
-}
-
 .root-splitter :deep(.el-splitter-bar__dragger:before),
 .body-splitter :deep(.el-splitter-bar__dragger:before) {
   background-color: var(--border-color);
@@ -1972,25 +1748,11 @@ function stopStress() {
   background: transparent;
 }
 
-/* 左侧边栏 */
 .rest-sidebar {
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
   overflow: hidden;
-}
-
-.sidebar-env {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-color);
-  flex-shrink: 0;
-}
-
-.env-select {
-  flex: 1;
 }
 
 .sidebar-search {
@@ -2042,7 +1804,19 @@ function stopStress() {
   flex: 1;
 }
 
-/* 主区域 */
+.tree-base-url-tag {
+  font-size: 10px;
+  padding: 0 4px;
+  background: var(--success-color);
+  color: #fff;
+  border-radius: 3px;
+  flex-shrink: 0;
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .rest-main {
   display: flex;
   flex-direction: column;
@@ -2217,7 +1991,6 @@ function stopStress() {
   overflow: hidden;
 }
 
-/* HTML 预览 */
 .html-toggle { margin-left: auto; }
 
 .html-preview-wrap {
@@ -2232,7 +2005,6 @@ function stopStress() {
   border: none;
 }
 
-/* Body 类型切换 */
 .body-type-bar {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-color);
@@ -2274,72 +2046,6 @@ function stopStress() {
   gap: 12px;
 }
 
-/* 环境管理 */
-.env-list {
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.env-item {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.env-item:last-child {
-  border-bottom: none;
-}
-
-.env-item-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.env-name {
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.env-url {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.env-actions {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.env-headers {
-  margin-top: 6px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-.env-headers-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-  flex-shrink: 0;
-}
-
-.env-header-tag {
-  font-size: 11px;
-}
-
-.env-empty {
-  text-align: center;
-  color: var(--text-secondary);
-  padding: 24px 0;
-  font-size: 14px;
-}
-
 .baseurl-node-name {
   font-weight: 600;
   color: var(--text-primary);
@@ -2351,6 +2057,47 @@ function stopStress() {
   gap: 4px;
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+/* 设置环境弹窗 */
+.env-tab-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+.env-base-url-list {
+  max-height: 450px;
+  overflow-y: auto;
+}
+
+.env-base-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+}
+
+.env-base-name {
+  width: 120px;
+  flex-shrink: 0;
+}
+
+.env-base-url {
+  flex: 1;
+}
+
+.env-active-tag {
+  flex-shrink: 0;
 }
 
 /* 压力测试 */
@@ -2405,6 +2152,7 @@ function stopStress() {
   word-break: break-all;
 }
 
+/* WebSocket */
 .ws-panel {
   display: flex;
   flex-direction: column;
@@ -2493,6 +2241,7 @@ function stopStress() {
   flex: 1;
 }
 
+/* curl */
 .curl-gen-toolbar {
   display: flex;
   align-items: center;

@@ -89,11 +89,6 @@ export interface RestFolder {
     "name": string;
 
     /**
-     * 覆盖该文件夹下所有请求的基础链接（为空则继承上级）
-     */
-    "baseUrl": string;
-
-    /**
      * JSON: 文件夹级公共请求头（合并上级，同 key 覆盖）
      */
     "commonHeaders": string;
@@ -121,12 +116,12 @@ export interface RestRequestModel {
     "method": string;
 
     /**
-     * path relative to environment base URL, or absolute
+     * path relative to folder base URL, or absolute
      */
     "url": string;
 
     /**
-     * 该请求专属的基础链接（覆盖文件夹和环境设置，为空则继承上级）
+     * 该请求专属的基础链接（覆盖文件夹设置，为空则继承上级）
      */
     "baseUrl": string;
 

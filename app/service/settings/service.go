@@ -120,3 +120,8 @@ func (s *SettingsService) IsAutoStart() bool {
 	}
 	return enabled
 }
+
+// SetTitleBarTheme 运行时切换 Windows 标题栏明暗。theme 为 "light" 或 "dark"。
+func (s *SettingsService) SetTitleBarTheme(theme string) {
+	setTitleBarTheme(theme)
+}

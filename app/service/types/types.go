@@ -408,6 +408,7 @@ type RestNode struct {
 	Method        string `json:"method,omitempty"`
 	URL           string `json:"url,omitempty"`
 	BaseURL       string `json:"baseUrl,omitempty"`
+	ActiveBaseURL string `json:"activeBaseUrl,omitempty"` // 文件夹当前激活的基础链接（仅在 type=folder 时有效）
 	CommonHeaders string `json:"commonHeaders,omitempty"` // JSON: 文件夹的公共请求头（仅在 type=folder 时有效）
 	Leaf          bool   `json:"leaf"`
 	Sort          int    `json:"sort"`
@@ -429,14 +430,23 @@ type RestItem struct {
 	Body                string `json:"body"`
 }
 
-// RestEnvItem is a saved environment (base URL + common headers).
-type RestEnvItem struct {
-	ID            uint   `json:"id"`
-	Name          string `json:"name"`
-	BaseURL       string `json:"baseUrl"`
-	CommonHeaders []KV   `json:"commonHeaders"`
-	IsDefault     bool   `json:"isDefault"`
-	Sort          int    `json:"sort"`
+// RestFolderEnvItem is a named base URL entry for a folder.
+type RestFolderEnvItem struct {
+	ID       uint   `json:"id"`
+	FolderID uint   `json:"folderId"`
+	Name     string `json:"name"`
+	BaseURL  string `json:"baseUrl"`
+	IsActive bool   `json:"isActive"`
+	Sort     int    `json:"sort"`
+}
+
+// RestSaveFolderEnv is used to save/update a folder environment entry.
+type RestSaveFolderEnv struct {
+	ID       uint   `json:"id"`
+	FolderID uint   `json:"folderId"`
+	Name     string `json:"name"`
+	BaseURL  string `json:"baseUrl"`
+	IsActive bool   `json:"isActive"`
 }
 
 // RestSaveRequest is used to save/update a request from the frontend.
@@ -450,15 +460,6 @@ type RestSaveRequest struct {
 	Headers  []KV   `json:"headers"`
 	Params   []KV   `json:"params"`
 	Body     string `json:"body"`
-}
-
-// RestSaveEnv is used to save/update an environment from the frontend.
-type RestSaveEnv struct {
-	ID            uint   `json:"id"`
-	Name          string `json:"name"`
-	BaseURL       string `json:"baseUrl"`
-	CommonHeaders []KV   `json:"commonHeaders"`
-	IsDefault     bool   `json:"isDefault"`
 }
 
 // StressTestRequest is the input for the stress-test runner.

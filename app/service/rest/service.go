@@ -310,7 +310,7 @@ func (s *RestService) ListChildren(parentID uint) ([]types.RestNode, error) {
 			ParentID:      f.ParentID,
 			Name:          f.Name,
 			Type:          "folder",
-			BaseURL:       f.BaseURL,
+			ActiveBaseURL: getActiveFolderBaseURL(f.ID),
 			CommonHeaders: f.CommonHeaders,
 			Leaf:          false,
 			Sort:          f.Sort,
@@ -716,95 +716,111 @@ func isFolderDescendant(parentID uint, childID uint) bool {
 }
 
 // ---------------------------------------------------------------------------
-// Environments
+// Folder environments (multiple base URLs per folder)
 // ---------------------------------------------------------------------------
 
-// ListEnvironments returns all saved environments.
-func (s *RestService) ListEnvironments() ([]types.RestEnvItem, error) {
-	var list []model.RestEnvironment
-	if err := db.GetDB().Order("sort asc, name asc").Find(&list).Error; err != nil {
+// ListFolderEnvs returns all base URL entries for a folder.
+func (s *RestService) ListFolderEnvs(folderID uint) ([]types.RestFolderEnvItem, error) {
+	var list []model.RestFolderEnv
+	if err := db.GetDB().Where("folder_id = ?", folderID).Order("sort asc, id asc").Find(&list).Error; err != nil {
 		return nil, err
 	}
-	result := make([]types.RestEnvItem, 0, len(list))
+	result := make([]types.RestFolderEnvItem, 0, len(list))
 	for _, e := range list {
-		result = append(result, envToItem(&e))
+		result = append(result, types.RestFolderEnvItem{
+			ID:       e.ID,
+			FolderID: e.FolderID,
+			Name:     e.Name,
+			BaseURL:  e.BaseURL,
+			IsActive: e.IsActive,
+			Sort:     e.Sort,
+		})
 	}
 	return result, nil
 }
 
-// SaveEnvironment creates or updates an environment.
-func (s *RestService) SaveEnvironment(env types.RestSaveEnv) (types.RestEnvItem, error) {
+// SaveFolderEnv creates or updates a folder environment entry.
+func (s *RestService) SaveFolderEnv(env types.RestSaveFolderEnv) (types.RestFolderEnvItem, error) {
 	env.Name = strings.TrimSpace(env.Name)
 	if env.Name == "" {
-		return types.RestEnvItem{}, errors.New("环境名称不能为空")
+		return types.RestFolderEnvItem{}, errors.New("名称不能为空")
 	}
-	headersJSON, err := json.Marshal(env.CommonHeaders)
-	if err != nil {
-		return types.RestEnvItem{}, fmt.Errorf("序列化公共请求头失败: %w", err)
+	if env.FolderID == 0 {
+		return types.RestFolderEnvItem{}, errors.New("文件夹 ID 不能为空")
 	}
 
 	if env.ID == 0 {
-		// Create new
 		var maxSort int
-		db.GetDB().Model(&model.RestEnvironment{}).Select("COALESCE(MAX(sort), -1)").Scan(&maxSort)
-		m := model.RestEnvironment{
-			Name:          env.Name,
-			BaseURL:       env.BaseURL,
-			CommonHeaders: string(headersJSON),
-			IsDefault:     env.IsDefault,
-			Sort:          maxSort + 1,
+		db.GetDB().Model(&model.RestFolderEnv{}).Where("folder_id = ?", env.FolderID).
+			Select("COALESCE(MAX(sort), -1)").Scan(&maxSort)
+		m := model.RestFolderEnv{
+			FolderID: env.FolderID,
+			Name:     env.Name,
+			BaseURL:  env.BaseURL,
+			IsActive: env.IsActive,
+			Sort:     maxSort + 1,
 		}
-		if env.IsDefault {
-			db.GetDB().Model(&model.RestEnvironment{}).Where("is_default = ?", true).Update("is_default", false)
+		if env.IsActive {
+			db.GetDB().Model(&model.RestFolderEnv{}).
+				Where("folder_id = ? AND is_active = ?", env.FolderID, true).
+				Update("is_active", false)
 		}
 		if err := db.GetDB().Create(&m).Error; err != nil {
-			return types.RestEnvItem{}, err
+			return types.RestFolderEnvItem{}, err
 		}
-		return envToItem(&m), nil
+		return types.RestFolderEnvItem{
+			ID:       m.ID,
+			FolderID: m.FolderID,
+			Name:     m.Name,
+			BaseURL:  m.BaseURL,
+			IsActive: m.IsActive,
+			Sort:     m.Sort,
+		}, nil
 	}
 
-	// Update
-	var m model.RestEnvironment
+	var m model.RestFolderEnv
 	if err := db.GetDB().First(&m, env.ID).Error; err != nil {
-		return types.RestEnvItem{}, err
+		return types.RestFolderEnvItem{}, err
 	}
-	if env.IsDefault && !m.IsDefault {
-		db.GetDB().Model(&model.RestEnvironment{}).Where("is_default = ?", true).Update("is_default", false)
+	if env.IsActive && !m.IsActive {
+		db.GetDB().Model(&model.RestFolderEnv{}).
+			Where("folder_id = ? AND is_active = ?", m.FolderID, true).
+			Update("is_active", false)
 	}
 	m.Name = env.Name
 	m.BaseURL = env.BaseURL
-	m.CommonHeaders = string(headersJSON)
-	m.IsDefault = env.IsDefault
+	m.IsActive = env.IsActive
 	if err := db.GetDB().Save(&m).Error; err != nil {
-		return types.RestEnvItem{}, err
+		return types.RestFolderEnvItem{}, err
 	}
-	return envToItem(&m), nil
+	return types.RestFolderEnvItem{
+		ID:       m.ID,
+		FolderID: m.FolderID,
+		Name:     m.Name,
+		BaseURL:  m.BaseURL,
+		IsActive: m.IsActive,
+		Sort:     m.Sort,
+	}, nil
 }
 
-// DeleteEnvironment deletes an environment.
-func (s *RestService) DeleteEnvironment(id uint) error {
+// DeleteFolderEnv deletes a folder environment entry.
+func (s *RestService) DeleteFolderEnv(id uint) error {
 	if id == 0 {
 		return errors.New("环境 ID 不能为空")
 	}
-	return db.GetDB().Delete(&model.RestEnvironment{}, id).Error
+	return db.GetDB().Delete(&model.RestFolderEnv{}, id).Error
 }
 
-// SetDefaultEnvironment sets the default environment.
-func (s *RestService) SetDefaultEnvironment(id uint) error {
-	db.GetDB().Model(&model.RestEnvironment{}).Where("is_default = ?", true).Update("is_default", false)
-	if id > 0 {
-		return db.GetDB().Model(&model.RestEnvironment{}).Where("id = ?", id).Update("is_default", true).Error
+// SetActiveFolderEnv sets one entry as active for a folder.
+func (s *RestService) SetActiveFolderEnv(id uint) error {
+	var env model.RestFolderEnv
+	if err := db.GetDB().First(&env, id).Error; err != nil {
+		return err
 	}
-	return nil
-}
-
-// SetFolderBaseURL sets a folder's base URL. When empty, inherits from parent
-// folder or global environment.
-func (s *RestService) SetFolderBaseURL(id uint, baseURL string) error {
-	if id == 0 {
-		return errors.New("文件夹 ID 不能为空")
-	}
-	return db.GetDB().Model(&model.RestFolder{}).Where("id = ?", id).Update("base_url", baseURL).Error
+	db.GetDB().Model(&model.RestFolderEnv{}).
+		Where("folder_id = ? AND is_active = ?", env.FolderID, true).
+		Update("is_active", false)
+	return db.GetDB().Model(&model.RestFolderEnv{}).Where("id = ?", id).Update("is_active", true).Error
 }
 
 // SetRequestBaseURL sets a request's own base URL override.
@@ -815,9 +831,9 @@ func (s *RestService) SetRequestBaseURL(id uint, baseURL string) error {
 	return db.GetDB().Model(&model.RestRequestModel{}).Where("id = ?", id).Update("base_url", baseURL).Error
 }
 
-// GetEffectiveBaseURL walks up the folder hierarchy and returns the nearest
-// non-empty BaseURL. Returns empty string if no folder in the chain has a
-// BaseURL set.
+// GetEffectiveBaseURL walks up the folder hierarchy and returns the active
+// base URL from the nearest ancestor folder that has one. Returns empty
+// string if no folder in the chain has an active base URL.
 func (s *RestService) GetEffectiveBaseURL(folderID uint) string {
 	return getEffectiveBaseURL(folderID)
 }
@@ -1212,35 +1228,28 @@ func modelToItem(m *model.RestRequestModel) types.RestItem {
 	}
 }
 
-func envToItem(e *model.RestEnvironment) types.RestEnvItem {
-	var headers []types.KV
-	json.Unmarshal([]byte(e.CommonHeaders), &headers)
-	if headers == nil {
-		headers = []types.KV{}
+// getActiveFolderBaseURL returns the active base URL for a single folder.
+func getActiveFolderBaseURL(folderID uint) string {
+	var env model.RestFolderEnv
+	if err := db.GetDB().Where("folder_id = ? AND is_active = ?", folderID, true).First(&env).Error; err != nil {
+		return ""
 	}
-	return types.RestEnvItem{
-		ID:            e.ID,
-		Name:          e.Name,
-		BaseURL:       e.BaseURL,
-		CommonHeaders: headers,
-		IsDefault:     e.IsDefault,
-		Sort:          e.Sort,
-	}
+	return env.BaseURL
 }
 
-// getEffectiveBaseURL walks up the folder hierarchy and returns the nearest
-// non-empty BaseURL.
+// getEffectiveBaseURL walks up the folder hierarchy and returns the active
+// base URL from the nearest ancestor folder that has one.
 func getEffectiveBaseURL(folderID uint) string {
 	if folderID == 0 {
 		return ""
 	}
 	for {
-		var f model.RestFolder
-		if err := db.GetDB().Select("id, parent_id, base_url").First(&f, folderID).Error; err != nil {
-			return ""
+		if url := getActiveFolderBaseURL(folderID); url != "" {
+			return url
 		}
-		if f.BaseURL != "" {
-			return f.BaseURL
+		var f model.RestFolder
+		if err := db.GetDB().Select("id, parent_id").First(&f, folderID).Error; err != nil {
+			return ""
 		}
 		if f.ParentID == 0 {
 			return ""

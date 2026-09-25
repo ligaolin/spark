@@ -175,12 +175,30 @@ function xtermTheme(): Record<string, string> {
         foreground: '#d6d9e0',
         cursor: '#4f8cff',
         selectionBackground: '#2b3a55',
+        selectionForeground: '#d6d9e0',
       }
     : {
         background: '#f8fafc',
-        foreground: '#2b3040',
+        foreground: '#181d28',
         cursor: '#3b82f6',
         selectionBackground: '#cfe0ff',
+        // ANSI 0-7: 普通色（亮背景下加深，确保可读）
+        black: '#2d333b',
+        red: '#c93c3c',
+        green: '#2f8050',
+        yellow: '#806020',
+        blue: '#3b6fd4',
+        magenta: '#8b3fa0',
+        cyan: '#2f8090',
+        white: '#5b6678',
+        brightBlack: '#6b7585',
+        brightRed: '#e05555',
+        brightGreen: '#3da060',
+        brightYellow: '#9e8020',
+        brightBlue: '#5588e8',
+        brightMagenta: '#a855c0',
+        brightCyan: '#3fa8b8',
+        brightWhite: '#8b95a5',
       }
 }
 

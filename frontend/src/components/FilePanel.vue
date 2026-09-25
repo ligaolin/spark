@@ -1284,8 +1284,8 @@ onBeforeUnmount(() => {
 .box-select-overlay {
     position: absolute;
     z-index: 5;
-    background: rgba(79, 140, 255, 0.12);
-    border: 1px solid #5b9dff;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid var(--accent);
     pointer-events: none;
 }
 

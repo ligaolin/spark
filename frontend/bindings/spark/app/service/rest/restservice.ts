@@ -32,10 +32,10 @@ export function CreateRequest(folderID: number, name: string): $CancellablePromi
 }
 
 /**
- * DeleteEnvironment deletes an environment.
+ * DeleteFolderEnv deletes a folder environment entry.
  */
-export function DeleteEnvironment(id: number): $CancellablePromise<void> {
-    return $Call.ByID(958609456, id);
+export function DeleteFolderEnv(id: number): $CancellablePromise<void> {
+    return $Call.ByID(3810606790, id);
 }
 
 /**
@@ -46,9 +46,9 @@ export function DeleteNode(id: number, nodeType: string): $CancellablePromise<vo
 }
 
 /**
- * GetEffectiveBaseURL walks up the folder hierarchy and returns the nearest
- * non-empty BaseURL. Returns empty string if no folder in the chain has a
- * BaseURL set.
+ * GetEffectiveBaseURL walks up the folder hierarchy and returns the active
+ * base URL from the nearest ancestor folder that has one. Returns empty
+ * string if no folder in the chain has an active base URL.
  */
 export function GetEffectiveBaseURL(folderID: number): $CancellablePromise<string> {
     return $Call.ByID(194547577, folderID);
@@ -78,10 +78,10 @@ export function ListChildren(parentID: number): $CancellablePromise<types$0.Rest
 }
 
 /**
- * ListEnvironments returns all saved environments.
+ * ListFolderEnvs returns all base URL entries for a folder.
  */
-export function ListEnvironments(): $CancellablePromise<types$0.RestEnvItem[] | null> {
-    return $Call.ByID(2723276882);
+export function ListFolderEnvs(folderID: number): $CancellablePromise<types$0.RestFolderEnvItem[] | null> {
+    return $Call.ByID(3204441764, folderID);
 }
 
 /**
@@ -114,10 +114,10 @@ export function RenameRequest(id: number, name: string): $CancellablePromise<voi
 }
 
 /**
- * SaveEnvironment creates or updates an environment.
+ * SaveFolderEnv creates or updates a folder environment entry.
  */
-export function SaveEnvironment(env: types$0.RestSaveEnv): $CancellablePromise<types$0.RestEnvItem> {
-    return $Call.ByID(1458663342, env);
+export function SaveFolderEnv(env: types$0.RestSaveFolderEnv): $CancellablePromise<types$0.RestFolderEnvItem> {
+    return $Call.ByID(1299220424, env);
 }
 
 /**
@@ -135,18 +135,10 @@ export function Send(req: types$0.RestRequest): $CancellablePromise<types$0.Rest
 }
 
 /**
- * SetDefaultEnvironment sets the default environment.
+ * SetActiveFolderEnv sets one entry as active for a folder.
  */
-export function SetDefaultEnvironment(id: number): $CancellablePromise<void> {
-    return $Call.ByID(1861131806, id);
-}
-
-/**
- * SetFolderBaseURL sets a folder's base URL. When empty, inherits from parent
- * folder or global environment.
- */
-export function SetFolderBaseURL(id: number, baseURL: string): $CancellablePromise<void> {
-    return $Call.ByID(2109829790, id, baseURL);
+export function SetActiveFolderEnv(id: number): $CancellablePromise<void> {
+    return $Call.ByID(1664730617, id);
 }
 
 /**

@@ -82,6 +82,7 @@ export const useSettingsStore = defineStore('settings', {
       await this.set('app.theme', theme)
       applyTheme(theme)
       cacheTheme(theme)
+      SettingsService.SetTitleBarTheme(theme).catch(() => {})
     },
   },
 })

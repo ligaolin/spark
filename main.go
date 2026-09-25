@@ -139,6 +139,15 @@ func createWindow(app *application.App) *application.WebviewWindow {
 		h = 480
 	}
 
+	// 根据当前主题设置窗口背景色及标题栏明暗
+	bgR, bgG, bgB := uint8(18), uint8(18), uint8(24)
+	winTheme := application.Dark
+	theme := settings.GetString("app.theme", "dark")
+	if theme == "light" {
+		bgR, bgG, bgB = 248, 250, 252
+		winTheme = application.Light
+	}
+
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "Spark",
 		Width:  w,
@@ -148,7 +157,10 @@ func createWindow(app *application.App) *application.WebviewWindow {
 			Backdrop:                application.MacBackdropTranslucent,
 			TitleBar:                application.MacTitleBarHiddenInset,
 		},
-		BackgroundColour:           application.NewRGB(18, 18, 24),
+		Windows: application.WindowsWindow{
+			Theme: winTheme,
+		},
+		BackgroundColour:           application.NewRGB(bgR, bgG, bgB),
 		DefaultContextMenuDisabled: true,
 		EnableFileDrop:             true,
 		KeyBindings: map[string]func(window application.Window){
@@ -158,6 +170,8 @@ func createWindow(app *application.App) *application.WebviewWindow {
 		},
 		URL: "/",
 	})
+
+	settings.ApplyWindowTheme(win, theme)
 
 	// 关闭窗口时记忆尺寸
 	win.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
