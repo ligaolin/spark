@@ -18,6 +18,7 @@ export const SHORTCUT_DEFAULTS: ShortcutAction[] = [
   { id: 'nav.documents', label: '打开文档管理', hint: '切换到文档管理页', defaultKey: 'Ctrl+5', key: 'Ctrl+5' },
   { id: 'nav.sites', label: '打开站点管理', hint: '切换到站点管理页', defaultKey: 'Ctrl+6', key: 'Ctrl+6' },
   { id: 'nav.editor', label: '打开编辑器', hint: '切换到编辑器页', defaultKey: 'Ctrl+7', key: 'Ctrl+7' },
+  { id: 'nav.rest', label: '打开 REST 请求', hint: '切换到 REST 请求页', defaultKey: 'Ctrl+8', key: 'Ctrl+8' },
   { id: 'terminal.new', label: '新建 SSH 会话', hint: '跳转终端页并打开新建会话对话框', defaultKey: 'Ctrl+T', key: 'Ctrl+T' },
   { id: 'terminal.close', label: '关闭当前终端标签', hint: '关闭当前活动标签', defaultKey: 'Ctrl+W', key: 'Ctrl+W' },
   { id: 'panel.toggle', label: '开关终端信息面板', hint: '展开/收起右侧信息面板', defaultKey: 'Ctrl+B', key: 'Ctrl+B' },

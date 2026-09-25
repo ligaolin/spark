@@ -65,6 +65,7 @@ import {
     Platform,
     Sunny,
     Moon,
+    Promotion,
 } from '@element-plus/icons-vue'
 import DialogHost from './components/DialogHost.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
@@ -125,7 +126,7 @@ const menu = [
     { path: '/terminal', label: 'SSH 终端', icon: Monitor },
     // SFTP 已并入 SSH 终端右侧面板（SFTP 文件页），不再单独列在侧边栏
     { path: '/ftp', label: 'FTP 文件', icon: Link },
-
+    { path: '/rest', label: 'REST 请求', icon: Promotion },
     { path: '/documents', label: '文档管理', icon: Notebook },
     { path: '/sites', label: '站点管理', icon: Collection },
     { path: '/remote-editor', label: '编辑器', icon: EditPen },
@@ -162,6 +163,9 @@ function onKeyDown(e: KeyboardEvent) {
             break
         case 'nav.editor':
             router.push('/remote-editor')
+            break
+        case 'nav.rest':
+            router.push('/rest')
             break
         case 'nav.local-terminal':
             router.push('/local-terminal')

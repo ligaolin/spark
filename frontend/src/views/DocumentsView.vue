@@ -59,7 +59,7 @@
 
                         <div v-show="leftTab === 'tree'" class="tree-wrap" @contextmenu="onBlankContext">
                             <el-tree ref="treeRef" :data="treeData" node-key="id"
-                                :props="{ label: 'name', children: 'children' }" highlight-current
+                                :props="{ label: 'name', children: 'children', isLeaf: 'leaf' }" highlight-current
                                 :expand-on-click-node="true" draggable lazy :load="loadNode"
                                 :allow-drop="allowDrop" @node-click="onNodeClick"
                                 @node-contextmenu="onNodeContext" @node-drop="onNodeDrop"
@@ -154,7 +154,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
     Folder,
@@ -190,6 +190,7 @@ interface TreeNode {
     kind: string
     sort: number
     path: string
+    leaf?: boolean
     children?: TreeNode[]
 }
 
@@ -227,6 +228,18 @@ const editorRefs = ref<Record<string, EditorApi | null>>({})
 const saving = ref(false)
 
 const activeTab = computed(() => tabs.value.find((t) => t.key === activeKey.value) ?? null)
+
+// 无论通过点击标签还是树节点切换，KeepAlive 驱逐后重建的编辑器需要恢复内容
+watch(activeKey, async (key) => {
+    if (!key) return
+    const tab = tabs.value.find((t) => t.key === key)
+    if (!tab) return
+    await nextTick()
+    const ed = editorRefs.value[key]
+    if (ed && !ed.getContent()) {
+        ed.setContent(tab.original)
+    }
+})
 
 const selectedId = ref<number | null>(null)
 
@@ -266,6 +279,7 @@ function toTreeNode(n: DocNode, parentPath: string): TreeNode {
         kind: n.kind || kindForName(n.name),
         sort: n.sort || 0,
         path,
+        leaf: n.type === 'file',
     }
 }
 
@@ -633,9 +647,14 @@ async function openDocument(
         selectedId.value = node.id
         treeRef.value?.setCurrentKey(node.id)
         leftTab.value = 'tree'
+        await nextTick()
+        // KeepAlive 可能会因超过 max 缓存数而销毁旧编辑器，切回来时需恢复内容
+        const ed = editorRefs.value[key]
+        if (ed && !ed.getContent()) {
+          ed.setContent(existing.original)
+        }
         if (lineNo) {
-            await nextTick()
-            ;(editorRefs.value[key] as any)?.jumpToLine?.(lineNo)
+          ;(editorRefs.value[key] as any)?.jumpToLine?.(lineNo)
         }
         return
     }

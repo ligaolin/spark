@@ -1115,8 +1115,11 @@ defineExpose({
 })
 
 // 本地面板挂载后自动进入主目录；远程面板由父组件在连接成功后触发 goHome
+// KeepAlive 驱逐后重建时，远程已连接的面板也需要重新加载目录
 onMounted(() => {
     if (props.backend.kind === 'local') {
+        goHome()
+    } else if (props.connected) {
         goHome()
     }
     // 注册外部文件拖放（Wails 原生层解析绝对路径后按坐标转发到这里）

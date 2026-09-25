@@ -37,7 +37,7 @@
 
             <div class="terminal-body">
                 <div class="term-area">
-                    <KeepAlive :max="8">
+                    <KeepAlive>
                         <TerminalPane v-if="store.activeTab" :key="store.activeKey" :tab="store.activeTab!" />
                     </KeepAlive>
                 </div>

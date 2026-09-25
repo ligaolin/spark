@@ -283,6 +283,40 @@ export interface ReplaceResult {
 }
 
 /**
+ * RestRequest describes an HTTP request issued from the REST client tab.
+ */
+export interface RestRequest {
+    /**
+     * GET | POST | PUT | DELETE | PATCH | HEAD | OPTIONS
+     */
+    "method": string;
+    "url": string;
+    "headers": { [_ in string]?: string } | null;
+    "body": string;
+
+    /**
+     * seconds, 0 = default 30s
+     */
+    "timeout": number;
+}
+
+/**
+ * RestResponse is the result of a REST client request, returned synchronously.
+ */
+export interface RestResponse {
+    "status": number;
+    "statusText": string;
+    "headers": { [_ in string]?: string } | null;
+    "body": string;
+
+    /**
+     * milliseconds
+     */
+    "duration": number;
+    "error"?: string;
+}
+
+/**
  * SearchOptions controls how search/replace matches text: case sensitivity,
  * whether the pattern is a regular expression (content mode only), and glob
  * patterns to exclude from the search (comma/newline separated).

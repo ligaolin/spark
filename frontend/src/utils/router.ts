@@ -25,9 +25,10 @@ const routes = [
     path: '/remote-editor',
     component: () => import('../views/RemoteEditorView.vue'),
   },
+  { path: '/local-terminal', component: () => import('../views/LocalTerminalView.vue') },
   {
-    path: '/local-terminal',
-    component: () => import('../views/LocalTerminalView.vue'),
+    path: '/rest',
+    component: () => import('../views/RestView.vue'),
   },
   { path: '/:pathMatch(.*)*', redirect: '/terminal' },
 ]

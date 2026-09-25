@@ -48,7 +48,7 @@
           </div>
         </div>
         <div class="term-area">
-          <KeepAlive :max="6">
+          <KeepAlive>
             <LocalTerminalPane v-if="store.activeTab" :key="store.activeKey" :tab="store.activeTab!" />
           </KeepAlive>
         </div>

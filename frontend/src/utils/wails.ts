@@ -18,6 +18,7 @@ import { HostKeyService } from '../../bindings/changeme/app/service/hostkeys'
 import { SshConfigService } from '../../bindings/changeme/app/service/sshconfig'
 import { UpdateService } from '../../bindings/changeme/app/service/update'
 import { ShellMenuService } from '../../bindings/changeme/app/service/shellmenu'
+import { RestService } from '../../bindings/changeme/app/service/rest'
 import type { LaunchRequest } from '../../bindings/changeme/app/service/shellmenu/models'
 
 import type {
@@ -41,6 +42,8 @@ import type {
   SystemForward,
   SystemForwardStatus,
   SystemForwardRequest,
+  RestRequest,
+  RestResponse,
 } from '../../bindings/changeme/app/service/types/models'
 import type {
   SavedConnection,
@@ -78,6 +81,7 @@ export {
   SshConfigService,
   UpdateService,
   ShellMenuService,
+  RestService,
 }
 export type {
   AgentReply,
@@ -117,6 +121,8 @@ export type {
   DedupResult,
   TunnelInfo,
   LaunchRequest,
+  RestRequest,
+  RestResponse,
 }
 
 // 绑定模型为接口且字段全必填，这里提供带默认值的工厂函数便于构造。

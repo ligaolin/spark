@@ -19,6 +19,7 @@ import (
 	"changeme/app/service/hostkeys"
 	"changeme/app/service/local"
 	"changeme/app/service/localterminal"
+	"changeme/app/service/rest"
 	"changeme/app/service/secure"
 	"changeme/app/service/settings"
 	"changeme/app/service/sftp"
@@ -111,6 +112,7 @@ func main() {
 			application.NewService(&sshconfig.SshConfigService{}),
 			application.NewService(&update.UpdateService{}),
 			application.NewService(shellMenuSvc),
+			application.NewService(&rest.RestService{}),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

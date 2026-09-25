@@ -328,6 +328,25 @@ type AgentDone struct {
 	Error     string `json:"error,omitempty"`
 }
 
+// RestRequest describes an HTTP request issued from the REST client tab.
+type RestRequest struct {
+	Method  string            `json:"method"` // GET | POST | PUT | DELETE | PATCH | HEAD | OPTIONS
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"`
+	Timeout int               `json:"timeout"` // seconds, 0 = default 30s
+}
+
+// RestResponse is the result of a REST client request, returned synchronously.
+type RestResponse struct {
+	Status     int               `json:"status"`
+	StatusText string            `json:"statusText"`
+	Headers    map[string]string `json:"headers"`
+	Body       string            `json:"body"`
+	Duration   int64             `json:"duration"` // milliseconds
+	Error      string            `json:"error,omitempty"`
+}
+
 // NewID returns a random hexadecimal session id.
 func NewID() string {
 	b := make([]byte, 12)

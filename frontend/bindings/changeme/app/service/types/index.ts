@@ -20,6 +20,8 @@ export type {
     NetworkInfo,
     ProcessInfo,
     ReplaceResult,
+    RestRequest,
+    RestResponse,
     SearchOptions,
     SearchResult,
     ServerInfo,
