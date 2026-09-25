@@ -95,8 +95,8 @@
               <el-dropdown-item @click="openCurlImport">
                 <el-icon><Download /></el-icon>导入 curl
               </el-dropdown-item>
-              <el-dropdown-item @click="genCurl">
-                <el-icon><CopyDocument /></el-icon>生成 curl
+              <el-dropdown-item @click="genCode">
+                <el-icon><CopyDocument /></el-icon>生成代码
               </el-dropdown-item>
               <el-dropdown-item divided @click="showStressDialog = true">
                 <el-icon><TrendCharts /></el-icon>压力测试
@@ -380,15 +380,18 @@
     </el-dialog>
 
     <!-- curl 生成弹窗 -->
-    <el-dialog v-model="showGenCurlDialog" title="生成 curl 命令" width="750px" destroy-on-close>
+    <el-dialog v-model="showGenCurlDialog" :title="genDialogTitle" width="750px" destroy-on-close>
       <div class="curl-gen-toolbar">
-        <span class="curl-gen-label">换行风格：</span>
-        <el-radio-group v-model="curlLineStyle" size="small">
-          <el-radio-button value="backslash">反斜杠续行</el-radio-button>
-          <el-radio-button value="cmd">CMD 续行</el-radio-button>
-          <el-radio-button value="multiline">独立行</el-radio-button>
-          <el-radio-button value="single">单行</el-radio-button>
-        </el-radio-group>
+        <span class="curl-gen-label">语言：</span>
+        <el-select v-model="codeLanguage" size="small" class="curl-gen-select">
+          <el-option label="cURL（Bash/Linux）" value="curl" />
+          <el-option label="cURL（CMD）" value="curl-cmd" />
+          <el-option label="cURL（PowerShell）" value="curl-ps" />
+          <el-option label="cURL（单行）" value="curl-single" />
+          <el-option label="Python（requests）" value="python" />
+          <el-option label="JavaScript（fetch）" value="javascript" />
+          <el-option label="Go（net/http）" value="go" />
+        </el-select>
         <el-button
           size="small"
           class="curl-gen-copy"
@@ -399,7 +402,7 @@
       <div class="curl-gen-editor">
         <CodeEditor
           ref="curlEditorRef"
-          filename="curl.sh"
+          :filename="genEditorFilename"
           wrap
         />
       </div>
@@ -622,8 +625,24 @@ const showCurlDialog = ref(false)
 const curlText = ref('')
 
 // curl generate
-type CurlLineStyle = 'single' | 'backslash' | 'multiline' | 'cmd'
-const curlLineStyle = ref<CurlLineStyle>('backslash')
+type CodeLanguage = 'curl' | 'curl-single' | 'curl-cmd' | 'curl-ps' | 'python' | 'javascript' | 'go'
+const codeLanguage = ref<CodeLanguage>('curl')
+const genEditorFilename = computed(() => {
+  const map: Record<string, string> = { python: 'request.py', javascript: 'request.js', go: 'request.go' }
+  return map[codeLanguage.value] || 'curl.sh'
+})
+const genDialogTitle = computed(() => {
+  const map: Record<string, string> = {
+    curl: '生成 cURL 命令（Bash/Linux · 独立行）',
+    'curl-single': '生成 cURL 命令（单行）',
+    'curl-cmd': '生成 cURL 命令（CMD · 独立行）',
+    'curl-ps': '生成 cURL 命令（PowerShell · 独立行）',
+    python: '生成 Python 代码',
+    javascript: '生成 JavaScript 代码',
+    go: '生成 Go 代码',
+  }
+  return map[codeLanguage.value] || '生成代码'
+})
 const generatedCurl = ref('')
 const showGenCurlDialog = ref(false)
 const curlEditorRef = ref<InstanceType<typeof CodeEditor> | null>(null)
@@ -1496,23 +1515,29 @@ function tokenize(s: string): string[] {
   return tokens
 }
 
-function shellQuote(s: string, shell: 'bash' | 'cmd' = 'bash'): string {
+function shellQuote(s: string, shell: 'bash' | 'cmd' | 'powershell' = 'bash'): string {
   if (/^[a-zA-Z0-9_\-./:?=#%]+$/.test(s)) return s
   if (shell === 'cmd') {
     if (!s.includes('"')) return `"${s}"`
     return `"${s.replace(/"/g, '""')}"`
+  }
+  if (shell === 'powershell') {
+    if (!s.includes("'")) return `'${s}'`
+    if (!s.includes('"')) return `"${s}"`
+    return `@"` + "\n" + `${s}` + "\n" + `"@`
   }
   if (!s.includes("'")) return `'${s}'`
   if (!s.includes('"')) return `"${s}"`
   return `'${s.replace(/'/g, "'\\''")}'`
 }
 
-function buildCurl(style: CurlLineStyle): string {
+function buildCurl(continuation: string, style: 'single' | 'multiline'): string {
   const url = buildURL()
   if (!url) return ''
 
-  const shell: 'bash' | 'cmd' = style === 'cmd' ? 'cmd' : 'bash'
-  const NL = style === 'cmd' ? '\r\n' : '\n'
+  const shell: 'bash' | 'cmd' | 'powershell' =
+    continuation === '^' ? 'cmd' : continuation === '`' ? 'powershell' : 'bash'
+  const NL = continuation === '^' ? '\r\n' : '\n'
 
   const tokens: string[] = []
   tokens.push('curl')
@@ -1538,52 +1563,176 @@ function buildCurl(style: CurlLineStyle): string {
     return tokens.join(' ')
   }
 
-  if (style === 'cmd') {
-    const lines: string[] = []
-    for (let i = 0; i < tokens.length; i += 2) {
-      const group = tokens.slice(i, i + 2).join(' ')
-      lines.push(group)
-    }
-    if (lines.length === 0) return tokens.join(' ')
-    return lines.map((l, idx) => (idx < lines.length - 1 ? l + '^' : l)).join(NL)
+  const lines: string[] = []
+  for (let i = 0; i < tokens.length; i += 2) {
+    const group = tokens.slice(i, i + 2).join(' ')
+    lines.push(group)
   }
-
-  if (style === 'backslash') {
-    const lines: string[] = []
-    for (let i = 0; i < tokens.length; i += 2) {
-      const group = tokens.slice(i, i + 2).join(' ')
-      lines.push(group)
-    }
-    if (lines.length === 0) return tokens.join(' ')
-    return lines.map((l, idx) => (idx < lines.length - 1 ? l + ' \\' : l)).join(NL)
-  }
-
-  if (style === 'multiline') {
-    if (tokens.length <= 2) return tokens.join(' ')
-    const [first, ...rest] = tokens
-    return first + NL + '  ' + rest.join(NL + '  ')
-  }
-
-  return tokens.join(' ')
+  if (lines.length === 0) return tokens.join(' ')
+  return lines.map((l, idx) => (idx < lines.length - 1 ? l + ' ' + continuation : l)).join(NL)
 }
 
-function genCurl() {
+function genCode() {
   const url = buildURL()
   if (!url) {
     ElMessage.warning('请输入 URL')
     return
   }
-  generatedCurl.value = buildCurl(curlLineStyle.value)
+  generatedCurl.value = buildCode()
   showGenCurlDialog.value = true
   nextTick(() => {
     curlEditorRef.value?.setContent(generatedCurl.value)
   })
 }
 
-watch(curlLineStyle, (style) => {
-  const cmd = buildCurl(style)
-  generatedCurl.value = cmd
-  curlEditorRef.value?.setContent(cmd)
+function buildCode(): string {
+  const lang = codeLanguage.value
+  if (lang === 'curl') return buildCurl('\\', 'multiline')
+  if (lang === 'curl-single') return buildCurl('\\', 'single')
+  if (lang === 'curl-cmd') return buildCurl('^', 'multiline')
+  if (lang === 'curl-ps') return buildCurl('`', 'multiline')
+  if (lang === 'python') return buildPython()
+  if (lang === 'javascript') return buildJavaScript()
+  if (lang === 'go') return buildGo()
+  return ''
+}
+
+function jsQuote(s: string): string {
+  return JSON.stringify(s)
+}
+
+function buildPython(): string {
+  const url = buildURL()
+  if (!url) return ''
+
+  const method = current.value.method.toUpperCase()
+  const headers = buildHeaders()
+  const body = current.value.body || ''
+
+  const lines: string[] = ['import requests', '']
+  lines.push(`url = ${jsQuote(url)}`)
+  if (Object.keys(headers).length > 0) {
+    const headerLines = Object.entries(headers)
+      .filter(([k]) => k !== 'User-Agent')
+      .map(([k, v]) => `    ${jsQuote(k)}: ${jsQuote(v)}`)
+    lines.push(`headers = {`)
+    lines.push(headerLines.join(',\n'))
+    lines.push(`}`)
+  }
+  if (body) {
+    lines.push(`data = ${jsQuote(body)}`)
+  }
+
+  const args: string[] = ['url']
+  if (Object.keys(headers).filter(k => k !== 'User-Agent').length > 0) args.push('headers=headers')
+  if (body) args.push('data=data')
+
+  const methodLower = method.toLowerCase()
+  lines.push(`response = requests.${methodLower}(${args.join(', ')})`)
+  lines.push('print(response.text)')
+
+  return lines.join('\n')
+}
+
+function buildJavaScript(): string {
+  const url = buildURL()
+  if (!url) return ''
+
+  const method = current.value.method.toUpperCase()
+  const headers = buildHeaders()
+  const body = current.value.body || ''
+
+  const filteredHeaders = Object.entries(headers).filter(([k]) => k !== 'User-Agent')
+  const hasHeaders = filteredHeaders.length > 0
+
+  const lines: string[] = []
+  lines.push(`const url = ${jsQuote(url)};`)
+  lines.push('')
+  lines.push(`const options = {`)
+  lines.push(`  method: ${jsQuote(method)},`)
+  if (hasHeaders) {
+    lines.push('  headers: {')
+    filteredHeaders.forEach(([k, v], i) => {
+      lines.push(`    ${jsQuote(k)}: ${jsQuote(v)}` + (i < filteredHeaders.length - 1 ? ',' : ''))
+    })
+    lines.push('  },')
+  }
+  if (body) {
+    lines.push(`  body: ${jsQuote(body)},`)
+  }
+  lines.push('};')
+  lines.push('')
+  lines.push('fetch(url, options)')
+  lines.push('  .then(res => res.json())')
+  lines.push('  .then(data => console.log(data));')
+
+  return lines.join('\n')
+}
+
+function buildGo(): string {
+  const url = buildURL()
+  if (!url) return ''
+
+  const method = current.value.method.toUpperCase()
+  const headers = buildHeaders()
+  const body = current.value.body || ''
+  const hasBody = body.length > 0
+
+  const lines: string[] = [
+    'package main',
+    '',
+    'import (',
+  ]
+  if (hasBody) {
+    lines.push('    "fmt"', '    "io"', '    "net/http"', '    "strings"')
+  } else {
+    lines.push('    "fmt"', '    "io"', '    "net/http"')
+  }
+  lines.push(')', '')
+  lines.push('func main() {')
+  lines.push(`    url := ${jsQuote(url)}`)
+  lines.push(`    method := ${jsQuote(method)}`)
+  lines.push('')
+
+  if (hasBody) {
+    lines.push(`    payload := strings.NewReader(${jsQuote(body)})`)
+    lines.push(`    req, err := http.NewRequest(method, url, payload)`)
+  } else {
+    lines.push(`    req, err := http.NewRequest(method, url, nil)`)
+  }
+  lines.push('    if err != nil {')
+  lines.push('        fmt.Println(err)')
+  lines.push('        return')
+  lines.push('    }')
+  lines.push('')
+
+  for (const [k, v] of Object.entries(headers)) {
+    if (k === 'User-Agent') continue
+    lines.push(`    req.Header.Add(${jsQuote(k)}, ${jsQuote(v)})`)
+  }
+  lines.push('')
+  lines.push('    res, err := http.DefaultClient.Do(req)')
+  lines.push('    if err != nil {')
+  lines.push('        fmt.Println(err)')
+  lines.push('        return')
+  lines.push('    }')
+  lines.push('    defer res.Body.Close()')
+  lines.push('')
+  lines.push('    body, err := io.ReadAll(res.Body)')
+  lines.push('    if err != nil {')
+  lines.push('        fmt.Println(err)')
+  lines.push('        return')
+  lines.push('    }')
+  lines.push('    fmt.Println(string(body))')
+  lines.push('}')
+
+  return lines.join('\n')
+}
+
+watch(codeLanguage, () => {
+  const code = buildCode()
+  generatedCurl.value = code
+  curlEditorRef.value?.setContent(code)
 })
 
 function copyGeneratedCurl() {
