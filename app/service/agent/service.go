@@ -25,10 +25,10 @@ import (
 	"strings"
 	"sync"
 
-	"changeme/app/service/ai"
-	"changeme/app/service/settings"
-	"changeme/app/service/terminal"
-	"changeme/app/service/types"
+	"spark/app/service/ai"
+	"spark/app/service/settings"
+	"spark/app/service/terminal"
+	"spark/app/service/types"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -197,6 +197,10 @@ func (s *AgentService) run(ctx context.Context, c *conversation, sessionID, mess
 		c.running = false
 		c.cancel = nil
 		c.approveCh = nil
+		// 保留 system + 最近 maxLLMMessages 条，防止长时间对话内存无界增长
+		if len(c.messages) > maxLLMMessages+1 {
+			c.messages = llmContext(c.messages)
+		}
 		c.mu.Unlock()
 	}()
 

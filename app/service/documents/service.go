@@ -7,10 +7,10 @@ import (
 	"errors"
 	"strings"
 
-	"changeme/app/model"
-	"changeme/app/service/db"
-	"changeme/app/service/fileutil"
-	"changeme/app/service/types"
+	"spark/app/model"
+	"spark/app/service/db"
+	"spark/app/service/fileutil"
+	"spark/app/service/types"
 )
 
 // DocumentService exposes document CRUD + search to the frontend.

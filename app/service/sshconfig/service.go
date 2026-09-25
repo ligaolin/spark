@@ -10,9 +10,9 @@ import (
 	"strings"
 	"unicode"
 
-	"changeme/app/model"
-	"changeme/app/service/connections"
-	"changeme/app/service/db"
+	"spark/app/model"
+	"spark/app/service/connections"
+	"spark/app/service/db"
 )
 
 // SshConfigService parses and imports OpenSSH client config.
@@ -23,8 +23,8 @@ func (s *SshConfigService) ServiceName() string { return "SshConfigService" }
 
 // SshHost is a single importable host entry parsed from an SSH config.
 type SshHost struct {
-	Name         string `json:"name"`         // Host 别名（作为连接名称）
-	HostName     string `json:"hostName"`     // 真实 IP / 域名
+	Name         string `json:"name"`     // Host 别名（作为连接名称）
+	HostName     string `json:"hostName"` // 真实 IP / 域名
 	User         string `json:"user"`
 	Port         int    `json:"port"`
 	IdentityFile string `json:"identityFile"` // 私钥路径（可为空）

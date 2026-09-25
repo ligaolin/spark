@@ -344,6 +344,7 @@ type RestRequest struct {
 	Timeout   int               `json:"timeout"`             // seconds, 0 = default 30s
 	FormFiles []FormFile        `json:"formFiles,omitempty"` // multipart files
 	FormData  map[string]string `json:"formData,omitempty"`  // multipart form fields
+	Insecure  bool              `json:"insecure,omitempty"`  // skip TLS certificate verification
 }
 
 // RestResponse is the result of a REST client request, returned synchronously.
@@ -400,27 +401,32 @@ type KV struct {
 // RestNode is a node in the REST tree returned to the frontend.
 // Folders and requests are mixed; the frontend distinguishes them by Type.
 type RestNode struct {
-	ID       uint   `json:"id"`
-	ParentID uint   `json:"parentId"`
-	Name     string `json:"name"`
-	Type     string `json:"type"` // "folder" | "request"
-	Method   string `json:"method,omitempty"`
-	URL      string `json:"url,omitempty"`
-	Leaf     bool   `json:"leaf"`
-	Sort     int    `json:"sort"`
+	ID            uint   `json:"id"`
+	ParentID      uint   `json:"parentId"`
+	Name          string `json:"name"`
+	Type          string `json:"type"` // "folder" | "request"
+	Method        string `json:"method,omitempty"`
+	URL           string `json:"url,omitempty"`
+	BaseURL       string `json:"baseUrl,omitempty"`
+	CommonHeaders string `json:"commonHeaders,omitempty"` // JSON: 文件夹的公共请求头（仅在 type=folder 时有效）
+	Leaf          bool   `json:"leaf"`
+	Sort          int    `json:"sort"`
 }
 
 // RestItem is the full content of a saved REST request returned to the frontend
 // for editing / sending.
 type RestItem struct {
-	ID       uint   `json:"id"`
-	FolderID uint   `json:"folderId"`
-	Name     string `json:"name"`
-	Method   string `json:"method"`
-	URL      string `json:"url"`
-	Headers  []KV   `json:"headers"`
-	Params   []KV   `json:"params"`
-	Body     string `json:"body"`
+	ID                  uint   `json:"id"`
+	FolderID            uint   `json:"folderId"`
+	Name                string `json:"name"`
+	Method              string `json:"method"`
+	URL                 string `json:"url"`
+	BaseURL             string `json:"baseUrl"`             // 该请求专属的基础链接（为空则继承上级）
+	EffectiveBaseURL    string `json:"effectiveBaseUrl"`    // 最终生效的基础链接（遍历文件夹层级取最近的非空值）
+	FolderCommonHeaders []KV   `json:"folderCommonHeaders"` // 文件夹层级合并的公共请求头
+	Headers             []KV   `json:"headers"`
+	Params              []KV   `json:"params"`
+	Body                string `json:"body"`
 }
 
 // RestEnvItem is a saved environment (base URL + common headers).
@@ -440,6 +446,7 @@ type RestSaveRequest struct {
 	Name     string `json:"name"`
 	Method   string `json:"method"`
 	URL      string `json:"url"`
+	BaseURL  string `json:"baseUrl"`
 	Headers  []KV   `json:"headers"`
 	Params   []KV   `json:"params"`
 	Body     string `json:"body"`
@@ -460,9 +467,10 @@ type StressTestRequest struct {
 	URL         string            `json:"url"`
 	Headers     map[string]string `json:"headers"`
 	Body        string            `json:"body"`
-	Timeout     int               `json:"timeout"`     // seconds per request
-	Concurrency int               `json:"concurrency"` // concurrent goroutines
-	Total       int               `json:"total"`       // total requests to send
+	Timeout     int               `json:"timeout"`            // seconds per request
+	Concurrency int               `json:"concurrency"`        // concurrent goroutines
+	Total       int               `json:"total"`              // total requests to send
+	Insecure    bool              `json:"insecure,omitempty"` // skip TLS certificate verification
 }
 
 // StressTestLatency holds statistical latency values (in milliseconds).

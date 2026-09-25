@@ -1,4 +1,4 @@
-module changeme
+module spark
 
 go 1.26.4
 

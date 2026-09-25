@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"changeme/app/model"
-	"changeme/app/service/db"
-	"changeme/app/service/sshlib"
-	"changeme/app/service/types"
+	"spark/app/model"
+	"spark/app/service/db"
+	"spark/app/service/sshlib"
+	"spark/app/service/types"
 
 	"github.com/jlaffaye/ftp"
 	"gorm.io/gorm"

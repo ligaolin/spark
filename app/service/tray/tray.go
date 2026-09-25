@@ -13,7 +13,7 @@ package tray
 import (
 	"sync/atomic"
 
-	"changeme/app/service/settings"
+	"spark/app/service/settings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"

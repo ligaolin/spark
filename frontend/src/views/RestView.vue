@@ -119,6 +119,9 @@
               <el-dropdown-item @click="genCurl">
                 <el-icon><CopyDocument /></el-icon>生成 curl
               </el-dropdown-item>
+              <el-dropdown-item divided @click="showBaseUrlDialog = true">
+                <el-icon><Connection /></el-icon>设置请求基础链接
+              </el-dropdown-item>
               <el-dropdown-item divided @click="showStressDialog = true">
                 <el-icon><TrendCharts /></el-icon>压力测试
               </el-dropdown-item>
@@ -128,9 +131,9 @@
       </div>
 
       <!-- 环境提示 -->
-      <div class="env-hint" v-if="activeEnv && current.url && !isAbsoluteURL(current.url)">
+      <div class="env-hint" v-if="effectiveDisplayBase && current.url && !isAbsoluteURL(current.url)">
         <el-icon><Connection /></el-icon>
-        <span>{{ activeEnv.baseUrl }}{{ current.url }}</span>
+        <span>{{ effectiveDisplayBase }}{{ current.url }}</span>
       </div>
 
       <el-splitter layout="vertical" class="body-splitter">
@@ -505,22 +508,75 @@
       </template>
     </el-dialog>
 
+    <!-- 基础链接编辑弹窗 -->
+    <el-dialog v-model="showBaseUrlDialog" :title="baseUrlTargetType === 'folder' ? '设置文件夹基础链接' : '设置请求基础链接'" width="550px" destroy-on-close>
+      <el-form label-width="100px" v-if="showBaseUrlDialog">
+        <el-form-item label="节点名称">
+          <span class="baseurl-node-name">{{ baseUrlTargetNode?.name || '（未选中）' }}</span>
+        </el-form-item>
+        <el-form-item label="基础链接">
+          <el-input v-model="baseUrlForm" placeholder="例如：https://api.github.com（留空则继承上级）" clearable />
+        </el-form-item>
+        <el-form-item label="">
+          <span class="baseurl-hint">
+            <el-icon><InfoFilled /></el-icon>
+            优先级：请求基础链接 > 文件夹基础链接 > 全局环境。留空将自动继承上级。
+          </span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showBaseUrlDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveBaseUrl">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 文件夹公共请求头编辑弹窗 -->
+    <el-dialog v-model="showFolderHeadersDialog" title="设置文件夹公共请求头" width="650px" destroy-on-close>
+      <el-form label-width="110px" v-if="showFolderHeadersDialog">
+        <el-form-item label="文件夹">
+          <span class="baseurl-node-name">{{ folderHeadersTargetNode?.name || '（未选中）' }}</span>
+        </el-form-item>
+        <el-form-item label="公共请求头">
+          <div class="kv-editor" style="height: auto; max-height: 400px">
+            <div class="kv-row" v-for="(row, i) in folderHeadersForm" :key="i">
+              <el-input v-model="row.key" class="kv-key" placeholder="Header 名" />
+              <el-input v-model="row.value" class="kv-val" placeholder="Header 值" />
+              <el-button size="small" :icon="Delete" circle @click="folderHeadersForm.splice(i, 1)" />
+            </div>
+            <el-button size="small" :icon="Plus" @click="folderHeadersForm.push({ key: '', value: '', enabled: true })">
+              添加请求头
+            </el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="">
+          <span class="baseurl-hint">
+            <el-icon><InfoFilled /></el-icon>
+            优先级：请求自身 Headers > 文件夹公共请求头 > 全局环境。同 key 由高优先级覆盖。
+          </span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showFolderHeadersDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveFolderHeaders">保存</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 右键菜单 -->
     <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Events } from '@wailsio/runtime'
-import { Delete, Plus, Promotion, Setting, Connection, Folder, Download, CopyDocument, MoreFilled, TrendCharts, Search } from '@element-plus/icons-vue'
+import { Delete, Plus, Promotion, Setting, Connection, Folder, Download, CopyDocument, MoreFilled, TrendCharts, Search, InfoFilled, Document } from '@element-plus/icons-vue'
 import CodeEditor from '../components/CodeEditor.vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
 import { EVENTS } from '../utils/wails'
-import * as RestService from '../../bindings/changeme/app/service/rest/restservice.js'
-import type { RestRequest, RestResponse, StressTestRequest, StressTestResult } from '../../bindings/changeme/app/service/types/models'
+import * as RestService from '../../bindings/spark/app/service/rest/restservice.js'
+import type { RestRequest, RestResponse, StressTestRequest, StressTestResult } from '../../bindings/spark/app/service/types/models'
 
 interface StressProgress {
   current: number
@@ -540,6 +596,8 @@ interface TreeNode {
   type: string
   method?: string
   url?: string
+  baseUrl?: string
+  commonHeaders?: string
   leaf: boolean
   sort: number
   children?: TreeNode[]
@@ -579,6 +637,9 @@ const treeData = ref<TreeNode[]>([])
 const treeFilter = ref('')
 const editingNode = ref<TreeNode | null>(null)
 const editingRequestId = ref<number>(0) // ID of the RestRequestModel being edited
+const requestBaseUrl = ref('')   // 当前请求自身的 baseUrl
+const folderEffectiveBaseUrl = ref('') // 所属文件夹层级继承的 baseUrl
+const folderCommonHeaders = ref<KV[]>([]) // 文件夹层级合并的公共请求头
 
 // 环境
 const environments = ref<EnvItem[]>([])
@@ -611,6 +672,17 @@ const stressRunning = ref(false)
 const stressProgress = ref<StressProgress>({ current: 0, total: 0 })
 const stressResult = ref<StressTestResult | null>(null)
 let stressTimer: ReturnType<typeof setInterval> | null = null
+
+// 基础链接编辑
+const showBaseUrlDialog = ref(false)
+const baseUrlForm = ref('')
+const baseUrlTargetType = ref<'folder' | 'request'>('request')
+const baseUrlTargetNode = ref<TreeNode | null>(null)
+
+// 文件夹公共请求头编辑
+const showFolderHeadersDialog = ref(false)
+const folderHeadersForm = ref<KV[]>([])
+const folderHeadersTargetNode = ref<TreeNode | null>(null)
 
 // HTML 预览
 const htmlPreview = ref(true)
@@ -669,6 +741,10 @@ const methodClass = computed(() => 'method-' + current.value.method.toLowerCase(
 const activeEnv = computed(() => {
   if (!activeEnvId.value) return null
   return environments.value.find((e) => e.id === activeEnvId.value) ?? null
+})
+
+const effectiveDisplayBase = computed(() => {
+  return requestBaseUrl.value || folderEffectiveBaseUrl.value || activeEnv.value?.baseUrl || ''
 })
 
 const statusTagType = computed(() => {
@@ -755,6 +831,20 @@ onBeforeUnmount(() => {
   }
 })
 
+onDeactivated(() => {
+  if (sseTimer) {
+    clearInterval(sseTimer)
+    sseTimer = null
+  }
+  unWsMsg?.()
+  unWsMsg = null
+  if (wsConnId.value) {
+    RestService.WSClose(wsConnId.value).catch(() => {})
+    wsConnId.value = ''
+    wsConnected.value = false
+  }
+})
+
 // ========== 树 ==========
 
 async function loadRoot() {
@@ -787,6 +877,8 @@ function toTreeNode(n: any): TreeNode {
     type: n.type,
     method: n.method,
     url: n.url,
+    baseUrl: n.baseUrl,
+    commonHeaders: n.commonHeaders,
     leaf: n.leaf,
     sort: n.sort,
   }
@@ -847,6 +939,12 @@ function buildCtx(data: TreeNode): (CtxItem | 'divider')[] {
     items.push({ key: 'new-folder', label: '新建子文件夹', icon: Folder })
     items.push({ key: 'new-request', label: '新建请求', icon: Plus })
     items.push('divider')
+    items.push({ key: 'set-folder-baseurl', label: '设置基础链接', icon: Connection })
+    items.push({ key: 'set-folder-headers', label: '设置公共请求头', icon: Document })
+    items.push('divider')
+  } else {
+    items.push({ key: 'set-request-baseurl', label: '设置基础链接', icon: Connection })
+    items.push('divider')
   }
   items.push({ key: 'rename', label: '重命名', icon: 'Edit' })
   items.push({ key: 'delete', label: '删除', icon: Delete, danger: true })
@@ -875,6 +973,15 @@ async function onCtxPick(item: CtxItem) {
       await createRequest(parentId)
       break
     }
+    case 'set-folder-baseurl':
+      if (target) openBaseUrlEditor('folder', target)
+      break
+    case 'set-folder-headers':
+      if (target) openFolderHeadersEditor(target)
+      break
+    case 'set-request-baseurl':
+      if (target) openBaseUrlEditor('request', target)
+      break
     case 'rename':
       if (target) await renameNode(target)
       break
@@ -958,6 +1065,11 @@ async function loadRequest(node: TreeNode) {
     editingRequestId.value = item.id
     current.value.method = item.method || 'GET'
     current.value.url = item.url || ''
+    requestBaseUrl.value = item.baseUrl || ''
+    folderEffectiveBaseUrl.value = item.effectiveBaseUrl || ''
+    folderCommonHeaders.value = item.folderCommonHeaders
+      ? JSON.parse(JSON.stringify(item.folderCommonHeaders)).map((h: KV) => ({ enabled: true, ...h }))
+      : []
     current.value.headers = item.headers
       ? JSON.parse(JSON.stringify(item.headers)).map((h: KV) => ({ enabled: true, ...h }))
       : []
@@ -967,7 +1079,6 @@ async function loadRequest(node: TreeNode) {
     current.value.body = item.body || ''
     await nextTick()
     bodyEditorRef.value?.setContent(item.body || '')
-    // 如果选中了环境且 URL 不是绝对地址，显示基础链接提示
   } catch (e: any) {
     ElMessage.error('加载请求失败: ' + (e?.message || e))
   }
@@ -1016,6 +1127,7 @@ async function saveCurrentRequest() {
       name: editingNode.value!.name,
       method: current.value.method,
       url: current.value.url,
+      baseUrl: requestBaseUrl.value,
       headers: current.value.headers,
       params: current.value.params,
       body: current.value.body,
@@ -1031,12 +1143,103 @@ async function saveCurrentRequest() {
 function resetEditor() {
   editingNode.value = null
   editingRequestId.value = 0
+  requestBaseUrl.value = ''
+  folderEffectiveBaseUrl.value = ''
+  folderCommonHeaders.value = []
   current.value.method = 'GET'
   current.value.url = ''
   current.value.headers = []
   current.value.params = []
   current.value.body = ''
   bodyEditorRef.value?.setContent('')
+}
+
+// ========== 基础链接编辑 ==========
+
+function openBaseUrlEditor(type: 'folder' | 'request', node?: TreeNode) {
+  baseUrlTargetType.value = type
+  if (type === 'request' && editingNode.value) {
+    baseUrlTargetNode.value = editingNode.value
+    baseUrlForm.value = requestBaseUrl.value
+  } else if (node) {
+    baseUrlTargetNode.value = node
+    baseUrlForm.value = node.baseUrl || ''
+  } else {
+    baseUrlTargetNode.value = null
+    baseUrlForm.value = ''
+  }
+  showBaseUrlDialog.value = true
+}
+
+async function saveBaseUrl() {
+  const target = baseUrlTargetNode.value
+  if (!target) return
+  const url = baseUrlForm.value.trim()
+
+  try {
+    if (baseUrlTargetType.value === 'folder') {
+      await RestService.SetFolderBaseURL(target.id, url)
+      // 更新本地节点缓存
+      target.baseUrl = url
+      await reloadParent(target.parentId)
+      ElMessage.success('文件夹基础链接已更新')
+    } else {
+      await RestService.SetRequestBaseURL(target.id, url)
+      requestBaseUrl.value = url
+      // 同时更新树节点缓存
+      const node = findNodeById(target.id)
+      if (node) node.baseUrl = url
+      // 刷新 effectiveBaseUrl
+      if (editingNode.value) {
+        try {
+          const eff = await RestService.GetEffectiveBaseURL(editingNode.value.parentId)
+          folderEffectiveBaseUrl.value = eff || ''
+        } catch { /* ignore */ }
+      }
+      ElMessage.success('请求基础链接已更新')
+    }
+    showBaseUrlDialog.value = false
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e?.message || e))
+  }
+}
+
+// ========== 文件夹公共请求头编辑 ==========
+
+function openFolderHeadersEditor(node: TreeNode) {
+  folderHeadersTargetNode.value = node
+  try {
+    if (node.commonHeaders) {
+      folderHeadersForm.value = JSON.parse(JSON.stringify(node.commonHeaders)).map((h: KV) => ({ enabled: true, ...h }))
+    } else {
+      folderHeadersForm.value = []
+    }
+  } catch {
+    folderHeadersForm.value = []
+  }
+  showFolderHeadersDialog.value = true
+}
+
+async function saveFolderHeaders() {
+  const target = folderHeadersTargetNode.value
+  if (!target) return
+
+  const validHeaders = folderHeadersForm.value.filter((h) => h.key.trim())
+  try {
+    await RestService.SetFolderCommonHeaders(target.id, JSON.stringify(validHeaders))
+    ElMessage.success('文件夹公共请求头已更新')
+    showFolderHeadersDialog.value = false
+    await reloadParent(target.parentId)
+    // 如果当前编辑的请求属于该文件夹层级，刷新有效公共请求头
+    if (editingNode.value) {
+      try {
+        const eff = await RestService.GetEffectiveCommonHeaders(editingNode.value.parentId)
+        folderCommonHeaders.value = (eff || []).map((h: KV) => ({ enabled: true, ...h }))
+      } catch { /* ignore */ }
+    }
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e?.message || e))
+  }
 }
 
 // ========== 环境 ==========
@@ -1141,8 +1344,14 @@ function buildURL(): string {
   const isWS = current.value.method === 'WS'
   const defaultProto = isWS ? 'ws://' : 'https://'
 
-  if (!isAbsoluteURL(url) && activeEnv.value && activeEnv.value.baseUrl) {
-    const base = activeEnv.value.baseUrl.replace(/\/+$/, '')
+  // 优先级: 请求自身 baseUrl > 文件夹继承 baseUrl > 全局环境 baseUrl
+  let effectiveBase = requestBaseUrl.value || folderEffectiveBaseUrl.value
+  if (!effectiveBase && activeEnv.value && activeEnv.value.baseUrl) {
+    effectiveBase = activeEnv.value.baseUrl
+  }
+
+  if (!isAbsoluteURL(url) && effectiveBase) {
+    const base = effectiveBase.replace(/\/+$/, '')
     url = base + '/' + url.replace(/^\/+/, '')
     if (!isAbsoluteURL(url)) {
       url = (isWS ? 'ws://' : 'https://') + url
@@ -1162,6 +1371,7 @@ function buildURL(): string {
 function buildHeaders(): Record<string, string> {
   const h: Record<string, string> = {}
 
+  // Layer 1: 全局环境公共请求头（最低优先级）
   if (activeEnv.value && activeEnv.value.commonHeaders) {
     for (const row of activeEnv.value.commonHeaders) {
       if (row.key.trim() && row.enabled !== false) {
@@ -1170,6 +1380,14 @@ function buildHeaders(): Record<string, string> {
     }
   }
 
+  // Layer 2: 文件夹层级合并的公共请求头（覆盖环境）
+  for (const row of folderCommonHeaders.value) {
+    if (row.key.trim() && row.enabled !== false) {
+      h[row.key.trim()] = row.value
+    }
+  }
+
+  // Layer 3: 请求自身的 headers（最高优先级，覆盖以上所有）
   for (const row of current.value.headers) {
     if (row.key.trim() && row.enabled !== false) {
       h[row.key.trim()] = row.value
@@ -1424,6 +1642,27 @@ function parseCurl(cmd: string): { method: string; url: string; headers: KV[]; b
     }
   }
 
+  // 从 URL 中提取 query 参数
+  if (result.url) {
+    const qIdx = result.url.indexOf('?')
+    if (qIdx >= 0) {
+      const queryString = result.url.slice(qIdx + 1)
+      result.url = result.url.slice(0, qIdx)
+      if (queryString) {
+        result.params = queryString.split('&').map((pair) => {
+          const eqIdx = pair.indexOf('=')
+          if (eqIdx >= 0) {
+            return {
+              key: decodeURIComponent(pair.slice(0, eqIdx)),
+              value: decodeURIComponent(pair.slice(eqIdx + 1)),
+            }
+          }
+          return { key: decodeURIComponent(pair), value: '' }
+        })
+      }
+    }
+  }
+
   return result
 }
 
@@ -1600,6 +1839,9 @@ async function wsDoConnect() {
           time: msg.time,
           sent: msg.sent,
         })
+        if (wsMessages.value.length > 500) {
+          wsMessages.value.splice(0, wsMessages.value.length - 500)
+        }
         if (msg.type === 'close') {
           wsConnected.value = false
           wsConnId.value = ''
@@ -2096,6 +2338,19 @@ function stopStress() {
   color: var(--text-secondary);
   padding: 24px 0;
   font-size: 14px;
+}
+
+.baseurl-node-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.baseurl-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 /* 压力测试 */

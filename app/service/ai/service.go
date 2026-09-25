@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"changeme/app/service/secure"
-	"changeme/app/service/settings"
-	"changeme/app/service/types"
+	"spark/app/service/secure"
+	"spark/app/service/settings"
+	"spark/app/service/types"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )

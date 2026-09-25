@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"changeme/app/service/fileutil"
-	"changeme/app/service/sshlib"
-	"changeme/app/service/settings"
-	"changeme/app/service/types"
+	"spark/app/service/fileutil"
+	"spark/app/service/settings"
+	"spark/app/service/sshlib"
+	"spark/app/service/types"
 
 	"github.com/jlaffaye/ftp"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -40,10 +40,10 @@ type ftpSession struct {
 	// mu 串行化对 FTP 控制连接的所有操作：jlaffaye/ftp 的 ServerConn 不是并发
 	// 安全的，保活 NOOP 与列表/传输并发读写同一个 bufio 会崩溃（slice bounds
 	// out of range panic）。
-	mu      sync.Mutex
-	stopKA  chan struct{}
-	kaOnce  sync.Once
-	kaWg    sync.WaitGroup
+	mu     sync.Mutex
+	stopKA chan struct{}
+	kaOnce sync.Once
+	kaWg   sync.WaitGroup
 }
 
 // ServiceName implements application.ServiceName.

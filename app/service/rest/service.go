@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,9 +23,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"changeme/app/model"
-	"changeme/app/service/db"
-	"changeme/app/service/types"
+	"spark/app/model"
+	"spark/app/service/db"
+	"spark/app/service/types"
 
 	"github.com/coder/websocket"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -64,6 +65,9 @@ func (s *RestService) Send(req types.RestRequest) types.RestResponse {
 
 	client := &http.Client{
 		Timeout: time.Duration(timeout) * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: req.Insecure},
+		},
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("重定向次数过多")
@@ -76,29 +80,38 @@ func (s *RestService) Send(req types.RestRequest) types.RestResponse {
 	var contentType string
 
 	if len(req.FormFiles) > 0 {
-		buf := &bytes.Buffer{}
-		writer := multipart.NewWriter(buf)
+		pr, pw := io.Pipe()
+		writer := multipart.NewWriter(pw)
 
-		for k, v := range req.FormData {
-			if err := writer.WriteField(k, v); err != nil {
-				return types.RestResponse{Duration: time.Since(start).Milliseconds(), Error: fmt.Sprintf("写入表单字段失败: %v", err)}
+		go func() {
+			defer pw.Close()
+			defer writer.Close()
+			for k, v := range req.FormData {
+				if err := writer.WriteField(k, v); err != nil {
+					pw.CloseWithError(err)
+					return
+				}
 			}
-		}
-		for _, f := range req.FormFiles {
-			part, err := writer.CreateFormFile(f.FieldName, f.FileName)
-			if err != nil {
-				return types.RestResponse{Duration: time.Since(start).Milliseconds(), Error: fmt.Sprintf("创建文件字段失败: %v", err)}
+			for _, f := range req.FormFiles {
+				part, err := writer.CreateFormFile(f.FieldName, f.FileName)
+				if err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+				file, err := os.Open(f.FilePath)
+				if err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+				if _, err := io.Copy(part, file); err != nil {
+					file.Close()
+					pw.CloseWithError(err)
+					return
+				}
+				file.Close()
 			}
-			fileData, err := os.ReadFile(f.FilePath)
-			if err != nil {
-				return types.RestResponse{Duration: time.Since(start).Milliseconds(), Error: fmt.Sprintf("读取文件失败: %v", err)}
-			}
-			if _, err := part.Write(fileData); err != nil {
-				return types.RestResponse{Duration: time.Since(start).Milliseconds(), Error: fmt.Sprintf("写入文件失败: %v", err)}
-			}
-		}
-		writer.Close()
-		bodyReader = buf
+		}()
+		bodyReader = pr
 		contentType = writer.FormDataContentType()
 	} else if req.Body != "" {
 		bodyReader = bytes.NewReader([]byte(req.Body))
@@ -130,9 +143,16 @@ func (s *RestService) Send(req types.RestRequest) types.RestResponse {
 		}
 	}
 
-	// 检测是否为 SSE / event-stream 响应
+	// 检测是否为流式响应
+	// 1. Content-Type 显式声明为流式类型
+	// 2. Transfer-Encoding: chunked（很多流式 API 用 chunked + application/json 等方式）
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
-	isStreaming := strings.Contains(ct, "text/event-stream") || strings.Contains(ct, "application/x-ndjson")
+	te := strings.ToLower(resp.Header.Get("Transfer-Encoding"))
+	isStreaming := strings.Contains(ct, "text/event-stream") ||
+		strings.Contains(ct, "application/x-ndjson") ||
+		strings.Contains(ct, "application/json-seq") ||
+		strings.Contains(ct, "multipart/x-mixed-replace") ||
+		strings.Contains(te, "chunked")
 
 	headers := make(map[string]string, len(resp.Header))
 	for k := range resp.Header {
@@ -180,6 +200,8 @@ var (
 	streamsMu sync.Mutex
 )
 
+const maxStreamBuffer = 1 << 20 // 1MB
+
 type streamState struct {
 	body   io.ReadCloser
 	buffer strings.Builder
@@ -208,18 +230,32 @@ func startStream(body io.ReadCloser) string {
 			})
 		}()
 
-		scanner := bufio.NewScanner(body)
-		scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
-		for scanner.Scan() {
-			st.mu.Lock()
-			st.buffer.WriteString(scanner.Text())
-			st.buffer.WriteString("\n")
-			st.mu.Unlock()
-		}
-		if err := scanner.Err(); err != nil && err != io.EOF {
-			st.mu.Lock()
-			st.err = err
-			st.mu.Unlock()
+		// 使用固定缓冲区读取，而非按行扫描，确保对各种流式响应（SSE、NDJSON、
+		// chunked JSON 等）都能及时将数据交付给前端
+		reader := bufio.NewReader(body)
+		buf := make([]byte, 4096)
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				st.mu.Lock()
+				if st.buffer.Len() < maxStreamBuffer {
+					writeN := n
+					if st.buffer.Len()+n > maxStreamBuffer {
+						st.buffer.Reset()
+						writeN = maxStreamBuffer
+					}
+					st.buffer.Write(buf[:writeN])
+				}
+				st.mu.Unlock()
+			}
+			if err != nil {
+				if err != io.EOF {
+					st.mu.Lock()
+					st.err = err
+					st.mu.Unlock()
+				}
+				break
+			}
 		}
 	}()
 
@@ -270,12 +306,14 @@ func (s *RestService) ListChildren(parentID uint) ([]types.RestNode, error) {
 	}
 	for _, f := range folders {
 		result = append(result, types.RestNode{
-			ID:       f.ID,
-			ParentID: f.ParentID,
-			Name:     f.Name,
-			Type:     "folder",
-			Leaf:     false,
-			Sort:     f.Sort,
+			ID:            f.ID,
+			ParentID:      f.ParentID,
+			Name:          f.Name,
+			Type:          "folder",
+			BaseURL:       f.BaseURL,
+			CommonHeaders: f.CommonHeaders,
+			Leaf:          false,
+			Sort:          f.Sort,
 		})
 	}
 
@@ -292,6 +330,7 @@ func (s *RestService) ListChildren(parentID uint) ([]types.RestNode, error) {
 			Type:     "request",
 			Method:   r.Method,
 			URL:      r.URL,
+			BaseURL:  r.BaseURL,
 			Leaf:     true,
 			Sort:     r.Sort,
 		})
@@ -394,8 +433,14 @@ func (s *RestService) SaveRequest(req types.RestSaveRequest) (types.RestItem, er
 	if req.Name == "" {
 		return types.RestItem{}, errors.New("请求名称不能为空")
 	}
-	headersJSON, _ := json.Marshal(req.Headers)
-	paramsJSON, _ := json.Marshal(req.Params)
+	headersJSON, err := json.Marshal(req.Headers)
+	if err != nil {
+		return types.RestItem{}, fmt.Errorf("序列化请求头失败: %w", err)
+	}
+	paramsJSON, err := json.Marshal(req.Params)
+	if err != nil {
+		return types.RestItem{}, fmt.Errorf("序列化查询参数失败: %w", err)
+	}
 
 	if req.ID == 0 {
 		// Create new
@@ -410,6 +455,7 @@ func (s *RestService) SaveRequest(req types.RestSaveRequest) (types.RestItem, er
 			Name:     req.Name,
 			Method:   req.Method,
 			URL:      req.URL,
+			BaseURL:  req.BaseURL,
 			Headers:  string(headersJSON),
 			Params:   string(paramsJSON),
 			Body:     req.Body,
@@ -435,6 +481,7 @@ func (s *RestService) SaveRequest(req types.RestSaveRequest) (types.RestItem, er
 	m.Name = req.Name
 	m.Method = req.Method
 	m.URL = req.URL
+	m.BaseURL = req.BaseURL
 	m.Headers = string(headersJSON)
 	m.Params = string(paramsJSON)
 	m.Body = req.Body
@@ -691,7 +738,10 @@ func (s *RestService) SaveEnvironment(env types.RestSaveEnv) (types.RestEnvItem,
 	if env.Name == "" {
 		return types.RestEnvItem{}, errors.New("环境名称不能为空")
 	}
-	headersJSON, _ := json.Marshal(env.CommonHeaders)
+	headersJSON, err := json.Marshal(env.CommonHeaders)
+	if err != nil {
+		return types.RestEnvItem{}, fmt.Errorf("序列化公共请求头失败: %w", err)
+	}
 
 	if env.ID == 0 {
 		// Create new
@@ -748,6 +798,44 @@ func (s *RestService) SetDefaultEnvironment(id uint) error {
 	return nil
 }
 
+// SetFolderBaseURL sets a folder's base URL. When empty, inherits from parent
+// folder or global environment.
+func (s *RestService) SetFolderBaseURL(id uint, baseURL string) error {
+	if id == 0 {
+		return errors.New("文件夹 ID 不能为空")
+	}
+	return db.GetDB().Model(&model.RestFolder{}).Where("id = ?", id).Update("base_url", baseURL).Error
+}
+
+// SetRequestBaseURL sets a request's own base URL override.
+func (s *RestService) SetRequestBaseURL(id uint, baseURL string) error {
+	if id == 0 {
+		return errors.New("请求 ID 不能为空")
+	}
+	return db.GetDB().Model(&model.RestRequestModel{}).Where("id = ?", id).Update("base_url", baseURL).Error
+}
+
+// GetEffectiveBaseURL walks up the folder hierarchy and returns the nearest
+// non-empty BaseURL. Returns empty string if no folder in the chain has a
+// BaseURL set.
+func (s *RestService) GetEffectiveBaseURL(folderID uint) string {
+	return getEffectiveBaseURL(folderID)
+}
+
+// SetFolderCommonHeaders sets a folder's common headers (JSON string).
+func (s *RestService) SetFolderCommonHeaders(id uint, headersJSON string) error {
+	if id == 0 {
+		return errors.New("文件夹 ID 不能为空")
+	}
+	return db.GetDB().Model(&model.RestFolder{}).Where("id = ?", id).Update("common_headers", headersJSON).Error
+}
+
+// GetEffectiveCommonHeaders walks up the folder hierarchy and returns merged
+// common headers (closer folders override ancestor keys).
+func (s *RestService) GetEffectiveCommonHeaders(folderID uint) []types.KV {
+	return getEffectiveCommonHeaders(folderID)
+}
+
 // ---------------------------------------------------------------------------
 // Stress test
 // ---------------------------------------------------------------------------
@@ -783,6 +871,9 @@ func (s *RestService) StressTest(req types.StressTestRequest) types.StressTestRe
 
 	client := &http.Client{
 		Timeout: time.Duration(req.Timeout) * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: req.Insecure},
+		},
 	}
 
 	start := time.Now()
@@ -1104,15 +1195,20 @@ func modelToItem(m *model.RestRequestModel) types.RestItem {
 	if params == nil {
 		params = []types.KV{}
 	}
+	effectiveBaseURL := getEffectiveBaseURL(m.FolderID)
+	folderCommonHeaders := getEffectiveCommonHeaders(m.FolderID)
 	return types.RestItem{
-		ID:       m.ID,
-		FolderID: m.FolderID,
-		Name:     m.Name,
-		Method:   m.Method,
-		URL:      m.URL,
-		Headers:  headers,
-		Params:   params,
-		Body:     m.Body,
+		ID:                  m.ID,
+		FolderID:            m.FolderID,
+		Name:                m.Name,
+		Method:              m.Method,
+		URL:                 m.URL,
+		BaseURL:             m.BaseURL,
+		EffectiveBaseURL:    effectiveBaseURL,
+		FolderCommonHeaders: folderCommonHeaders,
+		Headers:             headers,
+		Params:              params,
+		Body:                m.Body,
 	}
 }
 
@@ -1130,4 +1226,59 @@ func envToItem(e *model.RestEnvironment) types.RestEnvItem {
 		IsDefault:     e.IsDefault,
 		Sort:          e.Sort,
 	}
+}
+
+// getEffectiveBaseURL walks up the folder hierarchy and returns the nearest
+// non-empty BaseURL.
+func getEffectiveBaseURL(folderID uint) string {
+	if folderID == 0 {
+		return ""
+	}
+	for {
+		var f model.RestFolder
+		if err := db.GetDB().Select("id, parent_id, base_url").First(&f, folderID).Error; err != nil {
+			return ""
+		}
+		if f.BaseURL != "" {
+			return f.BaseURL
+		}
+		if f.ParentID == 0 {
+			return ""
+		}
+		folderID = f.ParentID
+	}
+}
+
+// getEffectiveCommonHeaders walks up the folder hierarchy from leaf to root,
+// collecting commonHeaders. Closer folders override earlier (ancestor) keys.
+func getEffectiveCommonHeaders(folderID uint) []types.KV {
+	var allFolders []model.RestFolder
+	cur := folderID
+	for cur != 0 {
+		var f model.RestFolder
+		if err := db.GetDB().Select("id, parent_id, common_headers").First(&f, cur).Error; err != nil {
+			break
+		}
+		allFolders = append(allFolders, f)
+		cur = f.ParentID
+	}
+	// Reverse so ancestors come first, then children override
+	result := make(map[string]string)
+	for i := len(allFolders) - 1; i >= 0; i-- {
+		var headers []types.KV
+		if err := json.Unmarshal([]byte(allFolders[i].CommonHeaders), &headers); err != nil {
+			continue
+		}
+		for _, h := range headers {
+			k := strings.TrimSpace(h.Key)
+			if k != "" {
+				result[k] = h.Value
+			}
+		}
+	}
+	out := make([]types.KV, 0, len(result))
+	for k, v := range result {
+		out = append(out, types.KV{Key: k, Value: v})
+	}
+	return out
 }

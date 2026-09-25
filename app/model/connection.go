@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"changeme/app/service/secure"
+	"spark/app/service/secure"
 
 	"gorm.io/gorm"
 )
@@ -16,22 +16,22 @@ const TableNameConnection = "connections"
 // Sensitive fields (Password / Passphrase / PrivateKey) are encrypted with a
 // machine-bound AES key before being written to SQLite (see app/service/secure).
 type SavedConnection struct {
-	ID         uint      `gorm:"primaryKey" json:"id"`
-	Name       string    `gorm:"column:name" json:"name"`
-	Group      string    `gorm:"column:group_name" json:"group"` // 分组名（空表示未分组）
-	Type       string    `gorm:"column:type" json:"type"`        // ssh | ftp
-	Host       string    `gorm:"column:host" json:"host"`
-	Port       int       `gorm:"column:port" json:"port"`
-	Username   string    `gorm:"column:username" json:"username"`
-	Password   string    `gorm:"column:password" json:"password"`
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Name         string    `gorm:"column:name" json:"name"`
+	Group        string    `gorm:"column:group_name" json:"group"` // 分组名（空表示未分组）
+	Type         string    `gorm:"column:type" json:"type"`        // ssh | ftp
+	Host         string    `gorm:"column:host" json:"host"`
+	Port         int       `gorm:"column:port" json:"port"`
+	Username     string    `gorm:"column:username" json:"username"`
+	Password     string    `gorm:"column:password" json:"password"`
 	UseKey       bool      `gorm:"column:use_key" json:"useKey"`
 	PrivateKey   string    `gorm:"column:private_key" json:"privateKey"` // PEM content
 	Passphrase   string    `gorm:"column:passphrase" json:"passphrase"`
 	ForwardAgent bool      `gorm:"column:forward_agent" json:"forwardAgent"` // SSH agent forwarding
 	DefaultDir   string    `gorm:"column:default_dir" json:"defaultDir"`
 	TLS          bool      `gorm:"column:tls" json:"tls"` // FTP explicit TLS
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 func (*SavedConnection) TableName() string {

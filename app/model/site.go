@@ -3,7 +3,7 @@ package model
 import (
 	"time"
 
-	"changeme/app/service/secure"
+	"spark/app/service/secure"
 
 	"gorm.io/gorm"
 )

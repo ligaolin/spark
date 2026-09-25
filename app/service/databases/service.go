@@ -14,9 +14,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"changeme/app/model"
-	"changeme/app/service/db"
-	"changeme/app/service/secure"
+	"spark/app/model"
+	"spark/app/service/db"
+	"spark/app/service/secure"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"gorm.io/gorm"

@@ -8,8 +8,8 @@ import (
 	"errors"
 	"strings"
 
-	"changeme/app/model"
-	"changeme/app/service/db"
+	"spark/app/model"
+	"spark/app/service/db"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )

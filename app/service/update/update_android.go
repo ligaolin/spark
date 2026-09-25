@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"changeme/app/service/version"
+	"spark/app/service/version"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/updater"

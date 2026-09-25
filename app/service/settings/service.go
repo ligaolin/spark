@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"changeme/app/model"
-	"changeme/app/service/db"
-	"changeme/app/service/version"
+	"spark/app/model"
+	"spark/app/service/db"
+	"spark/app/service/version"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )

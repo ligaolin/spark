@@ -1,25 +1,25 @@
 // Wails 绑定集中出口：前端所有对 Go 服务的调用都从这里导入。
 // 绑定由 `wails3 generate bindings -ts -i` 生成（TS 接口版），勿手改。
-import { AgentService } from '../../bindings/changeme/app/service/agent'
-import { AIService } from '../../bindings/changeme/app/service/ai'
-import { TerminalService } from '../../bindings/changeme/app/service/terminal'
-import { SFTPFileService } from '../../bindings/changeme/app/service/sftp'
-import { FTPFileService } from '../../bindings/changeme/app/service/ftp'
-import { ConnService } from '../../bindings/changeme/app/service/connections'
-import { CustomCommandService } from '../../bindings/changeme/app/service/customcmd'
-import { DocumentService } from '../../bindings/changeme/app/service/documents'
-import { FavoriteService } from '../../bindings/changeme/app/service/favorites'
-import { SettingsService } from '../../bindings/changeme/app/service/settings'
-import { SiteService } from '../../bindings/changeme/app/service/sites'
-import { DatabaseService } from '../../bindings/changeme/app/service/databases'
-import { LocalService } from '../../bindings/changeme/app/service/local'
-import { LocalTerminalService } from '../../bindings/changeme/app/service/localterminal'
-import { HostKeyService } from '../../bindings/changeme/app/service/hostkeys'
-import { SshConfigService } from '../../bindings/changeme/app/service/sshconfig'
-import { UpdateService } from '../../bindings/changeme/app/service/update'
-import { ShellMenuService } from '../../bindings/changeme/app/service/shellmenu'
-import { RestService } from '../../bindings/changeme/app/service/rest'
-import type { LaunchRequest } from '../../bindings/changeme/app/service/shellmenu/models'
+import { AgentService } from '../../bindings/spark/app/service/agent'
+import { AIService } from '../../bindings/spark/app/service/ai'
+import { TerminalService } from '../../bindings/spark/app/service/terminal'
+import { SFTPFileService } from '../../bindings/spark/app/service/sftp'
+import { FTPFileService } from '../../bindings/spark/app/service/ftp'
+import { ConnService } from '../../bindings/spark/app/service/connections'
+import { CustomCommandService } from '../../bindings/spark/app/service/customcmd'
+import { DocumentService } from '../../bindings/spark/app/service/documents'
+import { FavoriteService } from '../../bindings/spark/app/service/favorites'
+import { SettingsService } from '../../bindings/spark/app/service/settings'
+import { SiteService } from '../../bindings/spark/app/service/sites'
+import { DatabaseService } from '../../bindings/spark/app/service/databases'
+import { LocalService } from '../../bindings/spark/app/service/local'
+import { LocalTerminalService } from '../../bindings/spark/app/service/localterminal'
+import { HostKeyService } from '../../bindings/spark/app/service/hostkeys'
+import { SshConfigService } from '../../bindings/spark/app/service/sshconfig'
+import { UpdateService } from '../../bindings/spark/app/service/update'
+import { ShellMenuService } from '../../bindings/spark/app/service/shellmenu'
+import { RestService } from '../../bindings/spark/app/service/rest'
+import type { LaunchRequest } from '../../bindings/spark/app/service/shellmenu/models'
 
 import type {
   AgentReply,
@@ -44,7 +44,7 @@ import type {
   SystemForwardRequest,
   RestRequest,
   RestResponse,
-} from '../../bindings/changeme/app/service/types/models'
+} from '../../bindings/spark/app/service/types/models'
 import type {
   SavedConnection,
   CustomCommand,
@@ -55,12 +55,12 @@ import type {
   SiteLink,
   SiteAccount,
   SiteFolder,
-} from '../../bindings/changeme/app/model/models'
-import type { HostKeyInfo, HostKeyStatus } from '../../bindings/changeme/app/service/hostkeys/models'
-import type { DatabaseConfig } from '../../bindings/changeme/app/service/databases/models'
-import type { TunnelInfo } from '../../bindings/changeme/app/service/sites/models'
-import type { SshHost, ImportResult } from '../../bindings/changeme/app/service/sshconfig/models'
-import type { DedupResult } from '../../bindings/changeme/app/service/connections/models'
+} from '../../bindings/spark/app/model/models'
+import type { HostKeyInfo, HostKeyStatus } from '../../bindings/spark/app/service/hostkeys/models'
+import type { DatabaseConfig } from '../../bindings/spark/app/service/databases/models'
+import type { TunnelInfo } from '../../bindings/spark/app/service/sites/models'
+import type { SshHost, ImportResult } from '../../bindings/spark/app/service/sshconfig/models'
+import type { DedupResult } from '../../bindings/spark/app/service/connections/models'
 
 export {
   AgentService,

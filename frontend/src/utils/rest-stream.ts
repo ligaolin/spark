@@ -3,11 +3,11 @@ export {
     WSConnect,
     WSSend,
     WSClose,
-} from '../../bindings/changeme/app/service/rest/restservice.js'
+} from '../../bindings/spark/app/service/rest/restservice.js'
 
 export type {
     StreamChunk,
     WSConnectRequest,
     WSConnectResult,
     WSMessage,
-} from '../../bindings/changeme/app/service/types/models.js'
+} from '../../bindings/spark/app/service/types/models.js'

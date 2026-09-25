@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"changeme/app/service/types"
+	"spark/app/service/types"
 
 	xssh "golang.org/x/crypto/ssh"
 )

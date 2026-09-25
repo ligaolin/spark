@@ -1,10 +1,12 @@
 package model
 
 import (
-	"changeme/app/service/db"
+	"spark/app/service/db"
 
 	"gorm.io/gorm"
 )
+
+const migrationKeyEncryptCreds = "migration.encrypt_creds_v1"
 
 // migrateSiteAccountsToLink backfills link_id from the legacy site_id column
 // (an intermediate schema put accounts under sites). Since a site can hold
@@ -55,6 +57,11 @@ func Migrate() {
 
 	// 迁移旧版明文凭据：读取时 AfterFind 会原样透传非 enc: 前缀的值，
 	// 这里重新 Save 一遍触发 BeforeSave 加密。
+	// 使用迁移标记避免每次启动都遍历全表。
+	var doneFlag Setting
+	if err := d.Where("key = ?", migrationKeyEncryptCreds).Limit(1).Find(&doneFlag).Error; err == nil && doneFlag.Value == "done" {
+		return
+	}
 	var conns []SavedConnection
 	if err := d.Find(&conns).Error; err != nil {
 		return
@@ -65,4 +72,5 @@ func Migrate() {
 			_ = d.Save(c).Error
 		}
 	}
+	_ = d.Save(&Setting{Key: migrationKeyEncryptCreds, Value: "done"}).Error
 }

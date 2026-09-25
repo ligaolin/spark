@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"changeme/app/service/settings"
-	"changeme/app/service/sshlib"
-	"changeme/app/service/types"
+	"spark/app/service/settings"
+	"spark/app/service/sshlib"
+	"spark/app/service/types"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	xssh "golang.org/x/crypto/ssh"

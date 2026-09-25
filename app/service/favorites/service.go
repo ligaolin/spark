@@ -6,8 +6,8 @@ package favorites
 import (
 	"errors"
 
-	"changeme/app/model"
-	"changeme/app/service/db"
+	"spark/app/model"
+	"spark/app/service/db"
 )
 
 // FavoriteService exposes favorite CRUD to the frontend.

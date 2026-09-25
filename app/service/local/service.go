@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"changeme/app/service/fileutil"
-	"changeme/app/service/types"
+	"spark/app/service/fileutil"
+	"spark/app/service/types"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )

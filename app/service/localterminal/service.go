@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 
-	"changeme/app/service/types"
+	"spark/app/service/types"
 
 	"github.com/aymanbagabas/go-pty"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -30,9 +30,9 @@ type LocalTerminalService struct {
 }
 
 type localSession struct {
-	id    string
-	pty   pty.Pty
-	cmd   *pty.Cmd
+	id  string
+	pty pty.Pty
+	cmd *pty.Cmd
 
 	mu     sync.Mutex
 	closed bool

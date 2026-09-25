@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"changeme/app/service/types"
+	"spark/app/service/types"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	xssh "golang.org/x/crypto/ssh"

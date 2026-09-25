@@ -16,7 +16,7 @@ build.log
 *.db
 *.sqlite
 *.sqlite3
-changeme.exe
+spark.exe
 # Android 签名（含私钥，严禁提交到仓库）
 spark-release.keystore
 android-signing.txt

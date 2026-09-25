@@ -7,7 +7,7 @@ import type { Events } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import type * as types$0 from "../../../../../changeme/app/service/types/models.js";
+import type * as types$0 from "../../../../../spark/app/service/types/models.js";
 
 declare module "@wailsio/runtime" {
     namespace Events {

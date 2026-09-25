@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"changeme/app/model"
-	"changeme/app/service/db"
-	"changeme/app/service/sshlib"
+	"spark/app/model"
+	"spark/app/service/db"
+	"spark/app/service/sshlib"
 )
 
 // TestE2ETunnel 用真实 SSH 主机验证站点管理的「SSH 打开 / SSH 窗口打开」底层隧道：

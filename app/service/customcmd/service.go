@@ -5,8 +5,8 @@ package customcmd
 import (
 	"errors"
 
-	"changeme/app/model"
-	"changeme/app/service/db"
+	"spark/app/model"
+	"spark/app/service/db"
 )
 
 // CustomCommandService exposes custom-command CRUD to the frontend.

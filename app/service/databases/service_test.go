@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"changeme/app/model"
-	"changeme/app/service/db"
-	"changeme/app/service/secure"
+	"spark/app/model"
+	"spark/app/service/db"
+	"spark/app/service/secure"
 
 	"gorm.io/gorm"
 )
@@ -67,7 +67,8 @@ func TestDSN(t *testing.T) {
 }
 
 // 数据迁移：源库用机器密钥加密，目标库用同步密钥重新加密，两边都能正确解密
-func TestMigrateDataReencrypt(t *testing.T) {	oldSeed := secure.CurrentKeySeed()
+func TestMigrateDataReencrypt(t *testing.T) {
+	oldSeed := secure.CurrentKeySeed()
 	defer secure.SetKeySeed(oldSeed)
 
 	dir := t.TempDir()
@@ -181,7 +182,8 @@ func TestConfigEncodeDecode(t *testing.T) {
 }
 
 // 配置本地持久化：保存后能原样读回（重启后无需重新设置）
-func TestConfigPersistence(t *testing.T) {	path := filepath.Join(t.TempDir(), "dbconfig.json")
+func TestConfigPersistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dbconfig.json")
 	cfg := DatabaseConfig{
 		Dialect: "mysql", Host: "db.example.com", Port: 3306,
 		Username: "root", Password: "pw", Database: "spark", SyncKey: "sync-1",

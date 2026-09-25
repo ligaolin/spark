@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"changeme/app/service/fileutil"
-	"changeme/app/service/settings"
-	"changeme/app/service/sshlib"
-	"changeme/app/service/types"
+	"spark/app/service/fileutil"
+	"spark/app/service/settings"
+	"spark/app/service/sshlib"
+	"spark/app/service/types"
 
 	sftplib "github.com/pkg/sftp"
 	"github.com/wailsapp/wails/v3/pkg/application"

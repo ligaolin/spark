@@ -6,8 +6,8 @@ import (
 	"errors"
 	"strings"
 
-	"changeme/app/service/sshlib"
-	"changeme/app/service/types"
+	"spark/app/service/sshlib"
+	"spark/app/service/types"
 
 	xssh "golang.org/x/crypto/ssh"
 )
