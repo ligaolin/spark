@@ -125,9 +125,9 @@
                             <el-table-column label="操作" align="right" width="180">
                                 <template #default="{ row }">
                                     <div class="conn-actions">
-                                        <el-button v-if="row.type === 'ssh'" size="small" type="primary" plain
+                                        <el-button v-if="row.type === 'ssh' && hasTerminalRoute" size="small" type="primary" plain
                                             @click="openTerminal(row)">ssh</el-button>
-                                        <el-button v-else size="small" @click="openFtp(row)">FTP</el-button>
+                                        <el-button v-if="row.type === 'ftp' && hasFtpRoute" size="small" @click="openFtp(row)">FTP</el-button>
                                         <el-button size="small" @click="openEdit(row)">编辑</el-button>
                                         <el-button size="small" type="danger" plain @click="remove(row)">删除</el-button>
                                     </div>
@@ -207,12 +207,17 @@ import ConnectDialog from '../components/ConnectDialog.vue'
 import SshConfigImport from '../components/SshConfigImport.vue'
 import { useConnectionsStore } from '../stores/connections'
 import { useTerminalStore } from '../stores/terminal'
+import { useSettingsStore } from '../stores/settings'
 import { makeConnectOptions, makeSavedConnection, HostKeyService } from '../utils/wails'
 import type { ConnectOptions, SavedConnection, HostKeyInfo } from '../utils/wails'
 
 const router = useRouter()
 const connStore = useConnectionsStore()
 const termStore = useTerminalStore()
+const settings = useSettingsStore()
+
+const hasTerminalRoute = computed(() => !settings.hiddenMenuPaths.has('/terminal'))
+const hasFtpRoute = computed(() => !settings.hiddenMenuPaths.has('/ftp'))
 
 // 分组筛选哨兵值
 const ALL = '__all__'

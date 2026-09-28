@@ -16,7 +16,7 @@
             </el-input>
           </div>
 
-          <div class="sidebar-tree" @contextmenu.prevent="onBlankContext">
+          <div class="sidebar-tree" @contextmenu.prevent="onTreeContext">
             <el-tree
               ref="treeRef"
               :data="treeData"
@@ -830,6 +830,15 @@ function onNodeContext(event: MouseEvent, data: TreeNode) {
   openCtx(event)
 }
 
+function onTreeContext(event: MouseEvent) {
+  const target = event.target as HTMLElement
+  if (target.closest('.el-tree-node')) {
+    return
+  }
+  event.preventDefault()
+  onBlankContext(event)
+}
+
 function onBlankContext(event: MouseEvent) {
   event.preventDefault()
   ctxNode.value = null
@@ -1540,7 +1549,7 @@ function buildCurl(continuation: string, style: 'single' | 'multiline'): string 
   const NL = continuation === '^' ? '\r\n' : '\n'
 
   const tokens: string[] = []
-  tokens.push('curl')
+  tokens.push(shell === 'cmd' || shell === 'powershell' ? 'curl.exe' : 'curl')
 
   const method = current.value.method.toUpperCase()
   if (method !== 'GET') {
@@ -1900,6 +1909,7 @@ function stopStress() {
 .rest-sidebar {
   display: flex;
   flex-direction: column;
+  height: 100%;
   background: var(--bg-secondary);
   overflow: hidden;
 }
@@ -1912,6 +1922,7 @@ function stopStress() {
 
 .sidebar-tree {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px 0;
 }

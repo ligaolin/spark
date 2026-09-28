@@ -36,6 +36,7 @@
 
         <template #footer>
             <el-button v-if="updateState.phase === 'ready'" @click="closeUpdateDialog">稍后</el-button>
+            <el-button v-if="updateState.phase === 'ready'" @click="handleSkipVersion">跳过该版本</el-button>
             <el-button v-if="updateState.phase === 'ready'" type="primary" @click="downloadUpdate">
                 下载更新
             </el-button>
@@ -62,12 +63,17 @@ import {
     openReleasePage,
     formatBytes,
     isAndroid,
+    skipVersion,
 } from '../utils/updateCheck'
 
 const percent = computed(() => {
     if (!updateState.total) return 0
     return Math.min(100, Math.round((updateState.done / updateState.total) * 100))
 })
+
+function handleSkipVersion() {
+    void skipVersion()
+}
 </script>
 
 <style scoped>

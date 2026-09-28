@@ -5,7 +5,7 @@
 import { reactive } from 'vue'
 import { Events } from '@wailsio/runtime'
 import { ElMessage } from 'element-plus'
-import { UpdateService } from './wails'
+import { UpdateService, SettingsService } from './wails'
 import { isAndroidApp } from './platform'
 
 export interface UpdateInfo {
@@ -60,32 +60,59 @@ function reset() {
   updateState.downloadedPath = ''
 }
 
+// 读取设置：是否不再提示更新、跳过的版本号
+async function loadUpdateSettings(): Promise<{ suppress: boolean; skippedVersion: string }> {
+  try {
+    const all = (await SettingsService.GetAll()) ?? {}
+    const suppress = (all as Record<string, string>)['update.suppress'] === '1'
+    const skippedVersion = ((all as Record<string, string>)['update.skippedVersion'] ?? '')
+    return { suppress, skippedVersion }
+  } catch {
+    return { suppress: false, skippedVersion: '' }
+  }
+}
+
 // 检查更新。silent=true（应用启动时）检查过程不打扰用户，仅在有新版本时
 // 弹出提示；手动检查（silent=false）立即显示检查中状态，失败也会提示。
+// silent 模式下会尊重「不再提示更新」和「跳过该版本」设置。
 export async function checkForUpdates(silent = false): Promise<void> {
   bindProgress()
   reset()
-  if (!silent) {
-    updateState.phase = 'checking'
-    updateState.visible = true
+
+  // silent 模式下检查是否应该跳过
+  if (silent) {
+    const { suppress, skippedVersion } = await loadUpdateSettings()
+    if (suppress) return
+    // 先请求版本信息，如果与跳过的版本相同则不弹出
+    try {
+      const info = await UpdateService.CheckUpdate()
+      if (!info || !info.hasUpdate) return
+      if (skippedVersion && info.latest === skippedVersion) return
+      updateState.info = info
+      updateState.phase = 'ready'
+      updateState.visible = true
+    } catch {
+      // silent 模式下出错不打扰用户
+    }
+    return
   }
+
+  // 手动检查：完整展示流程
+  updateState.phase = 'checking'
+  updateState.visible = true
   try {
     const info = await UpdateService.CheckUpdate()
     if (!info) throw new Error('未获取到版本信息')
     if (!info.hasUpdate) {
-      if (!silent) {
-        ElMessage.success(`当前已是最新版本（${info.current}）`)
-        updateState.visible = false
-      }
+      ElMessage.success(`当前已是最新版本（${info.current}）`)
+      updateState.visible = false
       return
     }
     updateState.info = info
     updateState.phase = 'ready'
     updateState.visible = true
   } catch (e: any) {
-    if (!silent) {
-      ElMessage.error(`检查更新失败：${e?.message || e}`)
-    }
+    ElMessage.error(`检查更新失败：${e?.message || e}`)
   }
 }
 
@@ -147,6 +174,25 @@ export async function openReleasePage() {
 
 export function closeUpdateDialog() {
   updateState.visible = false
+}
+
+// 跳过当前版本：记录版本号到设置，关闭弹窗后启动时不再提示该版本
+export async function skipVersion(): Promise<void> {
+  const version = updateState.info?.latest
+  if (!version) return
+  try {
+    await SettingsService.Set('update.skippedVersion', version)
+    updateState.visible = false
+    ElMessage.success(`已跳过版本 ${version}，启动时不再提示`)
+  } catch (e: any) {
+    ElMessage.error(`保存失败：${e?.message || e}`)
+    updateState.visible = false
+  }
+}
+
+// 设置是否不再提示更新
+export async function setUpdateSuppress(suppress: boolean): Promise<void> {
+  await SettingsService.Set('update.suppress', suppress ? '1' : '0')
 }
 
 export function formatBytes(n: number): string {

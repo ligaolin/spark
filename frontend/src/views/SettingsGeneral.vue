@@ -171,6 +171,43 @@
       </div>
     </div>
 
+    <div class="cfg-row">
+      <div class="cfg-info">
+        <div class="cfg-label">检查更新</div>
+        <div class="cfg-desc">点击手动检查是否有新版本；如有新版本将弹出更新提示窗口</div>
+      </div>
+      <div class="cfg-ctrl">
+        <el-button size="small" type="primary" :loading="checking" @click="checkUpdate">检查更新</el-button>
+      </div>
+    </div>
+
+    <div class="cfg-row">
+      <div class="cfg-info">
+        <div class="cfg-label">不再提示更新</div>
+        <div class="cfg-desc">开启后启动时不再自动弹出新版本提示；关闭后恢复自动检查更新</div>
+      </div>
+      <div class="cfg-ctrl">
+        <el-switch v-model="suppressVal" @change="saveSuppress" />
+      </div>
+    </div>
+
+    <div class="cfg-row cfg-row-col">
+      <div class="cfg-info">
+        <div class="cfg-label">侧边栏菜单</div>
+        <div class="cfg-desc">勾选希望在左侧菜单显示的功能板块；取消勾选后隐藏，保存后立即刷新生效</div>
+      </div>
+      <div class="cfg-ctrl menu-toggles">
+        <el-checkbox v-for="item in allMenuItems" :key="item.path"
+          :model-value="!hiddenSet.has(item.path)"
+          @change="(v) => toggleMenu(item.path, v)">
+          {{ item.label }}
+        </el-checkbox>
+        <el-button size="small" type="primary" :loading="savingMenu" @click="saveMenu">
+          保存
+        </el-button>
+      </div>
+    </div>
+
     <div class="cfg-note">更多配置项会陆续加到这里（配置存于本地数据库 settings 表）。</div>
   </div>
 </template>
@@ -180,6 +217,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useSettingsStore } from '../stores/settings'
 import { SettingsService } from '../utils/wails'
+import { checkForUpdatesManual, setUpdateSuppress } from '../utils/updateCheck'
 
 const settings = useSettingsStore()
 
@@ -205,6 +243,22 @@ const savingSearchExclude = ref(false)
 const savingLinkOpenMode = ref(false)
 const savingCloseAction = ref(false)
 const savingAutoStart = ref(false)
+const suppressVal = ref(false)
+const checking = ref(false)
+
+// 侧边栏菜单可见性
+const allMenuItems = [
+    { path: '/local-terminal', label: '本地终端' },
+    { path: '/connections', label: '连接管理' },
+    { path: '/terminal', label: 'SSH 终端' },
+    { path: '/ftp', label: 'FTP 文件' },
+    { path: '/rest', label: 'REST 请求' },
+    { path: '/documents', label: '文档管理' },
+    { path: '/sites', label: '站点管理' },
+    { path: '/remote-editor', label: '编辑器' },
+]
+const hiddenSet = ref(new Set<string>())
+const savingMenu = ref(false)
 
 onMounted(async () => {
   await settings.load()
@@ -219,6 +273,8 @@ onMounted(async () => {
   linkOpenModeVal.value = settings.editorLinkOpenMode
   closeActionVal.value = settings.windowCloseAction
   autoStartVal.value = await SettingsService.IsAutoStart()
+  suppressVal.value = settings.updateSuppress
+  hiddenSet.value = new Set(settings.hiddenMenuPaths)
 })
 
 async function saveKeepalive() {
@@ -361,6 +417,48 @@ async function saveAutoStart(v: boolean) {
     savingAutoStart.value = false
   }
 }
+
+async function checkUpdate() {
+  checking.value = true
+  try {
+    await checkForUpdatesManual()
+  } finally {
+    checking.value = false
+  }
+}
+
+async function saveSuppress(v: boolean) {
+  try {
+    await setUpdateSuppress(v)
+    ElMessage.success(v ? '已开启不再提示更新，启动时不再自动弹出新版本提示' : '已关闭不再提示更新，启动时将恢复自动检查更新')
+  } catch (e: any) {
+    suppressVal.value = !v
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  }
+}
+
+function toggleMenu(path: string, visible: boolean) {
+  const next = new Set(hiddenSet.value)
+  if (visible) {
+    next.delete(path)
+  } else {
+    next.add(path)
+  }
+  hiddenSet.value = next
+}
+
+async function saveMenu() {
+  savingMenu.value = true
+  try {
+    const csv = [...hiddenSet.value].join(',')
+    await settings.set('menu.hidden', csv)
+    ElMessage.success('已保存，菜单立即刷新')
+  } catch (e: any) {
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  } finally {
+    savingMenu.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -404,6 +502,16 @@ async function saveAutoStart(v: boolean) {
   flex-shrink: 0;
 }
 
+.cfg-row-col {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.cfg-row-col .cfg-ctrl {
+  width: 100%;
+  flex-shrink: 1;
+}
+
 .cfg-note {
   font-size: 12px;
   color: var(--text-muted);
@@ -414,5 +522,10 @@ async function saveAutoStart(v: boolean) {
   background: var(--hover-bg);
   border-radius: 3px;
   padding: 0 3px;
+}
+
+.menu-toggles {
+  flex-wrap: wrap;
+  min-width: 0;
 }
 </style>

@@ -60,6 +60,20 @@ export const useSettingsStore = defineStore('settings', {
       const v = state.values['editor.linkOpenMode']
       return v === 'browser' || v === 'window' ? v : 'popup'
     },
+    // 更新：是否不再提示更新
+    updateSuppress(state): boolean {
+      return state.values['update.suppress'] === '1'
+    },
+    // 更新：跳过的版本号（跳过该版本后不再弹出）
+    updateSkippedVersion(state): string {
+      return state.values['update.skippedVersion'] ?? ''
+    },
+    // 侧边栏菜单可见性：逗号分隔的隐藏路径
+    hiddenMenuPaths(state): Set<string> {
+      const raw = (state.values['menu.hidden'] ?? '').trim()
+      if (!raw) return new Set()
+      return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))
+    },
   },
 
   actions: {

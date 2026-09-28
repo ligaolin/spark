@@ -1,45 +1,49 @@
 <template>
     <el-config-provider :locale="zhCn">
-        <div class="app-shell">
-            <aside class="sidebar">
-                <div class="brand">
-                    <img class="brand-logo" :src="logoUrl" alt="Spark" />
-                    <span class="brand-name">Spark</span>
-                    <span class="brand-sub">终端</span>
-                </div>
-                <nav class="nav">
-                    <router-link v-for="item in menu" :key="item.path" :to="item.path" class="nav-item"
-                        :class="{ active: route.path === item.path }">
-                        <el-icon class="nav-icon">
-                            <component :is="item.icon" />
-                        </el-icon>
-                        <span>{{ item.label }}</span>
-                    </router-link>
-                </nav>
-                <div class="sidebar-foot">
-                    <div class="foot-row">
-                        <router-link to="/settings" class="foot-link" :class="{ active: route.path === '/settings' }">
-                            <el-icon class="nav-icon">
-                                <Setting />
-                            </el-icon>
-                            <span>设置</span>
-                        </router-link>
-                        <button class="theme-toggle" :title="isDark ? '切换到亮色主题' : '切换到暗色主题'" @click="toggleTheme">
-                            <el-icon class="nav-icon">
-                                <component :is="isDark ? Sunny : Moon" />
-                            </el-icon>
-                        </button>
+        <el-splitter class="app-shell">
+            <el-splitter-panel :min="120" :max="400" size="190px">
+                <aside class="sidebar">
+                    <div class="brand">
+                        <img class="brand-logo" :src="logoUrl" alt="Spark" />
+                        <span class="brand-name">Spark</span>
+                        <span class="brand-sub">终端</span>
                     </div>
-                </div>
-            </aside>
-            <main class="content">
-                <router-view v-slot="{ Component }">
-                    <keep-alive>
-                        <component :is="Component" />
-                    </keep-alive>
-                </router-view>
-            </main>
-        </div>
+                    <nav class="nav">
+                        <router-link v-for="item in menu" :key="item.path" :to="item.path" class="nav-item"
+                            :class="{ active: route.path === item.path }">
+                            <el-icon class="nav-icon">
+                                <component :is="item.icon" />
+                            </el-icon>
+                            <span>{{ item.label }}</span>
+                        </router-link>
+                    </nav>
+                    <div class="sidebar-foot">
+                        <div class="foot-row">
+                            <router-link to="/settings" class="foot-link" :class="{ active: route.path === '/settings' }">
+                                <el-icon class="nav-icon">
+                                    <Setting />
+                                </el-icon>
+                                <span>设置</span>
+                            </router-link>
+                            <button class="theme-toggle" :title="isDark ? '切换到亮色主题' : '切换到暗色主题'" @click="toggleTheme">
+                                <el-icon class="nav-icon">
+                                    <component :is="isDark ? Sunny : Moon" />
+                                </el-icon>
+                            </button>
+                        </div>
+                    </div>
+                </aside>
+            </el-splitter-panel>
+            <el-splitter-panel :min="300">
+                <main class="content">
+                    <router-view v-slot="{ Component }">
+                        <keep-alive :include="visibleCompNames">
+                            <component :is="Component" />
+                        </keep-alive>
+                    </router-view>
+                </main>
+            </el-splitter-panel>
+        </el-splitter>
         <!-- 页面内弹窗宿主（InputDialog / ConfirmDialog） -->
         <DialogHost />
         <!-- 新版本检查 / 下载弹窗 -->
@@ -50,9 +54,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { useRoute, useRouter } from 'vue-router'
+import appRouter, { toggleableRoutes } from './utils/router'
 import { Window, Events } from '@wailsio/runtime'
 import {
     Monitor,
@@ -120,18 +125,58 @@ async function handleLaunchRequest(req: { kind: string; path: string; isDir: boo
     }
 }
 
-const menu = [
-    ...(isAndroidApp() ? [] : [{ path: '/local-terminal', label: '本地终端', icon: Platform }]),
-    { path: '/connections', label: '连接管理', icon: Connection },
-    { path: '/terminal', label: 'SSH 终端', icon: Monitor },
-    // SFTP 已并入 SSH 终端右侧面板（SFTP 文件页），不再单独列在侧边栏
-    { path: '/ftp', label: 'FTP 文件', icon: Link },
-    { path: '/rest', label: 'REST 请求', icon: Promotion },
-    { path: '/documents', label: '文档管理', icon: Notebook },
-    { path: '/sites', label: '站点管理', icon: Collection },
-    { path: '/remote-editor', label: '编辑器', icon: EditPen },
-    // 本地终端：安卓端无法启动本机 shell，直接屏蔽显示
-]
+const menu = computed(() => {
+    const hidden = settings.hiddenMenuPaths
+    const all = [
+        ...(isAndroidApp() ? [] : [{ path: '/local-terminal', label: '本地终端', icon: Platform }]),
+        { path: '/connections', label: '连接管理', icon: Connection },
+        { path: '/terminal', label: 'SSH 终端', icon: Monitor },
+        { path: '/ftp', label: 'FTP 文件', icon: Link },
+        { path: '/rest', label: 'REST 请求', icon: Promotion },
+        { path: '/documents', label: '文档管理', icon: Notebook },
+        { path: '/sites', label: '站点管理', icon: Collection },
+        { path: '/remote-editor', label: '编辑器', icon: EditPen },
+    ]
+    return all.filter((item) => !hidden.has(item.path))
+})
+
+// 路由路径 → 组件名映射（用于 keep-alive include 过滤）
+const pathToCompName: Record<string, string> = {
+    '/connections': 'ConnectionsView',
+    '/terminal': 'TerminalView',
+    '/sftp': 'SftpView',
+    '/ftp': 'FtpView',
+    '/documents': 'DocumentsView',
+    '/sites': 'SitesView',
+    '/remote-editor': 'RemoteEditorView',
+    '/local-terminal': 'LocalTerminalView',
+    '/rest': 'RestView',
+}
+
+const visibleCompNames = computed(() =>
+    toggleableRoutes
+        .filter((r) => r.path && !settings.hiddenMenuPaths.has(r.path))
+        .map((r) => pathToCompName[r.path])
+        .concat('SettingsView')
+)
+
+function syncHiddenRoutes(hidden: Set<string>) {
+    for (const r of toggleableRoutes) {
+        const name = r.path
+        if (hidden.has(name)) {
+            appRouter.removeRoute(name)
+            // 如果当前正在隐藏的路由上，重定向到第一个可见路由
+            if (route.path === name) {
+                const first = menu.value[0]
+                router.push(first ? first.path : '/terminal')
+            }
+        } else {
+            if (!appRouter.hasRoute(name)) {
+                appRouter.addRoute(r)
+            }
+        }
+    }
+}
 
 // 全局快捷键分发（输入框/终端等可输入区域不拦截；纯功能键 F1~F12 除外）
 function onKeyDown(e: KeyboardEvent) {
@@ -192,6 +237,8 @@ onMounted(() => {
         // 数据库设置为准，覆盖启动时的本地缓存
         applyTheme(settings.theme)
         cacheTheme(settings.theme)
+        // 根据配置隐藏/显示路由
+        syncHiddenRoutes(settings.hiddenMenuPaths)
     })
     // Markdown 预览 / AI 回复里的 <a> 链接：拦下 WebView 内的默认导航，
     // 改按「编辑器链接打开方式」打开（否则会把整个应用页面顶掉）
@@ -214,21 +261,36 @@ onMounted(() => {
 onBeforeUnmount(() => {
     window.removeEventListener('keydown', onKeyDown)
 })
+
+watch(
+    () => settings.hiddenMenuPaths,
+    (hidden) => syncHiddenRoutes(hidden),
+)
 </script>
 
 <style scoped>
 .app-shell {
-    display: flex;
     height: 100vh;
 }
 
 .sidebar {
-    width: 190px;
-    flex-shrink: 0;
+    height: 100%;
     background: var(--sidebar-bg);
-    border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
+}
+
+.app-shell :deep(.el-splitter-bar__dragger:before) {
+    background-color: var(--border-color);
+}
+
+.app-shell :deep(.el-splitter-bar:hover .el-splitter-bar__dragger:before) {
+    background-color: var(--el-color-primary);
+}
+
+.app-shell :deep(.el-splitter-panel) {
+    min-width: 0;
+    overflow: hidden;
 }
 
 .brand {
@@ -355,7 +417,7 @@ onBeforeUnmount(() => {
 }
 
 .content {
-    flex: 1;
+    height: 100%;
     min-width: 0;
     display: flex;
     flex-direction: column;
