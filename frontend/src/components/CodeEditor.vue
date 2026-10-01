@@ -252,6 +252,10 @@ function insertAtCursor(text: string) {
   applyEdit(text)
 }
 
+function format() {
+  editor?.getAction('editor.action.formatDocument')?.run()
+}
+
 function aiExplain() {
   const sel = getSelection()
   if (!sel) {
@@ -323,7 +327,7 @@ onBeforeUnmount(() => {
   monaco = null
 })
 
-defineExpose({ setContent, getContent, focus, jumpToLine, setReadonly, getSelection, insertAtCursor, replaceSelection })
+defineExpose({ setContent, getContent, focus, jumpToLine, setReadonly, getSelection, insertAtCursor, replaceSelection, format })
 </script>
 
 <style scoped>

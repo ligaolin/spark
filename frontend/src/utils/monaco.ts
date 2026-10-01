@@ -105,6 +105,20 @@ function setupLinkOpener(monaco: Monaco): void {
 }
 
 /**
+ * 配置 Monaco JSON 语言服务，允许在 JSON 编辑器中写注释。
+ * 用户在 Body 编辑器中写注释，注释时不会出现语法错误波浪线。
+ */
+function setupJsonDefaults(monaco: Monaco): void {
+  monaco.json.jsonDefaults.setDiagnosticsOptions({
+    validate: true,
+    allowComments: true,
+    trailingCommas: 'ignore',
+    schemas: [],
+    enableSchemaRequest: false,
+  })
+}
+
+/**
  * 懒加载 Monaco。返回同一个 Promise,多处同时调用只会加载一次。
  */
 export function loadMonaco(): Promise<Monaco> {
@@ -113,6 +127,7 @@ export function loadMonaco(): Promise<Monaco> {
       setupEnvironment()
       defineThemes(m)
       setupLinkOpener(m)
+      setupJsonDefaults(m)
       return m
     })
   }
@@ -124,4 +139,70 @@ export function loadMonaco(): Promise<Monaco> {
  */
 export function monacoTheme(dark: boolean): string {
   return dark ? 'spark-dark' : 'spark-light'
+}
+
+/**
+ * 去除 JSON 字符串中的注释以及尾随逗号（对象/数组末尾多余的 ,）。
+ * 使用状态机逐字符扫描，正确处理转义和字符串边界，不会误删字符串内的内容。
+ *
+ * Monaco 编辑器已通过 jsonDefaults 允许注释和尾随逗号，用户在 JSON Body
+ * 里写注释或尾随逗号不会被标红，发送前/生成代码前调用此函数即可得到纯净的 JSON。
+ */
+export function stripJsonComments(text: string): string {
+  const out: string[] = []
+  let i = 0
+  const len = text.length
+
+  while (i < len) {
+    const ch = text[i]
+
+    if (ch === '"') {
+      out.push(ch)
+      i++
+      while (i < len) {
+        const c = text[i]
+        out.push(c)
+        if (c === '\\') {
+          i++
+          if (i < len) out.push(text[i])
+        } else if (c === '"') {
+          break
+        }
+        i++
+      }
+      i++
+      continue
+    }
+
+    if (ch === '/' && i + 1 < len) {
+      const next = text[i + 1]
+      if (next === '/') {
+        i += 2
+        while (i < len && text[i] !== '\n') i++
+        if (i < len) i++
+        continue
+      }
+      if (next === '*') {
+        i += 2
+        while (i + 1 < len && !(text[i] === '*' && text[i + 1] === '/')) i++
+        i += 2
+        if (i < len && text[i] === '\n') i++
+        continue
+      }
+    }
+
+    if (ch === ',') {
+      let j = i + 1
+      while (j < len && (text[j] === ' ' || text[j] === '\t' || text[j] === '\n' || text[j] === '\r')) j++
+      if (j < len && (text[j] === '}' || text[j] === ']')) {
+        i = j
+        continue
+      }
+    }
+
+    out.push(ch)
+    i++
+  }
+
+  return out.join('')
 }

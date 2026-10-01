@@ -34,6 +34,10 @@ export const useSettingsStore = defineStore('settings', {
     windowCloseAction(state): 'minimize' | 'exit' {
       return state.values['window.closeAction'] === 'exit' ? 'exit' : 'minimize'
     },
+    // REST 请求跳过 TLS 证书验证
+    restInsecureSkipVerify(state): boolean {
+      return state.values['rest.insecureSkipVerify'] === '1'
+    },
     // 编辑器是否自动换行（长行折行显示）
     editorWordWrap(state): boolean {
       return state.values['editor.wordWrap'] !== '0'
