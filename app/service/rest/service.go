@@ -163,7 +163,7 @@ func (s *RestService) Send(req types.RestRequest) types.RestResponse {
 		streamID := startStream(resp.Body)
 		return types.RestResponse{
 			Status:     resp.StatusCode,
-			StatusText: resp.Status,
+			StatusText: http.StatusText(resp.StatusCode),
 			Headers:    headers,
 			Duration:   time.Since(start).Milliseconds(),
 			Streaming:  true,
@@ -176,7 +176,7 @@ func (s *RestService) Send(req types.RestRequest) types.RestResponse {
 	if err != nil {
 		return types.RestResponse{
 			Status:     resp.StatusCode,
-			StatusText: resp.Status,
+			StatusText: http.StatusText(resp.StatusCode),
 			Duration:   time.Since(start).Milliseconds(),
 			Error:      fmt.Sprintf("读取响应体失败: %v", err),
 		}
@@ -184,7 +184,7 @@ func (s *RestService) Send(req types.RestRequest) types.RestResponse {
 
 	return types.RestResponse{
 		Status:     resp.StatusCode,
-		StatusText: resp.Status,
+		StatusText: http.StatusText(resp.StatusCode),
 		Headers:    headers,
 		Body:       string(bodyBytes),
 		Duration:   time.Since(start).Milliseconds(),
@@ -451,15 +451,20 @@ func (s *RestService) SaveRequest(req types.RestSaveRequest) (types.RestItem, er
 		db.GetDB().Model(&model.RestRequestModel{}).Where("folder_id = ?", req.FolderID).
 			Select("COALESCE(MAX(sort), -1)").Scan(&maxSort)
 		m := model.RestRequestModel{
-			FolderID: req.FolderID,
-			Name:     req.Name,
-			Method:   req.Method,
-			URL:      req.URL,
-			BaseURL:  req.BaseURL,
-			Headers:  string(headersJSON),
-			Params:   string(paramsJSON),
-			Body:     req.Body,
-			Sort:     maxSort + 1,
+			FolderID:         req.FolderID,
+			Name:             req.Name,
+			Method:           req.Method,
+			URL:              req.URL,
+			BaseURL:          req.BaseURL,
+			Headers:          string(headersJSON),
+			Params:           string(paramsJSON),
+			Body:             req.Body,
+			RawBody:          req.RawBody,
+			FormFields:       string(marshalFormFields(req.FormFields)),
+			UrlencodedFields: string(marshalFormFields(req.UrlencodedFields)),
+			FormFiles:        string(marshalFormFiles(req.FormFiles)),
+			BinaryFilePath:   req.BinaryFilePath,
+			Sort:             maxSort + 1,
 		}
 		if err := db.GetDB().Create(&m).Error; err != nil {
 			return types.RestItem{}, err
@@ -485,10 +490,37 @@ func (s *RestService) SaveRequest(req types.RestSaveRequest) (types.RestItem, er
 	m.Headers = string(headersJSON)
 	m.Params = string(paramsJSON)
 	m.Body = req.Body
+	m.RawBody = req.RawBody
+	m.FormFields = string(marshalFormFields(req.FormFields))
+	m.UrlencodedFields = string(marshalFormFields(req.UrlencodedFields))
+	m.FormFiles = string(marshalFormFiles(req.FormFiles))
+	m.BinaryFilePath = req.BinaryFilePath
 	if err := db.GetDB().Save(&m).Error; err != nil {
 		return types.RestItem{}, err
 	}
 	return modelToItem(&m), nil
+}
+
+func marshalFormFields(fields []types.FormKV) []byte {
+	if fields == nil {
+		return []byte("[]")
+	}
+	b, err := json.Marshal(fields)
+	if err != nil {
+		return []byte("[]")
+	}
+	return b
+}
+
+func marshalFormFiles(files []types.FormFileItem) []byte {
+	if files == nil {
+		return []byte("[]")
+	}
+	b, err := json.Marshal(files)
+	if err != nil {
+		return []byte("[]")
+	}
+	return b
 }
 
 // RenameRequest renames a request.
@@ -552,6 +584,144 @@ func deleteFolderTree(folderID uint) error {
 // ---------------------------------------------------------------------------
 // Move / Reorder
 // ---------------------------------------------------------------------------
+
+// CopyNode deep-copies a folder or request to a new parent.
+// Returns the new folder/request model. For folders, copies recursively.
+func (s *RestService) CopyNode(id uint, nodeType string, newParentID uint) (model.RestFolder, error) {
+	if id == 0 {
+		return model.RestFolder{}, errors.New("节点 ID 不能为空")
+	}
+	if nodeType == "folder" {
+		// 不能粘贴到自己的下级
+		if newParentID == id {
+			return model.RestFolder{}, errors.New("不能粘贴到自身")
+		}
+		if isFolderDescendant(id, newParentID) {
+			return model.RestFolder{}, errors.New("不能粘贴到自己的子目录中")
+		}
+		return copyFolderTree(id, newParentID, true)
+	}
+	return copyRequest(id, newParentID, true)
+}
+
+func copyFolderTree(folderID uint, newParentID uint, rename bool) (model.RestFolder, error) {
+	var src model.RestFolder
+	if err := db.GetDB().First(&src, folderID).Error; err != nil {
+		return model.RestFolder{}, err
+	}
+	copyName := src.Name
+	if rename {
+		copyName = src.Name + " (副本)"
+		// 如果名称已存在，自动追加编号
+		for {
+			var count int64
+			db.GetDB().Model(&model.RestFolder{}).Where("parent_id = ? AND name = ?", newParentID, copyName).Count(&count)
+			if count == 0 {
+				break
+			}
+			copyName = src.Name + " (副本" + fmt.Sprintf(" %d", count+1) + ")"
+		}
+	}
+
+	var maxSort int
+	db.GetDB().Model(&model.RestFolder{}).Where("parent_id = ?", newParentID).
+		Select("COALESCE(MAX(sort), -1)").Scan(&maxSort)
+	newFolder := model.RestFolder{
+		ParentID:      newParentID,
+		Name:          copyName,
+		CommonHeaders: src.CommonHeaders,
+		Sort:          maxSort + 1,
+	}
+	if err := db.GetDB().Create(&newFolder).Error; err != nil {
+		return model.RestFolder{}, err
+	}
+
+	// 复制环境配置
+	var envs []model.RestFolderEnv
+	if err := db.GetDB().Where("folder_id = ?", folderID).Find(&envs).Error; err == nil {
+		for _, e := range envs {
+			ne := model.RestFolderEnv{
+				FolderID: newFolder.ID,
+				Name:     e.Name,
+				BaseURL:  e.BaseURL,
+				IsActive: e.IsActive,
+				Sort:     e.Sort,
+			}
+			db.GetDB().Create(&ne)
+		}
+	}
+
+	// 递归复制子文件夹
+	var subFolders []model.RestFolder
+	if err := db.GetDB().Where("parent_id = ?", folderID).Find(&subFolders).Error; err == nil {
+		for _, sub := range subFolders {
+			if _, err := copyFolderTree(sub.ID, newFolder.ID, false); err != nil {
+				return model.RestFolder{}, err
+			}
+		}
+	}
+
+	// 复制请求
+	var reqs []model.RestRequestModel
+	if err := db.GetDB().Where("folder_id = ?", folderID).Find(&reqs).Error; err == nil {
+		for _, r := range reqs {
+			_, err := copyRequest(r.ID, newFolder.ID, false)
+			if err != nil {
+				return model.RestFolder{}, err
+			}
+		}
+	}
+
+	return newFolder, nil
+}
+
+func copyRequest(id uint, newParentID uint, rename bool) (model.RestFolder, error) {
+	var src model.RestRequestModel
+	if err := db.GetDB().First(&src, id).Error; err != nil {
+		return model.RestFolder{}, errors.New("请求不存在")
+	}
+	copyName := src.Name
+	if rename {
+		copyName = src.Name + " (副本)"
+		for {
+			var count int64
+			db.GetDB().Model(&model.RestRequestModel{}).Where("folder_id = ? AND name = ?", newParentID, copyName).Count(&count)
+			if count == 0 {
+				break
+			}
+			copyName = src.Name + " (副本" + fmt.Sprintf(" %d", count+1) + ")"
+		}
+	}
+
+	var maxSort int
+	db.GetDB().Model(&model.RestRequestModel{}).Where("folder_id = ?", newParentID).
+		Select("COALESCE(MAX(sort), -1)").Scan(&maxSort)
+	newReq := model.RestRequestModel{
+		FolderID:         newParentID,
+		Name:             copyName,
+		Method:           src.Method,
+		URL:              src.URL,
+		BaseURL:          src.BaseURL,
+		Headers:          src.Headers,
+		Params:           src.Params,
+		Body:             src.Body,
+		RawBody:          src.RawBody,
+		FormFields:       src.FormFields,
+		UrlencodedFields: src.UrlencodedFields,
+		FormFiles:        src.FormFiles,
+		BinaryFilePath:   src.BinaryFilePath,
+		Sort:             maxSort + 1,
+	}
+	if err := db.GetDB().Create(&newReq).Error; err != nil {
+		return model.RestFolder{}, err
+	}
+	// 返回包含新请求信息的 folder（用于前端获取 id/name）
+	return model.RestFolder{
+		ID:       newReq.ID,
+		ParentID: newReq.FolderID,
+		Name:     newReq.Name,
+	}, nil
+}
 
 // MoveNode moves a folder or request to a new parent (newParentID = 0 for root).
 // Node type: "folder" for RestFolder, "request" for RestRequestModel.
@@ -1211,6 +1381,21 @@ func modelToItem(m *model.RestRequestModel) types.RestItem {
 	if params == nil {
 		params = []types.KV{}
 	}
+	var formFields []types.FormKV
+	json.Unmarshal([]byte(m.FormFields), &formFields)
+	if formFields == nil {
+		formFields = []types.FormKV{}
+	}
+	var urlencodedFields []types.FormKV
+	json.Unmarshal([]byte(m.UrlencodedFields), &urlencodedFields)
+	if urlencodedFields == nil {
+		urlencodedFields = []types.FormKV{}
+	}
+	var formFiles []types.FormFileItem
+	json.Unmarshal([]byte(m.FormFiles), &formFiles)
+	if formFiles == nil {
+		formFiles = []types.FormFileItem{}
+	}
 	effectiveBaseURL := getEffectiveBaseURL(m.FolderID)
 	folderCommonHeaders := getEffectiveCommonHeaders(m.FolderID)
 	return types.RestItem{
@@ -1225,6 +1410,11 @@ func modelToItem(m *model.RestRequestModel) types.RestItem {
 		Headers:             headers,
 		Params:              params,
 		Body:                m.Body,
+		RawBody:             m.RawBody,
+		FormFields:          formFields,
+		UrlencodedFields:    urlencodedFields,
+		FormFiles:           formFiles,
+		BinaryFilePath:      m.BinaryFilePath,
 	}
 }
 

@@ -18,6 +18,14 @@ import * as model$0 from "../../model/models.js";
 import * as types$0 from "../types/models.js";
 
 /**
+ * CopyNode deep-copies a folder or request to a new parent.
+ * Returns the new folder/request model. For folders, copies recursively.
+ */
+export function CopyNode(id: number, nodeType: string, newParentID: number): $CancellablePromise<model$0.RestFolder> {
+    return $Call.ByID(1658765833, id, nodeType, newParentID);
+}
+
+/**
  * CreateFolder creates a new folder under parentID (0 = root).
  */
 export function CreateFolder(parentID: number, name: string): $CancellablePromise<model$0.RestFolder> {

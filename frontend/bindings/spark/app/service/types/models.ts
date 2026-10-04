@@ -193,6 +193,24 @@ export interface FormFile {
 }
 
 /**
+ * FormFileItem 表示一个表单文件上传项。
+ */
+export interface FormFileItem {
+    "fieldName": string;
+    "fileName": string;
+    "filePath": string;
+}
+
+/**
+ * FormKV 表示一个带启用状态的键值对（form-fields / urlencoded-fields）。
+ */
+export interface FormKV {
+    "key": string;
+    "value": string;
+    "enabled": boolean;
+}
+
+/**
  * IpStatus reports the remote host's IPs for the terminal status bar.
  */
 export interface IpStatus {
@@ -342,7 +360,36 @@ export interface RestItem {
     "folderCommonHeaders": KV[] | null;
     "headers": KV[] | null;
     "params": KV[] | null;
+
+    /**
+     * JSON body
+     */
     "body": string;
+
+    /**
+     * raw text body
+     */
+    "rawBody": string;
+
+    /**
+     * form-data fields
+     */
+    "formFields": FormKV[] | null;
+
+    /**
+     * urlencoded fields
+     */
+    "urlencodedFields": FormKV[] | null;
+
+    /**
+     * form-data file uploads
+     */
+    "formFiles": FormFileItem[] | null;
+
+    /**
+     * binary file path
+     */
+    "binaryFilePath": string;
 }
 
 /**
@@ -458,6 +505,11 @@ export interface RestSaveRequest {
     "headers": KV[] | null;
     "params": KV[] | null;
     "body": string;
+    "rawBody": string;
+    "formFields": FormKV[] | null;
+    "urlencodedFields": FormKV[] | null;
+    "formFiles": FormFileItem[] | null;
+    "binaryFilePath": string;
 }
 
 /**

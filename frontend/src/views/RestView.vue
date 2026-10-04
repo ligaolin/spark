@@ -14,10 +14,12 @@
                     </div>
 
                     <div class="sidebar-tree" @contextmenu.prevent="onTreeContext">
-                        <el-tree ref="treeRef" :data="treeData" node-key="id"
+                        <el-tree ref="treeRef" :data="treeData" node-key="nodeKey"
                             :props="{ label: 'name', children: 'children', isLeaf: 'leaf' }" highlight-current
                             :expand-on-click-node="true" lazy :load="loadNode" :filter-node-method="filterTreeNode"
-                            @node-click="onNodeClick" @node-contextmenu="onNodeContext" empty-text="暂无请求，右键新建">
+                            draggable :allow-drag="allowDrag" :allow-drop="allowDrop"
+                            @node-click="onNodeClick" @node-contextmenu="onNodeContext"
+                            @node-drag-end="onNodeDragEnd" empty-text="暂无请求，右键新建">
                             <template #default="{ data }">
                                 <span class="tree-node">
                                     <el-icon :color="data.type === 'folder' ? '#e6c06c' : ''">
@@ -158,6 +160,7 @@
                                         <div class="body-type-bar">
                                             <el-radio-group v-model="bodyType" size="small">
                                                 <el-radio-button value="json">JSON</el-radio-button>
+                                                <el-radio-button value="raw">Raw</el-radio-button>
                                                 <el-radio-button value="form">Form-Data</el-radio-button>
                                                 <el-radio-button value="urlencoded">Urlencoded</el-radio-button>
                                                 <el-radio-button value="binary">Binary</el-radio-button>
@@ -171,6 +174,9 @@
                                         </div>
                                         <div class="code-wrap" v-if="bodyType === 'json'">
                                             <CodeEditor ref="bodyEditorRef" filename="request.json" wrap />
+                                        </div>
+                                        <div class="code-wrap" v-else-if="bodyType === 'raw'">
+                                            <CodeEditor ref="rawBodyEditorRef" filename="request.txt" wrap />
                                         </div>
                                         <div class="kv-editor" v-else-if="bodyType === 'urlencoded'">
                                             <div class="kv-row" v-for="(row, i) in urlencodedFields" :key="'u' + i">
@@ -225,11 +231,18 @@
                         <el-splitter-panel :min="120">
                             <div class="rest-response">
                                 <div class="response-status-bar" v-if="response">
-                                    <el-tag :type="statusTagType" size="large" effect="dark">
+                                    <el-tag :type="statusTagType" size="small" effect="dark">
                                         {{ response.status }} {{ response.statusText }}
                                     </el-tag>
                                     <span class="response-duration">{{ response.duration }} ms</span>
                                     <span class="response-size">{{ formatSize(response.body?.length || 0) }}</span>
+                                    <el-button v-if="sseTimer || sseStopped" size="small" text
+                                        :type="sseStopped ? 'info' : 'danger'"
+                                        :title="sseStopped ? '流式数据接收已停止' : '停止接收流式数据'"
+                                        :disabled="sseStopped"
+                                        @click="stopStreaming">
+                                        <el-icon><CloseBold /></el-icon> {{ sseStopped ? '已停止' : '停止' }}
+                                    </el-button>
                                     <el-button v-if="isHtmlResponse" size="small" text class="html-toggle"
                                         @click="htmlPreview = !htmlPreview">
                                         {{ htmlPreview ? '查看源码' : '页面预览' }}
@@ -497,7 +510,7 @@
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Events } from '@wailsio/runtime'
-import { Delete, Select, Plus, Promotion, Setting, Connection, Folder, Download, CopyDocument, MoreFilled, TrendCharts, Search, InfoFilled, Document, Lock, MagicStick } from '@element-plus/icons-vue'
+import { Delete, Select, Plus, Promotion, Setting, Connection, Folder, Download, CopyDocument, MoreFilled, TrendCharts, Search, InfoFilled, Document, Lock, MagicStick, Refresh, CloseBold, Edit } from '@element-plus/icons-vue'
 import CodeEditor from '../components/CodeEditor.vue'
 import { useSettingsStore } from '../stores/settings'
 import ContextMenu from '../components/ContextMenu.vue'
@@ -505,7 +518,7 @@ import type { CtxItem } from '../components/ContextMenu.vue'
 import { EVENTS } from '../utils/wails'
 import { stripJsonComments } from '../utils/monaco'
 import * as RestService from '../../bindings/spark/app/service/rest/restservice.js'
-import type { RestRequest, RestResponse, StressTestRequest, StressTestResult } from '../../bindings/spark/app/service/types/models.js'
+import type { RestRequest, RestResponse, StressTestRequest, StressTestResult, FormKV } from '../../bindings/spark/app/service/types/models.js'
 
 interface StressProgress {
     current: number
@@ -519,6 +532,7 @@ interface KV {
 }
 
 interface TreeNode {
+    nodeKey: string
     id: number
     parentId: number
     name: string
@@ -562,6 +576,7 @@ const saving = ref(false)
 const response = ref<RestResponse | null>(null)
 const responseSeq = ref(0)
 const bodyEditorRef = ref<InstanceType<typeof CodeEditor> | null>(null)
+const rawBodyEditorRef = ref<InstanceType<typeof CodeEditor> | null>(null)
 const respEditorRef = ref<InstanceType<typeof CodeEditor> | null>(null)
 
 // 树
@@ -579,6 +594,9 @@ const ctxX = ref(0)
 const ctxY = ref(0)
 const ctxNode = ref<TreeNode | null>(null)
 const ctxItems = ref<(CtxItem | 'divider')[]>([])
+
+// 复制/粘贴
+const copiedNode = ref<TreeNode | null>(null)
 
 // 压力测试
 const showStressDialog = ref(false)
@@ -607,10 +625,27 @@ const isHtmlResponse = computed(() => {
     return ct.includes('html')
 })
 
-// Body 类型（JSON / Form-Data / Form-Urlencoded / Binary）
-const bodyType = ref<'json' | 'form' | 'urlencoded' | 'binary'>('json')
-const formFields = ref<KV[]>([])
-const urlencodedFields = ref<KV[]>([])
+// Body 类型（JSON / Raw / Form-Data / Form-Urlencoded / Binary）
+const bodyType = ref<'json' | 'raw' | 'form' | 'urlencoded' | 'binary'>('json')
+const rawBody = ref('')
+
+// 切换 body 类型时，保存旧编辑器内容、恢复新编辑器内容
+watch(bodyType, (newType, oldType) => {
+    if (oldType === 'json') {
+        current.value.body = bodyEditorRef.value?.getContent() ?? current.value.body
+    } else if (oldType === 'raw') {
+        rawBody.value = rawBodyEditorRef.value?.getContent() ?? rawBody.value
+    }
+    nextTick(() => {
+        if (newType === 'json') {
+            bodyEditorRef.value?.setContent(current.value.body)
+        } else if (newType === 'raw') {
+            rawBodyEditorRef.value?.setContent(rawBody.value)
+        }
+    })
+})
+const formFields = ref<FormKV[]>([])
+const urlencodedFields = ref<FormKV[]>([])
 const formFiles = ref<{ fieldName: string; fileName: string; filePath: string }[]>([])
 const binaryFilePath = ref('')
 
@@ -629,6 +664,15 @@ function onRequestResize(newSize: number) {
 // SSE streaming
 const sseContent = ref('')
 let sseTimer: ReturnType<typeof setInterval> | null = null
+const sseStopped = ref(false)
+
+function stopStreaming() {
+    if (sseTimer) {
+        clearInterval(sseTimer)
+        sseTimer = null
+    }
+    sseStopped.value = true
+}
 
 // WebSocket
 const wsConnected = ref(false)
@@ -748,9 +792,11 @@ onMounted(async () => {
     await settings.load()
     current.value.insecure = settings.restInsecureSkipVerify
     await loadRoot()
+    document.addEventListener('keydown', onKeyDown)
 })
 
 onBeforeUnmount(() => {
+    document.removeEventListener('keydown', onKeyDown)
     unWsMsg?.()
     unWsMsg = null
     if (wsConnId.value) {
@@ -759,10 +805,7 @@ onBeforeUnmount(() => {
 })
 
 onDeactivated(() => {
-    if (sseTimer) {
-        clearInterval(sseTimer)
-        sseTimer = null
-    }
+    stopStreaming()
     unWsMsg?.()
     unWsMsg = null
     if (wsConnId.value) {
@@ -797,7 +840,9 @@ async function loadNode(
 }
 
 function toTreeNode(n: any): TreeNode {
+    const nodeKey = (n.type || 'unknown') + '-' + n.id
     return {
+        nodeKey,
         id: n.id,
         parentId: n.parentId,
         name: n.name,
@@ -813,14 +858,18 @@ function toTreeNode(n: any): TreeNode {
 }
 
 function selectedNode(): TreeNode | null {
-    const id = treeRef.value?.getCurrentKey?.()
-    if (id == null) return null
-    return findNodeById(id)
+    const key = treeRef.value?.getCurrentKey?.()
+    if (key == null) return null
+    return findNodeByKey(String(key))
 }
 
-function findNodeById(id: number): TreeNode | null {
-    const node = treeRef.value?.getNode(id)
+function findNodeByKey(key: string): TreeNode | null {
+    const node = treeRef.value?.getNode(key)
     return node?.data ?? null
+}
+
+function makeNodeKey(type: string, id: number): string {
+    return type + '-' + id
 }
 
 async function reloadParent(parentId: number) {
@@ -830,7 +879,7 @@ async function reloadParent(parentId: number) {
         if (parentId === 0) {
             treeData.value = children
         } else {
-            treeRef.value?.updateKeyChildren(parentId, children)
+            treeRef.value?.updateKeyChildren(makeNodeKey('folder', parentId), children)
         }
     } catch (e: any) {
         ElMessage.error('刷新失败: ' + (e?.message || e))
@@ -839,6 +888,9 @@ async function reloadParent(parentId: number) {
 
 function onNodeClick(data: TreeNode) {
     if (data.type === 'request') {
+        stopStreaming()
+        response.value = null
+        responseSeq.value++
         loadRequest(data)
     }
 }
@@ -860,6 +912,67 @@ function onTreeContext(event: MouseEvent) {
     onBlankContext(event)
 }
 
+function allowDrag(node: any): boolean {
+    return true
+}
+
+function allowDrop(draggingNode: any, dropNode: any, type: string): boolean {
+    const dragData: TreeNode = draggingNode.data
+    const dropData: TreeNode = dropNode.data
+    if (type === 'inner' && dropData.type !== 'folder') {
+        return false
+    }
+    if (dragData.type === 'folder' && dropData.type === 'folder') {
+        if (dragData.id === dropData.id) return false
+    }
+    return true
+}
+
+async function onNodeDragEnd(
+    draggingNode: any,
+    dropNode: any,
+    dropType: string,
+) {
+    const dragData: TreeNode = draggingNode.data
+    const dropData: TreeNode = dropNode.data
+
+    let newParentId: number
+    let targetId: number
+    let position: string
+
+    if (dropType === 'inner') {
+        newParentId = dropData.id
+        targetId = 0
+        position = 'after'
+    } else if (dropType === 'before') {
+        newParentId = dropData.parentId
+        targetId = dropData.id
+        position = 'before'
+    } else {
+        newParentId = dropData.parentId
+        targetId = dropData.id
+        position = 'after'
+    }
+
+    if (dragData.type === 'folder' && newParentId === dragData.id) {
+        ElMessage.warning('不能移动到自身')
+        await reloadParent(dragData.parentId)
+        return
+    }
+
+    try {
+        await RestService.MoveNode(dragData.id, dragData.type, newParentId, targetId, position)
+        await reloadParent(dragData.parentId)
+        if (newParentId !== dragData.parentId) {
+            await reloadParent(newParentId)
+        }
+    } catch (e: any) {
+        ElMessage.error('移动失败: ' + (e?.message || e))
+        await reloadParent(dragData.parentId)
+        await reloadParent(newParentId)
+    }
+}
+
 function onBlankContext(event: MouseEvent) {
     event.preventDefault()
     ctxNode.value = null
@@ -867,6 +980,12 @@ function onBlankContext(event: MouseEvent) {
         { key: 'new-folder', label: '新建文件夹', icon: Folder },
         { key: 'new-request', label: '新建请求', icon: Plus },
     ]
+    if (copiedNode.value) {
+        ctxItems.value.push('divider')
+        ctxItems.value.push({ key: 'paste', label: '粘贴' + (copiedNode.value.name ? '「' + copiedNode.value.name + '」' : ''), icon: CopyDocument })
+    }
+    ctxItems.value.push('divider')
+    ctxItems.value.push({ key: 'refresh', label: '刷新', icon: Refresh })
     openCtx(event)
 }
 
@@ -878,10 +997,32 @@ function buildCtx(data: TreeNode): (CtxItem | 'divider')[] {
         items.push('divider')
         items.push({ key: 'set-folder-env', label: '设置环境', icon: Setting })
         items.push('divider')
+        if (copiedNode.value) {
+            const canPaste = !isDescendantOf(data, copiedNode.value)
+            items.push({ key: 'paste', label: '粘贴到此处', icon: CopyDocument, disabled: !canPaste,
+                hint: canPaste ? '' : '不能粘贴到自己的下级' })
+            items.push('divider')
+        }
+        items.push({ key: 'refresh', label: '刷新', icon: Refresh })
+    } else {
+        items.push({ key: 'new-folder-in-parent', label: '新建文件夹', icon: Folder })
+        items.push({ key: 'new-request-in-parent', label: '新建请求', icon: Plus })
+        items.push('divider')
+        if (copiedNode.value) {
+            items.push({ key: 'paste-into-parent', label: '粘贴到同级', icon: CopyDocument })
+            items.push('divider')
+        }
     }
-    items.push({ key: 'rename', label: '重命名', icon: 'Edit' })
+    items.push({ key: 'copy', label: '复制', icon: CopyDocument })
+    items.push({ key: 'rename', label: '重命名', icon: Edit })
     items.push({ key: 'delete', label: '删除', icon: Delete, danger: true })
     return items
+}
+
+function isDescendantOf(parent: TreeNode, child: TreeNode): boolean {
+    if (parent.type !== 'folder') return false
+    if (child.type !== 'folder') return false
+    return parent.id === child.id
 }
 
 function openCtx(event: MouseEvent) {
@@ -897,24 +1038,71 @@ async function onCtxPick(item: CtxItem) {
     const target = ctxNode.value
     switch (item.key) {
         case 'new-folder': {
-            const parentId = target && target.type === 'folder' ? target.id : 0
+            const parentId = target && target.type === 'folder' ? target.id : (target ? target.parentId : 0)
             await createFolder(parentId)
             break
         }
         case 'new-request': {
-            const parentId = target && target.type === 'folder' ? target.id : 0
+            const parentId = target && target.type === 'folder' ? target.id : (target ? target.parentId : 0)
+            await createRequest(parentId)
+            break
+        }
+        case 'new-folder-in-parent': {
+            const parentId = target ? target.parentId : 0
+            await createFolder(parentId)
+            break
+        }
+        case 'new-request-in-parent': {
+            const parentId = target ? target.parentId : 0
             await createRequest(parentId)
             break
         }
         case 'set-folder-env':
             if (target) openEnvEditor(target)
             break
+        case 'refresh':
+            await reloadParent(target ? target.id : 0)
+            break
+        case 'copy':
+            if (target) {
+                copiedNode.value = { ...target }
+                ElMessage.success('已复制，可在目标位置右键粘贴')
+            }
+            break
+        case 'paste': {
+            if (!copiedNode.value) break
+            const parentId = target && target.type === 'folder' ? target.id : 0
+            if (copiedNode.value.type === 'folder' && target && target.type === 'folder' &&
+                isDescendantOf(target, copiedNode.value)) {
+                ElMessage.warning('不能粘贴到自己的下级')
+                break
+            }
+            await pasteNode(parentId)
+            break
+        }
+        case 'paste-into-parent': {
+            if (!copiedNode.value) break
+            const parentId = target ? target.parentId : 0
+            await pasteNode(parentId)
+            break
+        }
         case 'rename':
             if (target) await renameNode(target)
             break
         case 'delete':
             if (target) await deleteNode(target)
             break
+    }
+}
+
+async function pasteNode(parentId: number) {
+    if (!copiedNode.value) return
+    try {
+        await RestService.CopyNode(copiedNode.value.id, copiedNode.value.type, parentId)
+        await reloadParent(parentId)
+        ElMessage.success('粘贴成功')
+    } catch (e: any) {
+        ElMessage.error('粘贴失败: ' + (e?.message || e))
     }
 }
 
@@ -1003,8 +1191,20 @@ async function loadRequest(node: TreeNode) {
             ? JSON.parse(JSON.stringify(item.params)).map((p: KV) => ({ enabled: true, ...p }))
             : []
         current.value.body = item.body || ''
+        rawBody.value = item.rawBody || ''
+        formFields.value = item.formFields
+            ? JSON.parse(JSON.stringify(item.formFields))
+            : []
+        urlencodedFields.value = item.urlencodedFields
+            ? JSON.parse(JSON.stringify(item.urlencodedFields))
+            : []
+        formFiles.value = item.formFiles
+            ? JSON.parse(JSON.stringify(item.formFiles))
+            : []
+        binaryFilePath.value = item.binaryFilePath || ''
         await nextTick()
         bodyEditorRef.value?.setContent(item.body || '')
+        rawBodyEditorRef.value?.setContent(item.rawBody || '')
     } catch (e: any) {
         ElMessage.error('加载请求失败: ' + (e?.message || e))
     }
@@ -1030,12 +1230,12 @@ async function saveCurrentRequest() {
         try {
             const created = await RestService.CreateRequest(targetFolderId, targetName!)
             await reloadParent(targetFolderId)
-            targetNode = findNodeById(created.id)
+            targetNode = findNodeByKey(makeNodeKey('request', created.id))
             if (targetNode) {
                 editingNode.value = targetNode
                 editingRequestId.value = created.id
                 await nextTick()
-                treeRef.value?.setCurrentKey(created.id)
+                treeRef.value?.setCurrentKey(targetNode.nodeKey)
             }
         } catch (e: any) {
             ElMessage.error('创建请求失败: ' + (e?.message || e))
@@ -1045,8 +1245,13 @@ async function saveCurrentRequest() {
 
     saving.value = true
     try {
-        const body = bodyEditorRef.value?.getContent() ?? current.value.body
-        current.value.body = body
+        // 同步当前编辑器内容到对应的数据变量
+        if (bodyType.value === 'json') {
+            current.value.body = bodyEditorRef.value?.getContent() ?? current.value.body
+        } else if (bodyType.value === 'raw') {
+            rawBody.value = rawBodyEditorRef.value?.getContent() ?? rawBody.value
+        }
+        // 全部 body 类型一起保存
         await RestService.SaveRequest({
             id: editingRequestId.value,
             folderId: editingNode.value!.parentId,
@@ -1057,12 +1262,26 @@ async function saveCurrentRequest() {
             headers: current.value.headers,
             params: current.value.params,
             body: current.value.body,
+            rawBody: rawBody.value,
+            formFields: formFields.value,
+            urlencodedFields: urlencodedFields.value,
+            formFiles: formFiles.value,
+            binaryFilePath: binaryFilePath.value,
         })
         ElMessage.success('保存成功')
     } catch (e: any) {
         ElMessage.error('保存失败: ' + (e?.message || e))
     } finally {
         saving.value = false
+    }
+}
+
+function onKeyDown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault()
+        if (editingRequestId.value) {
+            saveCurrentRequest()
+        }
     }
 }
 
@@ -1076,7 +1295,13 @@ function resetEditor() {
     current.value.headers = []
     current.value.params = []
     current.value.body = ''
+    rawBody.value = ''
+    formFields.value = []
+    urlencodedFields.value = []
+    formFiles.value = []
+    binaryFilePath.value = ''
     bodyEditorRef.value?.setContent('')
+    rawBodyEditorRef.value?.setContent('')
 }
 
 // ========== 设置环境（目录右键：基础链接 + 公共请求头） ==========
@@ -1248,14 +1473,21 @@ async function send() {
         return
     }
 
-    const body = bodyEditorRef.value?.getContent() ?? current.value.body
-    current.value.body = body
+    let body = current.value.body
+    if (bodyType.value === 'json') {
+        body = bodyEditorRef.value?.getContent() ?? current.value.body
+        current.value.body = body
+    } else if (bodyType.value === 'raw') {
+        body = rawBodyEditorRef.value?.getContent() ?? rawBody.value
+    }
 
     const headers = buildHeaders()
 
     let reqBody = ''
     if (bodyType.value === 'json') {
         reqBody = stripJsonComments(body)
+    } else if (bodyType.value === 'raw') {
+        reqBody = body
     } else if (bodyType.value === 'urlencoded') {
         reqBody = urlencodedFields.value
             .filter((f) => f.key && f.enabled !== false)
@@ -1296,6 +1528,7 @@ async function send() {
         }
         if (resp.streaming && resp.streamId) {
             if (sseTimer) clearInterval(sseTimer)
+            sseStopped.value = false
             sseTimer = setInterval(async () => {
                 try {
                     const chunk = await RestService.ReadStreamChunks(resp.streamId!)
@@ -1304,7 +1537,7 @@ async function send() {
                         responseSeq.value++
                     }
                     if (chunk.done) {
-                        if (sseTimer) { clearInterval(sseTimer); sseTimer = null }
+                        stopStreaming()
                     }
                 } catch { }
             }, 150)
@@ -1642,8 +1875,9 @@ function jsQuote(s: string): string {
 }
 
 function getCleanBody(): string {
-    const body = current.value.body || ''
+    let body = current.value.body || ''
     if (bodyType.value === 'json') {
+        body = bodyEditorRef.value?.getContent() ?? current.value.body
         let cleaned = stripJsonComments(body)
         try {
             cleaned = JSON.stringify(JSON.parse(cleaned))
@@ -1651,6 +1885,9 @@ function getCleanBody(): string {
             /* 解析失败则保留清理后的原文 */
         }
         return cleaned
+    }
+    if (bodyType.value === 'raw') {
+        return rawBodyEditorRef.value?.getContent() ?? rawBody.value
     }
     return body
 }
@@ -1866,8 +2103,13 @@ async function runStress() {
         return
     }
 
-    const body = bodyEditorRef.value?.getContent() ?? current.value.body
-    current.value.body = body
+    let body = current.value.body
+    if (bodyType.value === 'json') {
+        body = bodyEditorRef.value?.getContent() ?? current.value.body
+        current.value.body = body
+    } else if (bodyType.value === 'raw') {
+        body = rawBodyEditorRef.value?.getContent() ?? rawBody.value
+    }
 
     stressResult.value = null
     stressRunning.value = true
@@ -1887,7 +2129,7 @@ async function runStress() {
             method: current.value.method,
             url,
             headers: buildHeaders(),
-            body: current.value.body || '',
+            body: body || '',
             timeout: stressForm.value.timeout,
             concurrency: stressForm.value.concurrency,
             total: stressForm.value.total,

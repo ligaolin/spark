@@ -45,18 +45,23 @@ func (*RestFolderEnv) TableName() string {
 // RestRequestModel is a saved REST request. Each request lives under a folder
 // (FolderID). The request body, headers, and params are stored as JSON text.
 type RestRequestModel struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	FolderID  uint      `gorm:"column:folder_id;index" json:"folderId"` // 0 = root level (no folder)
-	Name      string    `gorm:"column:name" json:"name"`
-	Method    string    `gorm:"column:method" json:"method"`    // GET | POST | PUT | DELETE | PATCH | HEAD | OPTIONS
-	URL       string    `gorm:"column:url" json:"url"`          // path relative to folder base URL, or absolute
-	BaseURL   string    `gorm:"column:base_url" json:"baseUrl"` // 该请求专属的基础链接（覆盖文件夹设置，为空则继承上级）
-	Headers   string    `gorm:"column:headers" json:"headers"`  // JSON: [{"key":"...","value":"..."}]
-	Params    string    `gorm:"column:params" json:"params"`    // JSON: [{"key":"...","value":"..."}]
-	Body      string    `gorm:"column:body" json:"body"`
-	Sort      int       `gorm:"column:sort" json:"sort"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID               uint      `gorm:"primaryKey" json:"id"`
+	FolderID         uint      `gorm:"column:folder_id;index" json:"folderId"` // 0 = root level (no folder)
+	Name             string    `gorm:"column:name" json:"name"`
+	Method           string    `gorm:"column:method" json:"method"`                      // GET | POST | PUT | DELETE | PATCH | HEAD | OPTIONS
+	URL              string    `gorm:"column:url" json:"url"`                            // path relative to folder base URL, or absolute
+	BaseURL          string    `gorm:"column:base_url" json:"baseUrl"`                   // 该请求专属的基础链接（覆盖文件夹设置，为空则继承上级）
+	Headers          string    `gorm:"column:headers" json:"headers"`                    // JSON: [{"key":"...","value":"..."}]
+	Params           string    `gorm:"column:params" json:"params"`                      // JSON: [{"key":"...","value":"..."}]
+	Body             string    `gorm:"column:body" json:"body"`                          // JSON body
+	RawBody          string    `gorm:"column:raw_body" json:"rawBody"`                   // raw text body (XML / plain / etc.)
+	FormFields       string    `gorm:"column:form_fields" json:"formFields"`             // JSON: [{"key":"...","value":"...","enabled":true}]
+	UrlencodedFields string    `gorm:"column:urlencoded_fields" json:"urlencodedFields"` // JSON: [{"key":"...","value":"...","enabled":true}]
+	FormFiles        string    `gorm:"column:form_files" json:"formFiles"`               // JSON: [{"fieldName":"...","fileName":"...","filePath":"..."}]
+	BinaryFilePath   string    `gorm:"column:binary_file_path" json:"binaryFilePath"`    // binary file path
+	Sort             int       `gorm:"column:sort" json:"sort"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 func (*RestRequestModel) TableName() string {

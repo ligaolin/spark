@@ -134,7 +134,36 @@ export interface RestRequestModel {
      * JSON: [{"key":"...","value":"..."}]
      */
     "params": string;
+
+    /**
+     * JSON body
+     */
     "body": string;
+
+    /**
+     * raw text body (XML / plain / etc.)
+     */
+    "rawBody": string;
+
+    /**
+     * JSON: [{"key":"...","value":"...","enabled":true}]
+     */
+    "formFields": string;
+
+    /**
+     * JSON: [{"key":"...","value":"...","enabled":true}]
+     */
+    "urlencodedFields": string;
+
+    /**
+     * JSON: [{"fieldName":"...","fileName":"...","filePath":"..."}]
+     */
+    "formFiles": string;
+
+    /**
+     * binary file path
+     */
+    "binaryFilePath": string;
     "sort": number;
     "createdAt": string;
     "updatedAt": string;

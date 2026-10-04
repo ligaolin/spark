@@ -398,6 +398,20 @@ type KV struct {
 	Value string `json:"value"`
 }
 
+// FormKV 表示一个带启用状态的键值对（form-fields / urlencoded-fields）。
+type FormKV struct {
+	Key     string `json:"key"`
+	Value   string `json:"value"`
+	Enabled bool   `json:"enabled"`
+}
+
+// FormFileItem 表示一个表单文件上传项。
+type FormFileItem struct {
+	FieldName string `json:"fieldName"`
+	FileName  string `json:"fileName"`
+	FilePath  string `json:"filePath"`
+}
+
 // RestNode is a node in the REST tree returned to the frontend.
 // Folders and requests are mixed; the frontend distinguishes them by Type.
 type RestNode struct {
@@ -417,17 +431,22 @@ type RestNode struct {
 // RestItem is the full content of a saved REST request returned to the frontend
 // for editing / sending.
 type RestItem struct {
-	ID                  uint   `json:"id"`
-	FolderID            uint   `json:"folderId"`
-	Name                string `json:"name"`
-	Method              string `json:"method"`
-	URL                 string `json:"url"`
-	BaseURL             string `json:"baseUrl"`             // 该请求专属的基础链接（为空则继承上级）
-	EffectiveBaseURL    string `json:"effectiveBaseUrl"`    // 最终生效的基础链接（遍历文件夹层级取最近的非空值）
-	FolderCommonHeaders []KV   `json:"folderCommonHeaders"` // 文件夹层级合并的公共请求头
-	Headers             []KV   `json:"headers"`
-	Params              []KV   `json:"params"`
-	Body                string `json:"body"`
+	ID                  uint           `json:"id"`
+	FolderID            uint           `json:"folderId"`
+	Name                string         `json:"name"`
+	Method              string         `json:"method"`
+	URL                 string         `json:"url"`
+	BaseURL             string         `json:"baseUrl"`             // 该请求专属的基础链接（为空则继承上级）
+	EffectiveBaseURL    string         `json:"effectiveBaseUrl"`    // 最终生效的基础链接（遍历文件夹层级取最近的非空值）
+	FolderCommonHeaders []KV           `json:"folderCommonHeaders"` // 文件夹层级合并的公共请求头
+	Headers             []KV           `json:"headers"`
+	Params              []KV           `json:"params"`
+	Body                string         `json:"body"`             // JSON body
+	RawBody             string         `json:"rawBody"`          // raw text body
+	FormFields          []FormKV       `json:"formFields"`       // form-data fields
+	UrlencodedFields    []FormKV       `json:"urlencodedFields"` // urlencoded fields
+	FormFiles           []FormFileItem `json:"formFiles"`        // form-data file uploads
+	BinaryFilePath      string         `json:"binaryFilePath"`   // binary file path
 }
 
 // RestFolderEnvItem is a named base URL entry for a folder.
@@ -451,15 +470,20 @@ type RestSaveFolderEnv struct {
 
 // RestSaveRequest is used to save/update a request from the frontend.
 type RestSaveRequest struct {
-	ID       uint   `json:"id"`
-	FolderID uint   `json:"folderId"`
-	Name     string `json:"name"`
-	Method   string `json:"method"`
-	URL      string `json:"url"`
-	BaseURL  string `json:"baseUrl"`
-	Headers  []KV   `json:"headers"`
-	Params   []KV   `json:"params"`
-	Body     string `json:"body"`
+	ID               uint           `json:"id"`
+	FolderID         uint           `json:"folderId"`
+	Name             string         `json:"name"`
+	Method           string         `json:"method"`
+	URL              string         `json:"url"`
+	BaseURL          string         `json:"baseUrl"`
+	Headers          []KV           `json:"headers"`
+	Params           []KV           `json:"params"`
+	Body             string         `json:"body"`
+	RawBody          string         `json:"rawBody"`
+	FormFields       []FormKV       `json:"formFields"`
+	UrlencodedFields []FormKV       `json:"urlencodedFields"`
+	FormFiles        []FormFileItem `json:"formFiles"`
+	BinaryFilePath   string         `json:"binaryFilePath"`
 }
 
 // StressTestRequest is the input for the stress-test runner.

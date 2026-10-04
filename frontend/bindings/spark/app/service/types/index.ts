@@ -14,6 +14,8 @@ export type {
     DiskInfo,
     FileEntry,
     FormFile,
+    FormFileItem,
+    FormKV,
     IpStatus,
     KV,
     NetInterface,
