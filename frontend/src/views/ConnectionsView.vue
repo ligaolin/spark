@@ -3,6 +3,8 @@
         <div class="conn-head">
             <span class="conn-title">连接管理</span>
             <div class="head-actions">
+                <el-input v-model="keyword" size="small" placeholder="搜索名称 / IP" clearable class="conn-search" />
+                <span v-if="keyword.trim()" class="conn-filter-hint">匹配 {{ filteredList.length }} 条</span>
                 <el-button size="small" @click="openHostKeys">
                     <el-icon style="margin-right: 4px">
                         <Key />
@@ -85,7 +87,7 @@
                         <el-alert v-if="undecryptedCount > 0" type="warning" :closable="false" show-icon class="decrypt-warn"
                             :title="`${undecryptedCount} 个连接的密码无法解密（可能同步密钥不匹配，或数据来自设置了其他密钥的机器）`"
                             description="请在「设置 → 数据库」确认同步密钥与来源机器一致；或编辑这些连接重新填写密码（保存后会用当前密钥重新加密）。" />
-                        <el-table :data="filteredList" size="small" :loading="connStore.loading" empty-text="还没有保存的连接">
+                        <el-table :data="filteredList" size="small" :loading="connStore.loading" :empty-text="emptyText">
                             <el-table-column label="名称">
                                 <template #default="{ row }">
                                     <span class="conn-name">{{ row.name }}</span>
@@ -233,10 +235,29 @@ const undecryptedCount = computed(
 
 const selectedGroup = ref<string>(ALL)
 
+// 关键词搜索：按名称或主机地址（IP）
+const keyword = ref('')
+
+function matchesKeyword(c: SavedConnection, kw: string) {
+    // 支持「host:port」写法，例如 10.0.0.1:22
+    const haystack = `${c.name} ${c.host} ${c.host}:${c.port}`.toLowerCase()
+    return haystack.includes(kw)
+}
+
 const filteredList = computed(() => {
-    if (selectedGroup.value === ALL) return connStore.list
-    if (selectedGroup.value === NONE) return connStore.list.filter((c) => !c.group)
-    return connStore.list.filter((c) => c.group === selectedGroup.value)
+    let base = connStore.list
+    if (selectedGroup.value === NONE) base = base.filter((c) => !c.group)
+    else if (selectedGroup.value !== ALL) base = base.filter((c) => c.group === selectedGroup.value)
+    const kw = keyword.value.trim().toLowerCase()
+    if (!kw) return base
+    return base.filter((c) => matchesKeyword(c, kw))
+})
+
+const emptyText = computed(() => {
+    const kw = keyword.value.trim()
+    if (kw) return `没有连接名称或地址匹配「${kw}」`
+    if (selectedGroup.value !== ALL) return '当前分组无连接'
+    return '还没有保存的连接'
 })
 
 const noneCount = computed(() => connStore.list.filter((c) => !c.group).length)
@@ -523,6 +544,20 @@ function escapeHtml(s: string) {
 .conn-title {
     font-size: 15px;
     font-weight: 600;
+}
+
+.conn-search {
+    flex-grow: 0;
+    flex-shrink: 1;
+    flex-basis: 200px;
+    min-width: 120px;
+}
+
+.conn-filter-hint {
+    flex-shrink: 0;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    white-space: nowrap;
 }
 
 .conn-body {
