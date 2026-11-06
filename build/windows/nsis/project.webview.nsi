@@ -21,6 +21,7 @@
 ## !define WAILS_INSTALL_SCOPE     "user"             # Default "machine" - set to "user" for per-user install
 ####
 !include "wails_tools.nsh"
+!include "app_running.nsh"
 
 # 按架构选择内置的 WebView2 离线安装包文件名（ARCH 由 wails_tools.nsh 根据
 # ARG_WAILS_AMD64_BINARY / ARG_WAILS_ARM64_BINARY 自动定义）
@@ -35,7 +36,7 @@ VIProductVersion "${INFO_PRODUCTVERSION}.0"
 VIFileVersion    "${INFO_PRODUCTVERSION}.0"
 
 VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
-VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer (WebView2)"
+VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} 安装程序（内置 WebView2）"
 VIAddVersionKey "ProductVersion"  "${INFO_PRODUCTVERSION}"
 VIAddVersionKey "FileVersion"     "${INFO_PRODUCTVERSION}"
 VIAddVersionKey "LegalCopyright"  "${INFO_COPYRIGHT}"
@@ -58,7 +59,7 @@ ManifestDPIAware true
 
 !insertmacro MUI_UNPAGE_INSTFILES
 
-!insertmacro MUI_LANGUAGE "English"
+!insertmacro MUI_LANGUAGE "SimpChinese"
 
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\..\bin\${INFO_PROJECTNAME}-${ARCH}-webview-installer.exe"
@@ -71,6 +72,7 @@ ShowInstDetails show
 
 Function .onInit
    !insertmacro wails.checkArchitecture
+   !insertmacro spark.ensureAppNotRunning
 FunctionEnd
 
 # 离线安装 WebView2：先检查是否已装，没有则运行内置的 Standalone 安装包。

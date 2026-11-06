@@ -34,13 +34,14 @@
 ## Include the wails tools
 ####
 !include "wails_tools.nsh"
+!include "app_running.nsh"
 
 # The version information for this two must consist of 4 parts
 VIProductVersion "${INFO_PRODUCTVERSION}.0"
 VIFileVersion    "${INFO_PRODUCTVERSION}.0"
 
 VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
-VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer"
+VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} 安装程序"
 VIAddVersionKey "ProductVersion"  "${INFO_PRODUCTVERSION}"
 VIAddVersionKey "FileVersion"     "${INFO_PRODUCTVERSION}"
 VIAddVersionKey "LegalCopyright"  "${INFO_COPYRIGHT}"
@@ -65,7 +66,7 @@ ManifestDPIAware true
 
 !insertmacro MUI_UNPAGE_INSTFILES # Uninstalling page
 
-!insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
+!insertmacro MUI_LANGUAGE "SimpChinese" # 安装向导使用简体中文
 
 ## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
 #!uninstfinalize 'signtool --file "%1"'
@@ -82,6 +83,7 @@ ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
    !insertmacro wails.checkArchitecture
+   !insertmacro spark.ensureAppNotRunning
 FunctionEnd
 
 Section
