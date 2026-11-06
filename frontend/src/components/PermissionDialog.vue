@@ -16,8 +16,10 @@
       <div class="perm-bottom">
         <el-input v-model="octal" class="perm-octal" maxlength="4" @change="onOctalChange" />
         <span class="perm-text">权限，所有者</span>
-        <el-select :model-value="owner || '当前用户'" class="perm-owner" disabled>
-          <el-option :label="owner || '当前用户'" :value="owner || '当前用户'" />
+        <el-select v-model="ownerUid" class="perm-owner" filterable :loading="ownerLoading"
+          :disabled="!canChangeOwner" :placeholder="owner || '保持不变'">
+          <el-option :label="owner ? `保持不变（${owner}）` : '保持不变'" :value="-1" />
+          <el-option v-for="u in users" :key="u.name" :label="`${u.name}（${u.uid}）`" :value="u.uid" />
         </el-select>
         <el-checkbox v-model="recursive" :disabled="!isDir">应用到子目录</el-checkbox>
         <el-button type="primary" :loading="applying" @click="apply">应用</el-button>
@@ -27,7 +29,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   bitsToOctal,
@@ -36,25 +38,33 @@ import {
   parseMode,
   type PermBits,
 } from '../utils/permissions'
+import type { OSUser } from '../utils/wails'
 
 const props = defineProps<{
   modelValue: boolean
   path: string
   // 当前权限：rwx 字符串（如 -rw-r--r--）或八进制
   mode?: string
+  // 当前所有者名称；系统账号列表为空时下拉只读
   owner?: string
+  users?: OSUser[]
+  ownerLoading?: boolean
   isDir?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
-  (e: 'apply', payload: { mode: number; recursive: boolean }): void
+  (e: 'apply', payload: { mode: number; recursive: boolean; uid: number; gid: number }): void
 }>()
 
 const bits = reactive<PermBits>(parseMode(props.mode))
 const octal = ref(formatOctal(bitsToOctal(bits)))
 const recursive = ref(false)
 const applying = ref(false)
+// -1 = 保持不变；否则为新所有者的 uid
+const ownerUid = ref(-1)
+
+const canChangeOwner = computed(() => !!props.users?.length)
 
 const groups: Array<{ key: keyof PermBits; label: string }> = [
   { key: 'owner', label: '所有者' },
@@ -98,6 +108,7 @@ function reset() {
   octal.value = formatOctal(bitsToOctal(parsed))
   syncing = false
   recursive.value = false
+  ownerUid.value = -1
   applying.value = false
 }
 
@@ -114,7 +125,13 @@ function close(v: boolean) {
 
 function apply() {
   applying.value = true
-  emit('apply', { mode: bitsToOctal(bits), recursive: recursive.value && !!props.isDir })
+  const user = props.users?.find((u) => u.uid === ownerUid.value)
+  emit('apply', {
+    mode: bitsToOctal(bits),
+    recursive: recursive.value && !!props.isDir,
+    uid: user ? user.uid : -1,
+    gid: user ? user.gid : -1,
+  })
 }
 </script>
 
@@ -179,6 +196,6 @@ function apply() {
 }
 
 .perm-owner {
-  width: 130px;
+  width: 170px;
 }
 </style>

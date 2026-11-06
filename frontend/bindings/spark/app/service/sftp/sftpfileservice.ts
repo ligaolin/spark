@@ -30,6 +30,14 @@ export function ChmodRecursive(id: string, remotePath: string, mode: number, rec
 }
 
 /**
+ * Chown changes the owner and group of a remote path; pass -1 to keep the
+ * current uid or gid. When recursive is true the whole subtree is updated.
+ */
+export function Chown(id: string, remotePath: string, uid: number, gid: number, recursive: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1894429269, id, remotePath, uid, gid, recursive);
+}
+
+/**
  * Connect dials a new SSH connection and opens the SFTP subsystem.
  * It returns the new session id.
  */
@@ -75,10 +83,25 @@ export function List(id: string, remotePath: string): $CancellablePromise<types$
 }
 
 /**
+ * ListUsers returns the accounts defined in /etc/passwd (root first, then by
+ * uid), used by the permission dialog's owner picker.
+ */
+export function ListUsers(id: string): $CancellablePromise<types$0.OSUser[] | null> {
+    return $Call.ByID(385971544, id);
+}
+
+/**
  * Mkdir creates a remote directory (including missing parents).
  */
 export function Mkdir(id: string, remotePath: string): $CancellablePromise<void> {
     return $Call.ByID(1875953307, id, remotePath);
+}
+
+/**
+ * Owner returns the uid/gid and their resolved names for a remote path.
+ */
+export function Owner(id: string, remotePath: string): $CancellablePromise<types$0.FileOwner> {
+    return $Call.ByID(2391973879, id, remotePath);
 }
 
 /**

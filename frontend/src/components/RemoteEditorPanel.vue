@@ -109,7 +109,7 @@
         <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
         <ContextMenu v-model="tabCtxVisible" :x="tabCtxX" :y="tabCtxY" :items="tabCtxItems" @pick="onTabCtxPick" />
         <PermissionDialog v-model="permVisible" :path="permPath" :mode="permMode" :is-dir="permIsDir"
-            @apply="onPermApply" />
+            :owner="permOwner" :users="permOwnerUsers" :owner-loading="permOwnerLoading" @apply="onPermApply" />
     </div>
 </template>
 
@@ -144,6 +144,7 @@ import PermissionDialog from './PermissionDialog.vue'
 import { showConfirmDialog, showInputDialog } from '../utils/dialog'
 import { useSettingsStore } from '../stores/settings'
 import { LocalService } from '../utils/wails'
+import type { OSUser } from '../utils/wails'
 import type { SearchResult } from '../types'
 import { parentDir, joinPath, uniqueName, type FileBackend } from '../utils/fileBackend'
 import { fileClipboard } from '../utils/fileClipboard'
@@ -722,6 +723,9 @@ const permVisible = ref(false)
 const permPath = ref('')
 const permMode = ref('755')
 const permIsDir = ref(false)
+const permOwner = ref('')
+const permOwnerUsers = ref<OSUser[]>([])
+const permOwnerLoading = ref(false)
 
 async function chmodNode() {
     const n = selectedNode.value
@@ -739,21 +743,54 @@ async function chmodNode() {
     permPath.value = n.path
     permMode.value = mode || '755'
     permIsDir.value = n.isDir
+    permOwner.value = ''
+    permOwnerUsers.value = []
     permVisible.value = true
+    void loadPermOwner(n.path)
 }
 
-async function onPermApply(payload: { mode: number; recursive: boolean }) {
+// 拉取当前所有者 + 系统账号列表（仅 SFTP 支持；失败时下拉保持只读）
+async function loadPermOwner(path: string) {
+    const ownerFn = props.backend.owner
+    if (!ownerFn) return
+    const usersFn = props.backend.listUsers
+    permOwnerLoading.value = true
     try {
+        const [owner, users] = await Promise.all([
+            ownerFn(path).catch(() => null),
+            usersFn ? usersFn().catch(() => []) : Promise.resolve([]),
+        ])
+        if (!permVisible.value || permPath.value !== path) return
+        permOwner.value = owner?.user || ''
+        permOwnerUsers.value = users
+    } finally {
+        permOwnerLoading.value = false
+    }
+}
+
+async function onPermApply(payload: { mode: number; recursive: boolean; uid: number; gid: number }) {
+    const path = permPath.value
+    if (!path) return
+    try {
+        if (payload.uid >= 0 && props.backend.chown) {
+            await props.backend.chown(path, payload.uid, payload.gid, payload.recursive)
+        }
         if (payload.recursive && props.backend.chmodRecursive) {
-            await props.backend.chmodRecursive(permPath.value, payload.mode)
+            await props.backend.chmodRecursive(path, payload.mode)
         } else {
-            await props.backend.chmod!(permPath.value, payload.mode)
+            await props.backend.chmod!(path, payload.mode)
         }
         permVisible.value = false
-        ElMessage.success(payload.recursive ? '已应用（含子目录）' : '权限已修改')
-        await reloadDir(permIsDir.value ? permPath.value : parentDir(permPath.value, props.backend.sep))
+        ElMessage.success(
+            payload.uid >= 0
+                ? '所有者与权限已修改'
+                : payload.recursive
+                    ? '已应用（含子目录）'
+                    : '权限已修改',
+        )
+        await reloadDir(permIsDir.value ? path : parentDir(path, props.backend.sep))
     } catch (e: any) {
-        ElMessage.error(`修改权限失败：${e?.message || e}`)
+        ElMessage.error(`修改失败：${e?.message || e}`)
     }
 }
 

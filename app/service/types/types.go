@@ -53,6 +53,23 @@ type FileEntry struct {
 	LinkTarget string    `json:"linkTarget,omitempty"`
 }
 
+// OSUser describes a system account read from /etc/passwd, used by the
+// "owner" picker of the permission dialog.
+type OSUser struct {
+	Name  string `json:"name"`
+	UID   int    `json:"uid"`
+	GID   int    `json:"gid"`
+	Group string `json:"group"` // 主用户组名称
+}
+
+// FileOwner describes the owner and group of a remote path.
+type FileOwner struct {
+	UID   int    `json:"uid"`
+	GID   int    `json:"gid"`
+	User  string `json:"user"`
+	Group string `json:"group"`
+}
+
 // SearchResult describes one search hit: either a filename match or a
 // content match (content matches also carry the line number and text).
 type SearchResult struct {

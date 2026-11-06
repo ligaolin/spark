@@ -15,28 +15,28 @@
     <div class="pm-table">
       <el-table :data="filtered" size="small" height="100%" empty-text="暂无进程数据"
         :default-sort="{ prop: 'cpu', order: 'descending' }" @sort-change="onSortChange" @row-click="select">
-        <el-table-column label="PID" width="70" prop="pid" sortable="custom">
+        <el-table-column label="PID" width="76" prop="pid" sortable="custom">
           <template #default="{ row }">
             <span class="mono">{{ row.pid }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="用户" width="70" prop="user" sortable="custom" show-overflow-tooltip />
-        <el-table-column label="CPU%" width="55" align="right" prop="cpu" sortable="custom">
+        <el-table-column label="用户" width="78" prop="user" sortable="custom" show-overflow-tooltip />
+        <el-table-column label="CPU%" width="82" align="right" prop="cpu" sortable="custom">
           <template #default="{ row }">
             <span class="mono" :class="{ hot: row.cpu > 50 }">{{ row.cpu.toFixed(1) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="MEM%" width="60" align="right" prop="mem" sortable="custom">
+        <el-table-column label="MEM%" width="82" align="right" prop="mem" sortable="custom">
           <template #default="{ row }">
             <span class="mono">{{ row.mem.toFixed(1) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="内存" width="75" align="right" prop="rss" sortable="custom">
+        <el-table-column label="内存" width="80" align="right" prop="rss" sortable="custom">
           <template #default="{ row }">
             <span class="mono dim">{{ formatSize((row.rss || 0) * 1024) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="55" prop="stat" sortable="custom">
+        <el-table-column label="状态" width="76" prop="stat" sortable="custom">
           <template #default="{ row }">
             <span class="mono dim">{{ row.stat }}</span>
           </template>
@@ -219,6 +219,11 @@ onBeforeUnmount(() => {
 .pm-table {
   flex: 1;
   min-height: 0;
+}
+
+/* 表头带排序箭头时保持单行，避免窄列被挤成两行 */
+.pm-table :deep(.el-table th .cell) {
+  white-space: nowrap;
 }
 
 .pm-foot {

@@ -180,6 +180,16 @@ export interface FileEntry {
 }
 
 /**
+ * FileOwner describes the owner and group of a remote path.
+ */
+export interface FileOwner {
+    "uid": number;
+    "gid": number;
+    "user": string;
+    "group": string;
+}
+
+/**
  * FormFile represents a single file in a multipart upload.
  */
 export interface FormFile {
@@ -286,6 +296,21 @@ export interface NetworkInfo {
      * 非 Linux 等提示
      */
     "error"?: string;
+}
+
+/**
+ * OSUser describes a system account read from /etc/passwd, used by the
+ * "owner" picker of the permission dialog.
+ */
+export interface OSUser {
+    "name": string;
+    "uid": number;
+    "gid": number;
+
+    /**
+     * 主用户组名称
+     */
+    "group": string;
 }
 
 /**

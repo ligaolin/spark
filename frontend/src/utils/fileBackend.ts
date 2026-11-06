@@ -2,6 +2,7 @@
 // 供 FilePanel 组件复用。
 import { LocalService, SFTPFileService, FTPFileService } from './wails'
 import type { FileEntry, SearchResult, SearchOptions, ReplaceResult } from '../types'
+import type { OSUser, FileOwner } from './wails'
 
 export interface FileBackend {
   kind: 'local' | 'remote'
@@ -19,6 +20,10 @@ export interface FileBackend {
   remove(path: string, isDir: boolean): Promise<void>
   chmod?(path: string, mode: number): Promise<void>
   chmodRecursive?(path: string, mode: number): Promise<void>
+  // 所有者：读取当前所有者 / 系统账号列表 / 修改所有者（SFTP 专有，FTP 不支持）
+  owner?(path: string): Promise<FileOwner | null>
+  listUsers?(): Promise<OSUser[]>
+  chown?(path: string, uid: number, gid: number, recursive: boolean): Promise<void>
   upload(localPath: string, remotePath: string): Promise<void>
   download(remotePath: string, localPath: string, isDir?: boolean): Promise<void>
   // 编辑器：读取 / 保存文本文件
@@ -69,6 +74,9 @@ export function makeSftpBackend(getSessionId: () => string, scope?: string): Fil
     remove: (p) => SFTPFileService.Remove(getSessionId(), p),
     chmod: (p, m) => SFTPFileService.Chmod(getSessionId(), p, m),
     chmodRecursive: (p, m) => SFTPFileService.ChmodRecursive(getSessionId(), p, m, true),
+    owner: (p) => SFTPFileService.Owner(getSessionId(), p),
+    listUsers: async () => (await SFTPFileService.ListUsers(getSessionId())) ?? [],
+    chown: (p, uid, gid, recursive) => SFTPFileService.Chown(getSessionId(), p, uid, gid, recursive),
     upload: (l, r) => SFTPFileService.Upload(getSessionId(), l, r),
     download: (r, l) => SFTPFileService.Download(getSessionId(), r, l),
     readFile: (p) => SFTPFileService.ReadFile(getSessionId(), p),

@@ -41,7 +41,7 @@
               :connected="true"
               :fav-key="store.activeTab?.connId || 0"
               transfer-kind="ftp"
-              transfer-scope="ftp"
+              :transfer-scope="transferScope"
               :session-id="store.activeTab?.sessionId || ''"
               @drop="onRemoteDrop"
               @action="onPanelAction"
@@ -80,7 +80,7 @@
       </div>
     </template>
 
-    <TransferDock scope="ftp" kind="ftp" title="FTP 传输" />
+    <TransferDock :scope="transferScope" kind="ftp" title="FTP 传输" />
     <ConnectDialog v-model="dialogVisible" mode="connect" conn-type="ftp" @connect="onQuickConnect" />
     <ContextMenu v-model="tabCtxVisible" :x="tabCtxX" :y="tabCtxY" :items="tabCtxItems" @pick="onTabCtxPick" />
   </div>
@@ -143,6 +143,9 @@ const activeBackend = computed<FileBackend>(() => {
   }
   return makeFtpBackend(() => tab.sessionId, `ftp:${tab.key}`)
 })
+
+// 传输进度按 FTP 标签隔离：每个标签只看自己的上传/下载/删除任务
+const transferScope = computed(() => `ftp:${store.activeKey || 'none'}`)
 
 // 标签页右键菜单
 const tabCtxVisible = ref(false)
@@ -252,6 +255,7 @@ async function handleRemoveTab(key: string) {
   }
   store.removeTab(key)
   delete panelRefs.value[key]
+  transfers.clear(`ftp:${key}`)
   if (store.tabs.length === 0) {
     closePanelsByScope(pageScope)
   }
@@ -343,7 +347,7 @@ async function uploadBatch(items: { path: string; name: string; isDir: boolean }
   if (!remoteDir) return
   await runBatchTransfer({
     kind: 'ftp',
-    scope: 'ftp',
+    scope: transferScope.value,
     sessionId: tab.sessionId,
     op: 'upload',
     label: items.length === 1 ? `上传 ${items[0].name}` : `上传 ${items.length} 项`,
@@ -474,7 +478,7 @@ async function downloadBatch(items: { path: string; name: string; isDir: boolean
   if (!dir) return
   await runBatchTransfer({
     kind: 'ftp',
-    scope: 'ftp',
+    scope: transferScope.value,
     sessionId: tab.sessionId,
     op: 'download',
     label: items.length === 1 ? `下载 ${items[0].name}` : `下载 ${items.length} 项`,
@@ -535,6 +539,7 @@ function optsFromConn(conn: SavedConnection): ConnectOptions {
 onBeforeUnmount(() => {
   unSessionClosed?.()
   closePanelsByScope(pageScope)
+  for (const tab of store.tabs) transfers.clear(`ftp:${tab.key}`)
   for (const tab of store.tabs) {
     if (tab.sessionId) {
       FTPFileService.Disconnect(tab.sessionId).catch(() => undefined)

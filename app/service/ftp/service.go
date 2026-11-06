@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path"
@@ -450,9 +451,15 @@ func (s *FTPFileService) Upload(id, localPath, remotePath string) error {
 		return err
 	}
 	if fi.IsDir() {
-		return ftpErrHint(s.uploadDir(sess.conn, id, localPath, remotePath))
+		counter := &transferCounter{
+			id:    id,
+			op:    "upload",
+			name:  path.Base(remotePath),
+			total: localTreeSize(localPath),
+		}
+		return ftpErrHint(s.uploadDir(sess.conn, id, localPath, remotePath, counter))
 	}
-	return ftpErrHint(s.uploadFile(sess.conn, id, localPath, remotePath))
+	return ftpErrHint(s.uploadFile(sess.conn, id, localPath, remotePath, nil))
 }
 
 // Copy copies a remote file or directory (recursively) to a new remote path.
@@ -504,7 +511,10 @@ func copyFTP(conn *ftp.ServerConn, src, dst string, isDir bool) error {
 	return nil
 }
 
-func (s *FTPFileService) uploadDir(conn *ftp.ServerConn, id, localDir, remoteDir string) error {
+// uploadDir uploads a directory tree. All files in the tree share one counter
+// and its grand total, so progress moves 0→100% across the whole directory
+// instead of resetting for every file.
+func (s *FTPFileService) uploadDir(conn *ftp.ServerConn, id, localDir, remoteDir string, counter *transferCounter) error {
 	entries, err := os.ReadDir(localDir)
 	if err != nil {
 		return err
@@ -516,11 +526,11 @@ func (s *FTPFileService) uploadDir(conn *ftp.ServerConn, id, localDir, remoteDir
 		lp := filepath.Join(localDir, e.Name())
 		rp := joinRemote(remoteDir, e.Name())
 		if e.IsDir() {
-			if err := s.uploadDir(conn, id, lp, rp); err != nil {
+			if err := s.uploadDir(conn, id, lp, rp, counter); err != nil {
 				return err
 			}
 		} else {
-			if err := s.uploadFile(conn, id, lp, rp); err != nil {
+			if err := s.uploadFile(conn, id, lp, rp, counter); err != nil {
 				return err
 			}
 		}
@@ -528,7 +538,9 @@ func (s *FTPFileService) uploadDir(conn *ftp.ServerConn, id, localDir, remoteDir
 	return nil
 }
 
-func (s *FTPFileService) uploadFile(conn *ftp.ServerConn, id, localPath, remotePath string) error {
+// uploadFile uploads one file. A nil counter means a standalone transfer
+// (progress is reported per file); directory transfers pass a shared counter.
+func (s *FTPFileService) uploadFile(conn *ftp.ServerConn, id, localPath, remotePath string, counter *transferCounter) error {
 	local, err := os.Open(localPath)
 	if err != nil {
 		return err
@@ -543,6 +555,9 @@ func (s *FTPFileService) uploadFile(conn *ftp.ServerConn, id, localPath, remoteP
 	if st, err := local.Stat(); err == nil {
 		total = st.Size()
 	}
+	if counter == nil {
+		counter = &transferCounter{id: id, op: "upload", name: path.Base(remotePath), total: total}
+	}
 
 	// 断点续传：远端已有部分内容且小于本地大小，则从该偏移继续
 	offset := int64(0)
@@ -550,23 +565,17 @@ func (s *FTPFileService) uploadFile(conn *ftp.ServerConn, id, localPath, remoteP
 		offset = sz
 	}
 
-	pr := &progressReader{
-		r:     local,
-		svc:   s,
-		id:    id,
-		op:    "upload",
-		name:  path.Base(remotePath),
-		total: total,
-		done:  offset,
-	}
+	pr := &progressReader{r: local, c: counter}
 
 	if offset > 0 {
+		// 已存在的远端内容也计入进度，续传时进度不会卡在 0
+		counter.add(int(offset))
 		// StorFrom 需要服务器支持 REST STREAM，失败则退回整文件上传
 		if err := conn.StorFrom(remotePath, pr, uint64(offset)); err != nil {
 			if _, serr := local.Seek(0, io.SeekStart); serr != nil {
 				return err
 			}
-			pr.done = 0
+			counter.done -= offset
 			return conn.Stor(remotePath, pr)
 		}
 		return nil
@@ -586,12 +595,18 @@ func (s *FTPFileService) Download(id, remotePath, localPath string, isDir bool) 
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	if isDir {
-		return ftpErrHint(s.downloadDir(sess.conn, id, remotePath, localPath))
+		counter := &transferCounter{
+			id:    id,
+			op:    "download",
+			name:  path.Base(remotePath),
+			total: remoteTreeSize(sess.conn, remotePath),
+		}
+		return ftpErrHint(s.downloadDir(sess.conn, id, remotePath, localPath, counter))
 	}
-	return ftpErrHint(s.downloadFile(sess.conn, id, remotePath, localPath))
+	return ftpErrHint(s.downloadFile(sess.conn, id, remotePath, localPath, nil))
 }
 
-func (s *FTPFileService) downloadDir(conn *ftp.ServerConn, id, remoteDir, localDir string) error {
+func (s *FTPFileService) downloadDir(conn *ftp.ServerConn, id, remoteDir, localDir string, counter *transferCounter) error {
 	entries, err := conn.List(remoteDir)
 	if err != nil {
 		return err
@@ -603,11 +618,11 @@ func (s *FTPFileService) downloadDir(conn *ftp.ServerConn, id, remoteDir, localD
 		rp := joinRemote(remoteDir, e.Name)
 		lp := filepath.Join(localDir, e.Name)
 		if e.Type == ftp.EntryTypeFolder {
-			if err := s.downloadDir(conn, id, rp, lp); err != nil {
+			if err := s.downloadDir(conn, id, rp, lp, counter); err != nil {
 				return err
 			}
 		} else if e.Type == ftp.EntryTypeFile {
-			if err := s.downloadFile(conn, id, rp, lp); err != nil {
+			if err := s.downloadFile(conn, id, rp, lp, counter); err != nil {
 				return err
 			}
 		}
@@ -615,7 +630,9 @@ func (s *FTPFileService) downloadDir(conn *ftp.ServerConn, id, remoteDir, localD
 	return nil
 }
 
-func (s *FTPFileService) downloadFile(conn *ftp.ServerConn, id, remotePath, localPath string) error {
+// downloadFile downloads one file. A nil counter means a standalone transfer;
+// directory transfers pass a shared counter with the tree's grand total.
+func (s *FTPFileService) downloadFile(conn *ftp.ServerConn, id, remotePath, localPath string, counter *transferCounter) error {
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 		return err
 	}
@@ -624,6 +641,9 @@ func (s *FTPFileService) downloadFile(conn *ftp.ServerConn, id, remotePath, loca
 	if sz, err := conn.FileSize(remotePath); err == nil && sz >= 0 {
 		total = sz
 	}
+	if counter == nil {
+		counter = &transferCounter{id: id, op: "download", name: path.Base(remotePath), total: total}
+	}
 
 	// 断点续传：本地已有部分内容，则从该偏移继续
 	offset := int64(0)
@@ -631,7 +651,8 @@ func (s *FTPFileService) downloadFile(conn *ftp.ServerConn, id, remotePath, loca
 		offset = li.Size()
 	}
 	if offset >= total && total > 0 {
-		return nil // 已完成
+		counter.add(int(total)) // 已完成，计入总进度
+		return nil
 	}
 
 	var rc io.ReadCloser
@@ -664,17 +685,10 @@ func (s *FTPFileService) downloadFile(conn *ftp.ServerConn, id, remotePath, loca
 		if _, err := local.Seek(offset, io.SeekStart); err != nil {
 			return err
 		}
+		counter.add(int(offset))
 	}
 
-	_, err = io.Copy(local, &progressReader{
-		r:     rc,
-		svc:   s,
-		id:    id,
-		op:    "download",
-		name:  path.Base(remotePath),
-		total: total,
-		done:  offset,
-	})
+	_, err = io.Copy(local, &progressReader{r: rc, c: counter})
 	return err
 }
 
@@ -740,10 +754,9 @@ func ensureRemoteDir(conn *ftp.ServerConn, dir string) error {
 	return conn.MakeDir(dir)
 }
 
-// progressReader counts transferred bytes and emits progress events.
-type progressReader struct {
-	r     io.Reader
-	svc   *FTPFileService
+// transferCounter accumulates bytes for one logical transfer (a single file or
+// a whole directory tree) and throttles progress events.
+type transferCounter struct {
 	id    string
 	op    string
 	name  string
@@ -752,21 +765,71 @@ type progressReader struct {
 	last  time.Time
 }
 
+func (c *transferCounter) add(n int) {
+	if n <= 0 {
+		return
+	}
+	c.done += int64(n)
+	now := time.Now()
+	if now.Sub(c.last) >= 150*time.Millisecond || c.done >= c.total {
+		c.last = now
+		application.Get().Event.Emit("transfer:progress", types.TransferProgress{
+			SessionID: c.id,
+			Op:        c.op,
+			Name:      c.name,
+			Done:      c.done,
+			Total:     c.total,
+		})
+	}
+}
+
+// progressReader counts transferred bytes into a shared counter.
+type progressReader struct {
+	r io.Reader
+	c *transferCounter
+}
+
 func (p *progressReader) Read(buf []byte) (int, error) {
 	n, err := p.r.Read(buf)
 	if n > 0 {
-		p.done += int64(n)
-		now := time.Now()
-		if now.Sub(p.last) >= 150*time.Millisecond || p.done >= p.total {
-			p.last = now
-			application.Get().Event.Emit("transfer:progress", types.TransferProgress{
-				SessionID: p.id,
-				Op:        p.op,
-				Name:      p.name,
-				Done:      p.done,
-				Total:     p.total,
-			})
-		}
+		p.c.add(n)
 	}
 	return n, err
+}
+
+// localTreeSize returns the total size of all regular files under root.
+func localTreeSize(root string) int64 {
+	var total int64
+	_ = filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, ierr := d.Info(); ierr == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+// remoteTreeSize returns the total size of all regular files under root.
+func remoteTreeSize(conn *ftp.ServerConn, root string) int64 {
+	entries, err := conn.List(root)
+	if err != nil {
+		return 0
+	}
+	var total int64
+	for _, e := range entries {
+		switch e.Type {
+		case ftp.EntryTypeFolder:
+			total += remoteTreeSize(conn, joinRemote(root, e.Name))
+		case ftp.EntryTypeFile:
+			if e.Size > 0 {
+				total += int64(e.Size)
+			} else if sz, szErr := conn.FileSize(joinRemote(root, e.Name)); szErr == nil && sz > 0 {
+				total += sz
+			}
+		}
+	}
+	return total
 }

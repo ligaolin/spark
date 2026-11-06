@@ -44,6 +44,8 @@ import type {
   SystemForwardRequest,
   RestRequest,
   RestResponse,
+  OSUser,
+  FileOwner,
 } from '../../bindings/spark/app/service/types/models'
 import type {
   SavedConnection,
@@ -123,6 +125,8 @@ export type {
   LaunchRequest,
   RestRequest,
   RestResponse,
+  OSUser,
+  FileOwner,
 }
 
 // 绑定模型为接口且字段全必填，这里提供带默认值的工厂函数便于构造。

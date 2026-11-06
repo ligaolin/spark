@@ -23,6 +23,9 @@ export interface TransferTask {
   fileFailed: number
   totalBytes: number
   doneBytes: number
+  // 当前正在传输条目的完成比例（0~1）：多条目批次按 条目数+当前条目比例 计算，
+  // 避免每开始一个新文件时总进度从 100% 掉回去
+  curFraction: number
   percent: number
   startedAt: number
 }
@@ -47,6 +50,11 @@ const byteMap = new Map<string, Map<string, { done: number; total: number }>>()
 
 function fileSig(sessionId: string, op: string, name: string): string {
   return `${sessionId}\u0000${op}\u0000${name}`
+}
+
+// 目录名前端习惯带结尾斜杠，后端事件用 path.Base 不带斜杠，登记时统一去掉
+function normName(name: string): string {
+  return name.replace(/\/+$/, '')
 }
 
 export const useTransfersStore = defineStore('transfers', {
@@ -83,8 +91,9 @@ export const useTransfersStore = defineStore('transfers', {
         }
         task.doneBytes = done
         task.totalBytes = Math.max(task.totalBytes, total)
+        // 后端对单个文件/单个目录的上报是累计值，最后一次上报即当前条目进度
+        task.curFraction = p.total > 0 ? Math.min(1, p.done / p.total) : 0
         task.percent = this.calcPercent(task)
-        if (task.status === 'done') task.status = 'running'
       })
     },
 
@@ -97,13 +106,20 @@ export const useTransfersStore = defineStore('transfers', {
     },
 
     calcPercent(t: TransferTask): number {
+      if (t.status === 'done') return 100
+      // 多条目批次：已完成条目数 + 当前条目完成比例，进度只增不减
+      if (t.fileTotal > 1) {
+        const frac = Math.max(0, Math.min(1, t.curFraction))
+        return Math.min(99, Math.round(((t.fileDone + frac) / t.fileTotal) * 100))
+      }
+      // 单条目（单个文件 / 单个目录）：按后端累计字节数计算
       if (t.totalBytes > 0) {
-        return Math.min(100, Math.round((t.doneBytes / t.totalBytes) * 100))
+        return Math.min(99, Math.round((t.doneBytes / t.totalBytes) * 100))
       }
-      if (t.fileTotal > 0) {
-        return Math.min(100, Math.round((t.fileDone / t.fileTotal) * 100))
+      if (t.fileTotal === 1) {
+        return Math.min(99, Math.round(t.curFraction * 100))
       }
-      return t.status === 'done' ? 100 : 0
+      return 0
     },
 
     start(opts: StartTaskOptions): string {
@@ -121,13 +137,14 @@ export const useTransfersStore = defineStore('transfers', {
         fileFailed: 0,
         totalBytes: opts.totalBytes ?? 0,
         doneBytes: 0,
+        curFraction: 0,
         percent: 0,
         startedAt: Date.now(),
       }
       this.tasks.push(task)
       if (task.fileTotal === 0 && opts.files?.length) task.fileTotal = opts.files.length
       for (const name of opts.files ?? []) {
-        expected.set(fileSig(opts.sessionId, opts.op, name), key)
+        expected.set(fileSig(opts.sessionId, opts.op, normName(name)), key)
       }
       // 只保留最近 40 条，避免长时间运行后无限增长
       if (this.tasks.length > 40) {
@@ -141,9 +158,8 @@ export const useTransfersStore = defineStore('transfers', {
     expectName(key: string, sessionId: string, op: string, name: string) {
       const task = this.tasks.find((t) => t.key === key)
       if (!task) return
-      expected.set(fileSig(sessionId, op, name), key)
+      expected.set(fileSig(sessionId, op, normName(name)), key)
       if (task.fileTotal === 0) task.fileTotal = 1
-      void key
     },
 
     // 单个条目完成（成功 / 失败都计入进度；失败会记录下来）
@@ -151,6 +167,7 @@ export const useTransfersStore = defineStore('transfers', {
       const task = this.tasks.find((t) => t.key === key)
       if (!task) return
       task.fileDone++
+      task.curFraction = 0
       if (opts.error) {
         task.fileFailed++
         if (!task.error) task.error = opts.error
@@ -164,9 +181,9 @@ export const useTransfersStore = defineStore('transfers', {
       task.status = task.fileFailed > 0 ? 'error' : 'done'
       task.percent = 100
       task.fileDone = Math.max(task.fileDone, task.fileTotal)
+      task.curFraction = 1
       task.doneBytes = task.totalBytes || task.doneBytes
-      const k = task.key
-      setTimeout(() => this.remove(k), 2500)
+      // 完成后留在面板里方便查看结果，由用户点“清空”或关闭终端时清理
     },
 
     fail(key: string, error: string) {
@@ -181,6 +198,9 @@ export const useTransfersStore = defineStore('transfers', {
       const idx = this.tasks.findIndex((t) => t.key === key)
       if (idx >= 0) this.tasks.splice(idx, 1)
       byteMap.delete(key)
+      for (const [sig, k] of expected) {
+        if (k === key) expected.delete(sig)
+      }
     },
 
     clear(scope?: string) {
@@ -190,7 +210,12 @@ export const useTransfersStore = defineStore('transfers', {
         expected.clear()
         return
       }
+      const removed = new Set(this.tasks.filter((t) => t.scope === scope).map((t) => t.key))
       this.tasks = this.tasks.filter((t) => t.scope !== scope)
+      for (const key of removed) byteMap.delete(key)
+      for (const [sig, k] of expected) {
+        if (removed.has(k)) expected.delete(sig)
+      }
     },
   },
 })

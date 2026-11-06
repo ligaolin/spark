@@ -11,7 +11,7 @@
             <div class="sftp-file-area">
                 <FilePanel ref="remotePanel" :backend="remoteBackend" title="SFTP 远程" show-mode multi-select dock-editor
                     placeholder="远程目录，回车跳转" :connected="connected" :fav-key="favKey"
-                    transfer-kind="sftp" transfer-scope="terminal-sftp" :session-id="sessionId"
+                    transfer-kind="sftp" :transfer-scope="transferScope" :session-id="sessionId"
                     @drop="onRemoteDrop" @action="onPanelAction">
                     <template #head>
                         <span v-if="error" class="sftp-err" :title="error">{{ error }}</span>
@@ -46,7 +46,7 @@
                 </FilePanel>
             </div>
 
-            <TransferDock scope="terminal-sftp" kind="sftp" title="SFTP 传输" />
+            <TransferDock :scope="transferScope" kind="sftp" title="SFTP 传输" />
         </template>
     </div>
 </template>
@@ -229,6 +229,12 @@ function backendForTab(key: string): FileBackend | null {
 // FilePanel 当前展示用的后端（随活动标签切换）
 const remoteBackend = computed<FileBackend>(() => backendForTab(props.tabKey) ?? nullBackend)
 
+// 传输进度按终端标签隔离：同一个 SSH 终端的 SFTP 上传/下载/删除汇总在一起，
+// 不同终端互不串台
+const transferScope = computed(() =>
+    props.tabKey ? `terminal-sftp:${props.tabKey}` : 'terminal-sftp',
+)
+
 // 无活动标签时的空后端（模板此时显示空态，不会真正使用）
 const nullBackend: FileBackend = {
     kind: 'remote',
@@ -298,6 +304,8 @@ function teardownTab(key: string) {
         SFTPFileService.Disconnect(t.id).catch(() => undefined)
     }
     delete tabs[key]
+    // 该标签的传输进度一并清掉，其他终端不受影响
+    transfers.clear(`terminal-sftp:${key}`)
     // 该标签自己的编辑器板块随之关闭（不触碰其他标签 / FTP 页的板块）
     closePanelsByScope(key)
     if (props.tabKey === key) {
@@ -411,7 +419,7 @@ async function uploadBatch(items: { path: string; name: string; isDir: boolean }
     if (!remoteDir) return
     await runBatchTransfer({
         kind: 'sftp',
-        scope: 'terminal-sftp',
+        scope: transferScope.value,
         sessionId: sessionId.value,
         op: 'upload',
         label: items.length === 1 ? `上传 ${items[0].name}` : `上传 ${items.length} 项`,
@@ -507,7 +515,7 @@ async function downloadBatch(items: { path: string; name: string; isDir: boolean
     if (!dir) return
     await runBatchTransfer({
         kind: 'sftp',
-        scope: 'terminal-sftp',
+        scope: transferScope.value,
         sessionId: sessionId.value,
         op: 'download',
         label: items.length === 1 ? `下载 ${items[0].name}` : `下载 ${items.length} 项`,

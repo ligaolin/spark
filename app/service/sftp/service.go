@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -248,6 +250,173 @@ func chmodRemoteTree(cl *sftplib.Client, p string, perm os.FileMode) error {
 		}
 	}
 	return nil
+}
+
+// ListUsers returns the accounts defined in /etc/passwd (root first, then by
+// uid), used by the permission dialog's owner picker.
+func (s *SFTPFileService) ListUsers(id string) ([]types.OSUser, error) {
+	sess, err := s.get(id)
+	if err != nil {
+		return nil, err
+	}
+	return readPasswdUsers(sess.sftp)
+}
+
+// Owner returns the uid/gid and their resolved names for a remote path.
+func (s *SFTPFileService) Owner(id, remotePath string) (types.FileOwner, error) {
+	sess, err := s.get(id)
+	if err != nil {
+		return types.FileOwner{}, err
+	}
+	fi, err := sess.sftp.Stat(remotePath)
+	if err != nil {
+		return types.FileOwner{}, err
+	}
+	st, ok := fi.Sys().(*sftplib.FileStat)
+	if !ok {
+		return types.FileOwner{}, errors.New("服务器未返回所有者信息")
+	}
+	owner := types.FileOwner{UID: int(st.UID), GID: int(st.GID)}
+	if users, err := readPasswdUsers(sess.sftp); err == nil {
+		for _, u := range users {
+			if u.UID == owner.UID {
+				owner.User = u.Name
+				break
+			}
+		}
+	}
+	if names := readGroupNames(sess.sftp); names != nil {
+		if name, ok := names[owner.GID]; ok {
+			owner.Group = name
+		}
+	}
+	if owner.User == "" {
+		owner.User = strconv.Itoa(owner.UID)
+	}
+	if owner.Group == "" {
+		owner.Group = strconv.Itoa(owner.GID)
+	}
+	return owner, nil
+}
+
+// Chown changes the owner and group of a remote path; pass -1 to keep the
+// current uid or gid. When recursive is true the whole subtree is updated.
+func (s *SFTPFileService) Chown(id, remotePath string, uid, gid int, recursive bool) error {
+	sess, err := s.get(id)
+	if err != nil {
+		return err
+	}
+	if uid < 0 && gid < 0 {
+		return nil
+	}
+	if err := sess.sftp.Chown(remotePath, uid, gid); err != nil {
+		return fmt.Errorf("修改所有者失败（需要 root 权限）：%w", err)
+	}
+	if !recursive {
+		return nil
+	}
+	return chownRemoteTree(sess.sftp, remotePath, uid, gid)
+}
+
+func chownRemoteTree(cl *sftplib.Client, p string, uid, gid int) error {
+	fi, err := cl.Stat(p)
+	if err != nil || !fi.IsDir() {
+		return nil
+	}
+	entries, err := cl.ReadDir(p)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		child := path.Join(p, e.Name())
+		if err := cl.Chown(child, uid, gid); err != nil {
+			return err
+		}
+		if e.IsDir() {
+			if err := chownRemoteTree(cl, child, uid, gid); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// readPasswdUsers parses /etc/passwd over SFTP (no shell required).
+func readPasswdUsers(cl *sftplib.Client) ([]types.OSUser, error) {
+	raw, err := readRemoteTextFile(cl, "/etc/passwd", 1<<20)
+	if err != nil {
+		return nil, fmt.Errorf("读取 /etc/passwd 失败：%w", err)
+	}
+	groups := readGroupNames(cl)
+	users := make([]types.OSUser, 0, 32)
+	seen := make(map[int]bool)
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.Split(line, ":")
+		if len(parts) < 4 {
+			continue
+		}
+		uid, err1 := strconv.Atoi(parts[2])
+		gid, err2 := strconv.Atoi(parts[3])
+		if err1 != nil || err2 != nil || seen[uid] {
+			continue
+		}
+		seen[uid] = true
+		users = append(users, types.OSUser{Name: parts[0], UID: uid, GID: gid, Group: groups[gid]})
+	}
+	sort.SliceStable(users, func(i, j int) bool {
+		// root 置顶，其余按 uid 升序
+		if (users[i].UID == 0) != (users[j].UID == 0) {
+			return users[i].UID == 0
+		}
+		if users[i].UID != users[j].UID {
+			return users[i].UID < users[j].UID
+		}
+		return users[i].Name < users[j].Name
+	})
+	return users, nil
+}
+
+// readGroupNames parses /etc/group into gid -> name (empty on failure).
+func readGroupNames(cl *sftplib.Client) map[int]string {
+	raw, err := readRemoteTextFile(cl, "/etc/group", 1<<20)
+	if err != nil {
+		return nil
+	}
+	names := make(map[int]string)
+	for _, line := range strings.Split(raw, "\n") {
+		parts := strings.Split(strings.TrimSpace(line), ":")
+		if len(parts) < 3 {
+			continue
+		}
+		gid, err := strconv.Atoi(parts[2])
+		if err != nil {
+			continue
+		}
+		if _, ok := names[gid]; !ok {
+			names[gid] = parts[0]
+		}
+	}
+	return names
+}
+
+func readRemoteTextFile(cl *sftplib.Client, p string, limit int64) (string, error) {
+	f, err := cl.Open(p)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(data)) > limit {
+		return "", errors.New("文件过大")
+	}
+	return string(data), nil
 }
 
 // Copy copies a remote file or directory (recursively) to a new remote path.
@@ -523,12 +692,21 @@ func (s *SFTPFileService) Upload(id, localPath, remotePath string) error {
 		return err
 	}
 	if fi.IsDir() {
-		return s.uploadDir(sess.sftp, id, localPath, remotePath)
+		counter := &transferCounter{
+			id:    id,
+			op:    "upload",
+			name:  path.Base(remotePath),
+			total: localTreeSize(localPath),
+		}
+		return s.uploadDir(sess.sftp, id, localPath, remotePath, counter)
 	}
-	return s.uploadFile(sess.sftp, id, localPath, remotePath)
+	return s.uploadFile(sess.sftp, id, localPath, remotePath, nil)
 }
 
-func (s *SFTPFileService) uploadDir(cl *sftplib.Client, id, localDir, remoteDir string) error {
+// uploadDir uploads a directory tree. All files in the tree share one counter
+// and its grand total, so progress moves 0→100% across the whole directory
+// instead of resetting for every file.
+func (s *SFTPFileService) uploadDir(cl *sftplib.Client, id, localDir, remoteDir string, counter *transferCounter) error {
 	entries, err := os.ReadDir(localDir)
 	if err != nil {
 		return err
@@ -540,11 +718,11 @@ func (s *SFTPFileService) uploadDir(cl *sftplib.Client, id, localDir, remoteDir 
 		lp := filepath.Join(localDir, e.Name())
 		rp := path.Join(remoteDir, e.Name())
 		if e.IsDir() {
-			if err := s.uploadDir(cl, id, lp, rp); err != nil {
+			if err := s.uploadDir(cl, id, lp, rp, counter); err != nil {
 				return err
 			}
 		} else {
-			if err := s.uploadFile(cl, id, lp, rp); err != nil {
+			if err := s.uploadFile(cl, id, lp, rp, counter); err != nil {
 				return err
 			}
 		}
@@ -552,7 +730,9 @@ func (s *SFTPFileService) uploadDir(cl *sftplib.Client, id, localDir, remoteDir 
 	return nil
 }
 
-func (s *SFTPFileService) uploadFile(cl *sftplib.Client, id, localPath, remotePath string) error {
+// uploadFile uploads one file. A nil counter means a standalone transfer
+// (progress is reported per file); directory transfers pass a shared counter.
+func (s *SFTPFileService) uploadFile(cl *sftplib.Client, id, localPath, remotePath string, counter *transferCounter) error {
 	local, err := os.Open(localPath)
 	if err != nil {
 		return err
@@ -566,6 +746,9 @@ func (s *SFTPFileService) uploadFile(cl *sftplib.Client, id, localPath, remotePa
 	total := int64(0)
 	if st, err := local.Stat(); err == nil {
 		total = st.Size()
+	}
+	if counter == nil {
+		counter = &transferCounter{id: id, op: "upload", name: path.Base(remotePath), total: total}
 	}
 
 	// 断点续传：远端已有部分内容且小于本地大小，则从该偏移继续
@@ -596,15 +779,9 @@ func (s *SFTPFileService) uploadFile(cl *sftplib.Client, id, localPath, remotePa
 	}
 	defer remote.Close()
 
-	_, err = io.Copy(remote, &progressReader{
-		r:     local,
-		svc:   s,
-		id:    id,
-		op:    "upload",
-		name:  path.Base(remotePath),
-		total: total,
-		done:  offset,
-	})
+	// 已存在的远端内容也计入进度，续传时进度不会卡在 0
+	counter.add(int(offset))
+	_, err = io.Copy(remote, &progressReader{r: local, c: counter})
 	return err
 }
 
@@ -620,12 +797,19 @@ func (s *SFTPFileService) Download(id, remotePath, localPath string) error {
 		return err
 	}
 	if fi.IsDir() {
-		return s.downloadDir(sess.sftp, id, remotePath, localPath)
+		counter := &transferCounter{
+			id:    id,
+			op:    "download",
+			name:  path.Base(remotePath),
+			total: remoteTreeSize(sess.sftp, remotePath),
+		}
+		return s.downloadDir(sess.sftp, id, remotePath, localPath, counter)
 	}
-	return s.downloadFile(sess.sftp, id, remotePath, localPath)
+	return s.downloadFile(sess.sftp, id, remotePath, localPath, nil)
 }
 
-func (s *SFTPFileService) downloadDir(cl *sftplib.Client, id, remoteDir, localDir string) error {
+// downloadDir downloads a directory tree with one shared progress counter.
+func (s *SFTPFileService) downloadDir(cl *sftplib.Client, id, remoteDir, localDir string, counter *transferCounter) error {
 	entries, err := cl.ReadDir(remoteDir)
 	if err != nil {
 		return err
@@ -637,11 +821,11 @@ func (s *SFTPFileService) downloadDir(cl *sftplib.Client, id, remoteDir, localDi
 		rp := path.Join(remoteDir, e.Name())
 		lp := filepath.Join(localDir, e.Name())
 		if e.IsDir() {
-			if err := s.downloadDir(cl, id, rp, lp); err != nil {
+			if err := s.downloadDir(cl, id, rp, lp, counter); err != nil {
 				return err
 			}
 		} else {
-			if err := s.downloadFile(cl, id, rp, lp); err != nil {
+			if err := s.downloadFile(cl, id, rp, lp, counter); err != nil {
 				return err
 			}
 		}
@@ -649,7 +833,8 @@ func (s *SFTPFileService) downloadDir(cl *sftplib.Client, id, remoteDir, localDi
 	return nil
 }
 
-func (s *SFTPFileService) downloadFile(cl *sftplib.Client, id, remotePath, localPath string) error {
+// downloadFile downloads one file. A nil counter means a standalone transfer.
+func (s *SFTPFileService) downloadFile(cl *sftplib.Client, id, remotePath, localPath string, counter *transferCounter) error {
 	remote, err := cl.Open(remotePath)
 	if err != nil {
 		return err
@@ -664,6 +849,9 @@ func (s *SFTPFileService) downloadFile(cl *sftplib.Client, id, remotePath, local
 	if st, err := remote.Stat(); err == nil {
 		total = st.Size()
 	}
+	if counter == nil {
+		counter = &transferCounter{id: id, op: "download", name: path.Base(remotePath), total: total}
+	}
 
 	// 断点续传：本地已有部分内容，则从该偏移继续
 	offset := int64(0)
@@ -671,7 +859,8 @@ func (s *SFTPFileService) downloadFile(cl *sftplib.Client, id, remotePath, local
 		offset = li.Size()
 	}
 	if offset >= total && total > 0 {
-		return nil // 已完成
+		counter.add(int(total)) // 已完成：整个文件计入批次进度
+		return nil
 	}
 
 	flags := os.O_CREATE | os.O_WRONLY
@@ -692,15 +881,9 @@ func (s *SFTPFileService) downloadFile(cl *sftplib.Client, id, remotePath, local
 		}
 	}
 
-	_, err = io.Copy(local, &progressReader{
-		r:     remote,
-		svc:   s,
-		id:    id,
-		op:    "download",
-		name:  path.Base(remotePath),
-		total: total,
-		done:  offset,
-	})
+	// 本地已有的内容也计入进度，续传时进度不会卡在 0
+	counter.add(int(offset))
+	_, err = io.Copy(local, &progressReader{r: remote, c: counter})
 	return err
 }
 
@@ -775,10 +958,9 @@ func removeRemote(cl *sftplib.Client, p string) error {
 	return cl.RemoveDirectory(p)
 }
 
-// progressReader counts transferred bytes and emits progress events.
-type progressReader struct {
-	r     io.Reader
-	svc   *SFTPFileService
+// transferCounter accumulates bytes for one logical transfer (a single file or
+// a whole directory tree) and throttles progress events.
+type transferCounter struct {
 	id    string
 	op    string
 	name  string
@@ -787,21 +969,64 @@ type progressReader struct {
 	last  time.Time
 }
 
+func (c *transferCounter) add(n int) {
+	if n <= 0 {
+		return
+	}
+	c.done += int64(n)
+	now := time.Now()
+	if now.Sub(c.last) >= 150*time.Millisecond || c.done >= c.total {
+		c.last = now
+		application.Get().Event.Emit("transfer:progress", types.TransferProgress{
+			SessionID: c.id,
+			Op:        c.op,
+			Name:      c.name,
+			Done:      c.done,
+			Total:     c.total,
+		})
+	}
+}
+
+// progressReader counts transferred bytes into a shared counter.
+type progressReader struct {
+	r io.Reader
+	c *transferCounter
+}
+
 func (p *progressReader) Read(buf []byte) (int, error) {
 	n, err := p.r.Read(buf)
 	if n > 0 {
-		p.done += int64(n)
-		now := time.Now()
-		if now.Sub(p.last) >= 150*time.Millisecond || p.done >= p.total {
-			p.last = now
-			application.Get().Event.Emit("transfer:progress", types.TransferProgress{
-				SessionID: p.id,
-				Op:        p.op,
-				Name:      p.name,
-				Done:      p.done,
-				Total:     p.total,
-			})
-		}
+		p.c.add(n)
 	}
 	return n, err
+}
+
+// localTreeSize returns the total size of all regular files under root.
+func localTreeSize(root string) int64 {
+	var total int64
+	_ = filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, ierr := d.Info(); ierr == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+// remoteTreeSize returns the total size of all regular files under root.
+func remoteTreeSize(cl *sftplib.Client, root string) int64 {
+	var total int64
+	w := cl.Walk(root)
+	for w.Step() {
+		if w.Err() != nil {
+			continue
+		}
+		if info := w.Stat(); info != nil && !info.IsDir() {
+			total += info.Size()
+		}
+	}
+	return total
 }
