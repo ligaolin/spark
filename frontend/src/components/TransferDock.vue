@@ -1,16 +1,13 @@
 <template>
-  <div class="transfer-dock" v-if="store.items.length > 0">
+  <div class="transfer-dock" v-if="items.length > 0">
     <div class="dock-head">
-      <span>传输队列（{{ store.items.length }}）</span>
+      <span>{{ title }}（{{ items.length }}）</span>
       <div class="dock-head-actions">
-        <el-button v-if="!stick" size="small" text type="primary" @click="scrollToLatest(true)">
-          最新 ↓
-        </el-button>
-        <el-button size="small" text @click="store.clear()">清空</el-button>
+        <el-button size="small" text @click="store.clear(dockScope)">清空</el-button>
       </div>
     </div>
-    <div ref="bodyRef" class="dock-body" @scroll.passive="onScroll">
-      <div v-for="item in store.items" :key="item.key" class="tf-item">
+    <div class="dock-body">
+      <div v-for="item in items" :key="item.key" class="tf-item">
         <span class="tf-icon" :class="item.status">
           <el-icon v-if="item.status === 'running'">
             <Loading class="is-loading" />
@@ -20,15 +17,23 @@
         </span>
         <div class="tf-main">
           <div class="tf-line">
-            <span class="tf-name" :title="item.name">{{ item.name }}</span>
-            <span class="tf-op">{{ item.op === 'upload' ? '上传' : '下载' }}</span>
+            <span class="tf-name" :title="item.label">{{ item.label }}</span>
+            <span class="tf-meta">
+              {{ opLabel(item.op) }}
+              <template v-if="item.fileTotal > 0">
+                · {{ item.fileDone }}/{{ item.fileTotal }}
+              </template>
+              <template v-if="item.totalBytes > 0">
+                · {{ formatSize(item.doneBytes) }}/{{ formatSize(item.totalBytes) }}
+              </template>
+            </span>
           </div>
           <el-progress
             :percentage="item.percent"
-            :stroke-width="5"
+            :stroke-width="6"
             :status="item.status === 'error' ? 'exception' : item.status === 'done' ? 'success' : undefined"
           />
-          <div v-if="item.status === 'error'" class="tf-err">{{ item.error }}</div>
+          <div v-if="item.error" class="tf-err" :title="item.error">{{ item.error }}</div>
         </div>
       </div>
     </div>
@@ -36,52 +41,52 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { Loading, CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
-import { useTransfersStore } from '../stores/transfers'
+import { useTransfersStore, type TransferKind } from '../stores/transfers'
+import { formatSize } from '../types'
+
+const props = defineProps<{
+  // 只展示本页面发起的任务（SFTP 终端 / FTP / 独立文件页互不串台）
+  scope?: string | string[]
+  kind?: TransferKind | TransferKind[]
+  title?: string
+}>()
 
 const store = useTransfersStore()
 
-const bodyRef = ref<HTMLElement | null>(null)
-// 是否贴在底部：用户手动往上滚查看历史时置 false，滚回底部自动恢复
-const stick = ref(true)
+const dockScope = computed(() => (Array.isArray(props.scope) ? props.scope[0] : props.scope))
 
-// 进度推进的指纹：百分比 / 状态变化时触发，用于持续跟随最新一条
-const progressSig = computed(() =>
-  store.items.map((i) => `${i.key}:${i.percent}:${i.status}`).join('|'),
-)
-
-function isAtBottom(el: HTMLElement): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= 24
-}
-
-function onScroll() {
-  const el = bodyRef.value
-  if (el) stick.value = isAtBottom(el)
-}
-
-// 滚到最新一条（force=true 时即使用户已上滑也拉回底部）；用 RAF 合并同一帧的高频调用
-let scrollRafId: number | null = null
-
-function scrollToLatest(force = false) {
-  if (force) stick.value = true
-  if (!stick.value) return
-  if (scrollRafId !== null) return
-  scrollRafId = requestAnimationFrame(() => {
-    scrollRafId = null
-    const el = bodyRef.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
-}
-
-// 有新条目就滚到最后，确保始终能看到最新上传进度；已在底部时进度更新也继续跟随
-watch(() => store.items.length, () => scrollToLatest(true))
-watch(progressSig, () => scrollToLatest())
-
-onMounted(() => scrollToLatest(true))
-onBeforeUnmount(() => {
-  if (scrollRafId !== null) cancelAnimationFrame(scrollRafId)
+const items = computed(() => {
+  const scopes = props.scope
+    ? Array.isArray(props.scope)
+      ? new Set(props.scope)
+      : new Set([props.scope])
+    : null
+  const kinds = props.kind
+    ? Array.isArray(props.kind)
+      ? new Set(props.kind)
+      : new Set([props.kind])
+    : null
+  return store.tasks.filter(
+    (t) => (!scopes || scopes.has(t.scope)) && (!kinds || kinds.has(t.kind)),
+  )
 })
+
+function opLabel(op: string): string {
+  switch (op) {
+    case 'upload':
+      return '上传'
+    case 'download':
+      return '下载'
+    case 'delete':
+      return '删除'
+    case 'copy':
+      return '复制'
+    default:
+      return op
+  }
+}
 </script>
 
 <style scoped>
@@ -104,6 +109,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
 }
 
 .dock-head-actions {
@@ -114,7 +120,7 @@ onBeforeUnmount(() => {
 
 .dock-body {
   overflow-y: auto;
-  padding: 4px 10px 8px;
+  padding: 6px 10px 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -144,8 +150,9 @@ onBeforeUnmount(() => {
 .tf-line {
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   font-size: 12px;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
 }
 
 .tf-name {
@@ -154,9 +161,10 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.tf-op {
+.tf-meta {
   color: var(--text-secondary);
   flex-shrink: 0;
+  font-size: 11.5px;
 }
 
 .tf-err {

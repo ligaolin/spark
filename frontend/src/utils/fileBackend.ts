@@ -7,12 +7,18 @@ export interface FileBackend {
   kind: 'local' | 'remote'
   label: string
   sep: string // 路径分隔符
+  // 后端身份（SFTP 标签 / FTP 会话 / 本地）：复制粘贴只在同一后端内生效，
+  // 避免把 A 服务器的路径拿到 B 服务器上执行。
+  scope?: string
   home(): Promise<string>
   list(path: string): Promise<FileEntry[]>
+  stat?(path: string): Promise<FileEntry | null>
   mkdir(path: string): Promise<void>
   rename(oldPath: string, newPath: string): Promise<void>
+  copy?(srcPath: string, dstPath: string, isDir?: boolean): Promise<void>
   remove(path: string, isDir: boolean): Promise<void>
   chmod?(path: string, mode: number): Promise<void>
+  chmodRecursive?(path: string, mode: number): Promise<void>
   upload(localPath: string, remotePath: string): Promise<void>
   download(remotePath: string, localPath: string, isDir?: boolean): Promise<void>
   // 编辑器：读取 / 保存文本文件
@@ -28,11 +34,13 @@ export function makeLocalBackend(): FileBackend {
   return {
     kind: 'local',
     label: '本地',
+    scope: 'local',
     sep: '/', // 展示用；本地路径由后端处理
     home: async () => (await LocalService.Home()) || '/',
     list: async (p) => (await LocalService.List(p)) ?? [],
     mkdir: (p) => LocalService.Mkdir(p),
     rename: (a, b) => LocalService.Rename(a, b),
+    copy: (a, b) => LocalService.Copy(a, b),
     remove: (p) => LocalService.Remove(p),
     upload: async () => {},
     download: async () => {},
@@ -46,17 +54,21 @@ export function makeLocalBackend(): FileBackend {
 // 远程后端适配器：把 SFTP / FTP 文件操作统一成同一个接口，供 FilePanel 复用。
 // sessionId 用「getter」而不是固定值：连接成功后再调用面板方法（如 goHome）
 // 时能读到最新的会话 id，避免"先拿到旧后端对象再连上新会话"的竞态。
-export function makeSftpBackend(getSessionId: () => string): FileBackend {
+export function makeSftpBackend(getSessionId: () => string, scope?: string): FileBackend {
   return {
     kind: 'remote',
     label: 'SFTP',
+    scope,
     sep: '/',
     home: async () => (await SFTPFileService.Home(getSessionId())) || '/',
     list: async (p) => (await SFTPFileService.List(getSessionId(), p)) ?? [],
+    stat: (p) => SFTPFileService.Stat(getSessionId(), p),
     mkdir: (p) => SFTPFileService.Mkdir(getSessionId(), p),
     rename: (a, b) => SFTPFileService.Rename(getSessionId(), a, b),
+    copy: (a, b) => SFTPFileService.Copy(getSessionId(), a, b),
     remove: (p) => SFTPFileService.Remove(getSessionId(), p),
     chmod: (p, m) => SFTPFileService.Chmod(getSessionId(), p, m),
+    chmodRecursive: (p, m) => SFTPFileService.ChmodRecursive(getSessionId(), p, m, true),
     upload: (l, r) => SFTPFileService.Upload(getSessionId(), l, r),
     download: (r, l) => SFTPFileService.Download(getSessionId(), r, l),
     readFile: (p) => SFTPFileService.ReadFile(getSessionId(), p),
@@ -66,15 +78,17 @@ export function makeSftpBackend(getSessionId: () => string): FileBackend {
   }
 }
 
-export function makeFtpBackend(getSessionId: () => string): FileBackend {
+export function makeFtpBackend(getSessionId: () => string, scope?: string): FileBackend {
   return {
     kind: 'remote',
     label: 'FTP',
+    scope,
     sep: '/',
     home: async () => (await FTPFileService.Home(getSessionId())) || '/',
     list: async (p) => (await FTPFileService.List(getSessionId(), p)) ?? [],
     mkdir: (p) => FTPFileService.Mkdir(getSessionId(), p),
     rename: (a, b) => FTPFileService.Rename(getSessionId(), a, b),
+    copy: (a, b, isDir) => FTPFileService.Copy(getSessionId(), a, b, !!isDir),
     remove: (p, isDir) => FTPFileService.Remove(getSessionId(), p, isDir),
     upload: (l, r) => FTPFileService.Upload(getSessionId(), l, r),
     download: (r, l, isDir) => FTPFileService.Download(getSessionId(), r, l, !!isDir),
@@ -139,4 +153,19 @@ export function joinPath(base: string, name: string, sep: string): string {
   const trimmed = base.replace(/[\\/]+$/, '')
   if (!trimmed) return `${s}${name}` // 根路径直接拼接
   return `${trimmed}${s}${name}`
+}
+
+// 同目录已存在同名条目时，生成 "name (1).ext" / "name (2).ext" ... 形式的
+// 新名称，用于复制粘贴时自动重命名（不覆盖已有文件）。
+export function uniqueName(existing: Iterable<string>, name: string): string {
+  const names = existing instanceof Set ? existing : new Set(existing)
+  if (!names.has(name)) return name
+  const dot = name.lastIndexOf('.')
+  const hasExt = dot > 0
+  const base = hasExt ? name.slice(0, dot) : name
+  const ext = hasExt ? name.slice(dot) : ''
+  for (let i = 1; ; i++) {
+    const candidate = `${base} (${i})${ext}`
+    if (!names.has(candidate)) return candidate
+  }
 }

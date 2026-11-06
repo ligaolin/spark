@@ -23,6 +23,13 @@ export function Connect(opts: types$0.ConnectOptions): $CancellablePromise<strin
 }
 
 /**
+ * Copy copies a remote file or directory (recursively) to a new remote path.
+ */
+export function Copy(id: string, srcPath: string, dstPath: string, isDir: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3496012155, id, srcPath, dstPath, isDir);
+}
+
+/**
  * Disconnect closes an FTP session.
  */
 export function Disconnect(id: string): $CancellablePromise<void> {

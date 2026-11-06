@@ -1,5 +1,5 @@
 <template>
-    <div class="terminal-pane" @contextmenu.prevent="onContextMenu" @keydown="onTermKeydown">
+    <div class="terminal-pane" @contextmenu.prevent="onContextMenu" @keydown.capture="onTermKeydown">
         <div class="term-main">
             <div ref="termRef" class="term-container" />
             <div v-if="tab.status === 'connecting'" class="term-overlay">
@@ -96,8 +96,8 @@ function onContextMenu(e: MouseEvent) {
     ctxX.value = e.clientX
     ctxY.value = e.clientY
     ctxItems.value = [
-        { key: 'copy', label: '复制', icon: CopyDocument, hint: 'Ctrl+Shift+C', disabled: !hasSelection() },
-        { key: 'paste', label: '粘贴', icon: Document, hint: 'Ctrl+Shift+V' },
+        { key: 'copy', label: '复制', icon: CopyDocument, hint: 'Ctrl+C / Ctrl+Shift+C', disabled: !hasSelection() },
+        { key: 'paste', label: '粘贴', icon: Document, hint: 'Ctrl+V / Ctrl+Shift+V' },
         { key: 'select-all', label: '全选', icon: Select },
         'divider',
         { key: 'clear', label: '清屏', icon: Delete },
@@ -108,16 +108,28 @@ function onContextMenu(e: MouseEvent) {
     })
 }
 
-// 终端键盘快捷键：Ctrl+Shift+C / Ctrl+Insert 复制，Ctrl+Shift+V / Shift+Insert 粘贴。
-// 注意：Ctrl+C 保留为中断信号（不拦截），Ctrl+V 走浏览器原生粘贴。
+// 终端键盘快捷键：Ctrl+C 有选中文本时复制，无选中时照常发送中断信号（^C）；
+// Ctrl+V 粘贴。另外保留 Ctrl+Shift+C/V、Ctrl+Insert / Shift+Insert。
+// 用 capture 阶段拦截，避免 xterm 先处理 Ctrl+C 导致有选中时也发出中断。
 function onTermKeydown(e: KeyboardEvent) {
     const combo = eventToCombo(e)
-    if (combo === 'ctrl+shift+c' || combo === 'ctrl+insert') {
+    if (combo === 'ctrl+c') {
+        if (!hasSelection()) return
         e.preventDefault()
-        doCopy()
+        e.stopPropagation()
+        void doCopy()
+    } else if (combo === 'ctrl+v') {
+        e.preventDefault()
+        e.stopPropagation()
+        void doPaste()
+    } else if (combo === 'ctrl+shift+c' || combo === 'ctrl+insert') {
+        e.preventDefault()
+        e.stopPropagation()
+        void doCopy()
     } else if (combo === 'ctrl+shift+v' || combo === 'shift+insert') {
         e.preventDefault()
-        doPaste()
+        e.stopPropagation()
+        void doPaste()
     }
 }
 

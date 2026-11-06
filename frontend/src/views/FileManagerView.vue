@@ -40,6 +40,9 @@
           placeholder="远程目录，回车跳转"
           :connected="connected"
           :fav-key="connId || 0"
+          :transfer-kind="mode === 'sftp' ? 'sftp' : 'ftp'"
+          :transfer-scope="'file-' + mode"
+          :session-id="currentSessionId"
           @drop="onRemoteDrop"
           @action="onPanelAction"
         >
@@ -72,7 +75,7 @@
     </div>
 
     <!-- 底部传输队列 -->
-    <TransferDock />
+    <TransferDock :scope="'file-' + mode" :kind="mode === 'sftp' ? 'sftp' : 'ftp'" :title="mode === 'sftp' ? 'SFTP 传输' : 'FTP 传输'" />
 
     <ConnectDialog
       v-model="dialogVisible"
@@ -105,6 +108,7 @@ import {
 import type { ConnectOptions, SavedConnection } from '../utils/wails'
 import type { DropPayload, PanelAction } from '../types'
 import { joinPath, makeSftpBackend, makeFtpBackend, type FileBackend } from '../utils/fileBackend'
+import { runBatchTransfer } from '../utils/transferBatch'
 import { resolveHostKeyIssue } from '../utils/hostkey'
 
 const props = defineProps<{ mode: 'sftp' | 'ftp' }>()
@@ -132,6 +136,9 @@ const remoteBackend: FileBackend = {
   kind: 'remote',
   label: props.mode === 'sftp' ? 'SFTP' : 'FTP',
   sep: '/',
+  get scope() {
+    return currentSessionId.value ? `file-${props.mode}:${currentSessionId.value}` : `file-${props.mode}`
+  },
   home: async () => {
     const p =
       props.mode === 'sftp'
@@ -206,8 +213,8 @@ function snapshotBackend(): FileBackend {
   const sid = currentSessionId.value
   if (!sid) return remoteBackend
   return props.mode === 'sftp'
-    ? makeSftpBackend(() => sid)
-    : makeFtpBackend(() => sid)
+    ? makeSftpBackend(() => sid, `file-sftp:${sid}`)
+    : makeFtpBackend(() => sid, `file-ftp:${sid}`)
 }
 
 // 右键「用编辑器打开目录」：把整个目录加载到编辑器板块并跳转过去
@@ -319,18 +326,7 @@ async function disconnect() {
 
 // ---------- 上传 ----------
 
-async function runTransfer(name: string, fn: () => Promise<void>) {
-  try {
-    await fn()
-    transfers.complete(currentSessionId.value, 'upload', name)
-    ElMessage.success(`上传完成：${name}`)
-  } catch (e: any) {
-    transfers.fail(currentSessionId.value, 'upload', name, e?.message || String(e))
-    ElMessage.error(`上传失败：${e?.message || e}`)
-  }
-}
-
-// 批量上传（按钮选择 / 拖拽文件）：全部结束后统一提示
+// 批量上传（按钮选择 / 拖拽文件 / 整个目录）：聚合成一条进度任务
 async function uploadBatch(items: { path: string; name: string; isDir: boolean }[], remoteDirOverride?: string) {
   if (!items.length) return
   if (!currentSessionId.value) {
@@ -339,28 +335,18 @@ async function uploadBatch(items: { path: string; name: string; isDir: boolean }
   }
   const remoteDir = remoteDirOverride || remotePanel.value?.currentPath
   if (!remoteDir) return
-  let ok = 0
-  const failed: string[] = []
-  for (const it of items) {
-    const target = joinPath(remoteDir, it.name, '/')
-    const label = it.isDir ? `${it.name}/ (目录)` : it.name
-    try {
-      await remoteBackend.upload(it.path, target)
-      transfers.complete(currentSessionId.value, 'upload', label)
-      ok++
-    } catch (e: any) {
-      transfers.fail(currentSessionId.value, 'upload', label, e?.message || String(e))
-      failed.push(it.name)
-    }
-  }
+  await runBatchTransfer({
+    kind: props.mode === 'sftp' ? 'sftp' : 'ftp',
+    scope: `file-${props.mode}`,
+    sessionId: currentSessionId.value,
+    op: 'upload',
+    label: items.length === 1 ? `上传 ${items[0].name}` : `上传 ${items.length} 项`,
+    items: items.map((it) => ({
+      name: it.isDir ? `${it.name}/` : it.name,
+      run: () => remoteBackend.upload(it.path, joinPath(remoteDir, it.name, '/')),
+    })),
+  })
   await remotePanel.value?.refresh()
-  if (failed.length === 0) {
-    ElMessage.success(`全部上传完成（${ok} 项）`)
-  } else {
-    ElMessage.error(
-      `上传完成：成功 ${ok} 项，失败 ${failed.length} 项（${failed.slice(0, 3).join('、')}${failed.length > 3 ? '…' : ''}）`,
-    )
-  }
 }
 
 async function pickAndUpload() {
@@ -395,9 +381,7 @@ async function pickDirAndUpload() {
     return
   }
   if (!dir) return
-  const name = basename(dir)
-  await runTransfer(`${name}/ (目录)`, () => remoteBackend.upload(dir, joinPath(remoteDir, name, '/')))
-  await remotePanel.value?.refresh()
+  await uploadBatch([{ path: dir, name: basename(dir), isDir: true }], remoteDir)
 }
 
 // ---------- 下载 ----------
@@ -422,7 +406,7 @@ async function pickDownloadDir(): Promise<string | null> {
   return null
 }
 
-// 批量下载（文件或目录，目录递归）：全部结束后统一提示
+// 批量下载（文件或目录，目录递归）：聚合成一条进度任务
 async function downloadBatch(items: { path: string; name: string; isDir: boolean }[]) {
   if (!items.length) return
   if (!currentSessionId.value) {
@@ -431,27 +415,18 @@ async function downloadBatch(items: { path: string; name: string; isDir: boolean
   }
   const dir = await pickDownloadDir()
   if (!dir) return
-  let ok = 0
-  const failed: string[] = []
-  for (const it of items) {
-    const target = joinPath(dir, it.name, '/')
-    const label = it.isDir ? `${it.name}/ (目录)` : it.name
-    try {
-      await remoteBackend.download(it.path, target, it.isDir)
-      transfers.complete(currentSessionId.value, 'download', label)
-      ok++
-    } catch (e: any) {
-      transfers.fail(currentSessionId.value, 'download', label, e?.message || String(e))
-      failed.push(it.name)
-    }
-  }
-  if (failed.length === 0) {
-    ElMessage.success(`全部下载完成（${ok} 项），保存位置：${dir}`)
-  } else {
-    ElMessage.error(
-      `下载完成：成功 ${ok} 项，失败 ${failed.length} 项（${failed.slice(0, 3).join('、')}${failed.length > 3 ? '…' : ''}）`,
-    )
-  }
+  await runBatchTransfer({
+    kind: props.mode === 'sftp' ? 'sftp' : 'ftp',
+    scope: `file-${props.mode}`,
+    sessionId: currentSessionId.value,
+    op: 'download',
+    label: items.length === 1 ? `下载 ${items[0].name}` : `下载 ${items.length} 项`,
+    items: items.map((it) => ({
+      name: it.isDir ? `${it.name}/` : it.name,
+      run: () => remoteBackend.download(it.path, joinPath(dir, it.name, '/'), it.isDir),
+    })),
+    success: `下载完成，保存位置：${dir}`,
+  })
 }
 
 // 拖到远程面板：操作系统文件 / 内部条目都走批量上传

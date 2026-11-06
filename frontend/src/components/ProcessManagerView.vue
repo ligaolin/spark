@@ -13,34 +13,35 @@
     </div>
 
     <div class="pm-table">
-      <el-table :data="filtered" size="small" height="100%" empty-text="暂无进程数据" @row-click="select">
-        <el-table-column label="PID" width="70">
+      <el-table :data="filtered" size="small" height="100%" empty-text="暂无进程数据"
+        :default-sort="{ prop: 'cpu', order: 'descending' }" @sort-change="onSortChange" @row-click="select">
+        <el-table-column label="PID" width="70" prop="pid" sortable="custom">
           <template #default="{ row }">
             <span class="mono">{{ row.pid }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="用户" width="70" prop="user" show-overflow-tooltip />
-        <el-table-column label="CPU%" width="50" align="right">
+        <el-table-column label="用户" width="70" prop="user" sortable="custom" show-overflow-tooltip />
+        <el-table-column label="CPU%" width="55" align="right" prop="cpu" sortable="custom">
           <template #default="{ row }">
             <span class="mono" :class="{ hot: row.cpu > 50 }">{{ row.cpu.toFixed(1) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="MEM%" width="55" align="right">
+        <el-table-column label="MEM%" width="60" align="right" prop="mem" sortable="custom">
           <template #default="{ row }">
             <span class="mono">{{ row.mem.toFixed(1) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="内存" width="70" align="right">
+        <el-table-column label="内存" width="75" align="right" prop="rss" sortable="custom">
           <template #default="{ row }">
             <span class="mono dim">{{ formatSize((row.rss || 0) * 1024) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="50">
+        <el-table-column label="状态" width="55" prop="stat" sortable="custom">
           <template #default="{ row }">
             <span class="mono dim">{{ row.stat }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="命令" min-width="140" prop="command" show-overflow-tooltip />
+        <el-table-column label="命令" min-width="140" prop="command" sortable="custom" show-overflow-tooltip />
       </el-table>
     </div>
 
@@ -83,15 +84,53 @@ const auto = ref(true)
 const selectedRow = ref<ProcessInfo | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 
+// 点击表头排序：默认按 CPU 降序
+type SortKey = 'pid' | 'user' | 'cpu' | 'mem' | 'rss' | 'stat' | 'command'
+const sortKey = ref<SortKey>('cpu')
+const sortOrder = ref<'ascending' | 'descending'>('descending')
+
+function onSortChange({ prop, order }: { prop: string | null; order: 'ascending' | 'descending' | null }) {
+  if (!prop || !order) {
+    sortKey.value = 'cpu'
+    sortOrder.value = 'descending'
+    return
+  }
+  sortKey.value = prop as SortKey
+  sortOrder.value = order
+}
+
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return processes.value
-  return processes.value.filter(
-    (p) =>
-      String(p.pid).includes(kw) ||
-      (p.user || '').toLowerCase().includes(kw) ||
-      (p.command || '').toLowerCase().includes(kw),
-  )
+  let list = processes.value
+  if (kw) {
+    list = list.filter(
+      (p) =>
+        String(p.pid).includes(kw) ||
+        (p.user || '').toLowerCase().includes(kw) ||
+        (p.command || '').toLowerCase().includes(kw),
+    )
+  }
+  const dir = sortOrder.value === 'ascending' ? 1 : -1
+  return [...list].sort((a, b) => {
+    switch (sortKey.value) {
+      case 'pid':
+        return (a.pid - b.pid) * dir
+      case 'cpu':
+        return (a.cpu - b.cpu) * dir
+      case 'mem':
+        return (a.mem - b.mem) * dir
+      case 'rss':
+        return ((a.rss || 0) - (b.rss || 0)) * dir
+      case 'user':
+        return String(a.user || '').localeCompare(String(b.user || '')) * dir
+      case 'stat':
+        return String(a.stat || '').localeCompare(String(b.stat || '')) * dir
+      case 'command':
+        return String(a.command || '').localeCompare(String(b.command || '')) * dir
+      default:
+        return 0
+    }
+  })
 })
 
 async function refresh() {
@@ -99,9 +138,7 @@ async function refresh() {
   loading.value = true
   try {
     processes.value = (await TerminalService.ProcessList(props.sessionId)) ?? []
-    // 默认按 CPU 降序
-    processes.value.sort((a, b) => b.cpu - a.cpu)
-    // 选中行若已消失则清空
+    // 选中行若已消失则清空（排序由 filtered 统一处理）
     if (selectedRow.value && !processes.value.some((p) => p.pid === selectedRow.value!.pid)) {
       selectedRow.value = null
     }

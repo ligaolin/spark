@@ -40,6 +40,9 @@
               placeholder="远程目录，回车跳转"
               :connected="true"
               :fav-key="store.activeTab?.connId || 0"
+              transfer-kind="ftp"
+              transfer-scope="ftp"
+              :session-id="store.activeTab?.sessionId || ''"
               @drop="onRemoteDrop"
               @action="onPanelAction"
             >
@@ -77,7 +80,7 @@
       </div>
     </template>
 
-    <TransferDock />
+    <TransferDock scope="ftp" kind="ftp" title="FTP 传输" />
     <ConnectDialog v-model="dialogVisible" mode="connect" conn-type="ftp" @connect="onQuickConnect" />
     <ContextMenu v-model="tabCtxVisible" :x="tabCtxX" :y="tabCtxY" :items="tabCtxItems" @pick="onTabCtxPick" />
   </div>
@@ -118,6 +121,7 @@ import {
 import type { ConnectOptions, SavedConnection } from '../utils/wails'
 import type { DropPayload, PanelAction } from '../types'
 import { joinPath, makeFtpBackend, type FileBackend } from '../utils/fileBackend'
+import { runBatchTransfer } from '../utils/transferBatch'
 
 const router = useRouter()
 const store = useFtpStore()
@@ -137,7 +141,7 @@ const activeBackend = computed<FileBackend>(() => {
   if (!tab) {
     return makeFtpBackend(() => '')
   }
-  return makeFtpBackend(() => tab.sessionId)
+  return makeFtpBackend(() => tab.sessionId, `ftp:${tab.key}`)
 })
 
 // 标签页右键菜单
@@ -158,8 +162,9 @@ let fmSeq = 0
 const pageScope = `ftp-${Date.now()}-${++fmSeq}`
 
 function snapshotBackend(): FileBackend {
-  const sid = store.activeTab?.sessionId || ''
-  return makeFtpBackend(() => sid)
+  const tab = store.activeTab
+  const sid = tab?.sessionId || ''
+  return makeFtpBackend(() => sid, `ftp:${tab?.key || pageScope}`)
 }
 
 function openDirInEditorView(path: string) {
@@ -336,28 +341,18 @@ async function uploadBatch(items: { path: string; name: string; isDir: boolean }
   }
   const remoteDir = remoteDirOverride || activePanel.value?.currentPath
   if (!remoteDir) return
-  let ok = 0
-  const failed: string[] = []
-  for (const it of items) {
-    const target = joinPath(remoteDir, it.name, '/')
-    const label = it.isDir ? `${it.name}/ (目录)` : it.name
-    try {
-      await activeBackend.value.upload(it.path, target)
-      transfers.complete(tab.sessionId, 'upload', label)
-      ok++
-    } catch (e: any) {
-      transfers.fail(tab.sessionId, 'upload', label, e?.message || String(e))
-      failed.push(it.name)
-    }
-  }
+  await runBatchTransfer({
+    kind: 'ftp',
+    scope: 'ftp',
+    sessionId: tab.sessionId,
+    op: 'upload',
+    label: items.length === 1 ? `上传 ${items[0].name}` : `上传 ${items.length} 项`,
+    items: items.map((it) => ({
+      name: it.isDir ? `${it.name}/` : it.name,
+      run: () => activeBackend.value.upload(it.path, joinPath(remoteDir, it.name, '/')),
+    })),
+  })
   await activePanel.value?.refresh()
-  if (failed.length === 0) {
-    ElMessage.success(`全部上传完成（${ok} 项）`)
-  } else {
-    ElMessage.error(
-      `上传完成：成功 ${ok} 项，失败 ${failed.length} 项（${failed.slice(0, 3).join('、')}${failed.length > 3 ? '…' : ''}）`,
-    )
-  }
 }
 
 async function pickAndUpload() {
@@ -393,17 +388,7 @@ async function pickDirAndUpload() {
     return
   }
   if (!dir) return
-  const name = basename(dir)
-  const target = joinPath(remoteDir, name, '/')
-  try {
-    await activeBackend.value.upload(dir, target)
-    transfers.complete(tab.sessionId, 'upload', `${name}/ (目录)`)
-    ElMessage.success(`上传完成：${name}`)
-  } catch (e: any) {
-    transfers.fail(tab.sessionId, 'upload', `${name}/ (目录)`, e?.message || String(e))
-    ElMessage.error(`上传失败：${e?.message || e}`)
-  }
-  await activePanel.value?.refresh()
+  await uploadBatch([{ path: dir, name: basename(dir), isDir: true }], remoteDir)
 }
 
 // ---------- 拖放 ----------
@@ -487,27 +472,18 @@ async function downloadBatch(items: { path: string; name: string; isDir: boolean
   }
   const dir = await pickDownloadDir()
   if (!dir) return
-  let ok = 0
-  const failed: string[] = []
-  for (const it of items) {
-    const target = joinPath(dir, it.name, '/')
-    const label = it.isDir ? `${it.name}/ (目录)` : it.name
-    try {
-      await activeBackend.value.download(it.path, target, it.isDir)
-      transfers.complete(tab.sessionId, 'download', label)
-      ok++
-    } catch (e: any) {
-      transfers.fail(tab.sessionId, 'download', label, e?.message || String(e))
-      failed.push(it.name)
-    }
-  }
-  if (failed.length === 0) {
-    ElMessage.success(`全部下载完成（${ok} 项），保存位置：${dir}`)
-  } else {
-    ElMessage.error(
-      `下载完成：成功 ${ok} 项，失败 ${failed.length} 项（${failed.slice(0, 3).join('、')}${failed.length > 3 ? '…' : ''}）`,
-    )
-  }
+  await runBatchTransfer({
+    kind: 'ftp',
+    scope: 'ftp',
+    sessionId: tab.sessionId,
+    op: 'download',
+    label: items.length === 1 ? `下载 ${items[0].name}` : `下载 ${items.length} 项`,
+    items: items.map((it) => ({
+      name: it.isDir ? `${it.name}/` : it.name,
+      run: () => activeBackend.value.download(it.path, joinPath(dir, it.name, '/'), it.isDir),
+    })),
+    success: `下载完成，保存位置：${dir}`,
+  })
 }
 
 // ---------- 生命周期 ----------

@@ -52,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { EditPen, Close, FolderOpened, CloseBold, DArrowRight, CircleClose } from '@element-plus/icons-vue'
 import RemoteEditorPanel from '../components/RemoteEditorPanel.vue'
@@ -178,6 +178,70 @@ watch(
   },
   { immediate: true, flush: 'post' },
 )
+
+// ---------- 页面级快捷键：Ctrl+S 保存、F12 重命名、Ctrl+C/X/V 复制粘贴 ----------
+// 在 window 捕获阶段处理：无论焦点在标签栏 / 目录树还是编辑器都能生效，
+// 同时避免 F12 触发全局开发者工具。
+
+function isTextEditing(t: HTMLElement | null): boolean {
+  if (!t) return false
+  return !!t.closest('.monaco-editor, textarea, input, [contenteditable="true"]')
+}
+
+function onViewKeydown(e: KeyboardEvent) {
+  const id = remoteEditor.activeId
+  const inst = id ? panelRefs.value[id] : null
+  if (!inst) return
+
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
+    e.preventDefault()
+    e.stopPropagation()
+    void inst.saveActive()
+    return
+  }
+
+  // 编辑器 / 输入框内保留原生编辑快捷键
+  if (isTextEditing(e.target as HTMLElement | null)) return
+
+  if (e.key === 'F12') {
+    e.preventDefault()
+    e.stopPropagation()
+    void inst.renameSelected()
+    return
+  }
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
+  const k = e.key.toLowerCase()
+  if (k === 'c') {
+    e.preventDefault()
+    e.stopPropagation()
+    inst.copySelected(false)
+  } else if (k === 'x') {
+    e.preventDefault()
+    e.stopPropagation()
+    inst.copySelected(true)
+  } else if (k === 'v') {
+    e.preventDefault()
+    e.stopPropagation()
+    void inst.paste()
+  }
+}
+
+let keyBound = false
+function bindKeys() {
+  if (keyBound) return
+  window.addEventListener('keydown', onViewKeydown, true)
+  keyBound = true
+}
+function unbindKeys() {
+  if (!keyBound) return
+  window.removeEventListener('keydown', onViewKeydown, true)
+  keyBound = false
+}
+
+onMounted(bindKeys)
+onActivated(bindKeys)
+onDeactivated(unbindKeys)
+onBeforeUnmount(unbindKeys)
 </script>
 
 <style scoped>

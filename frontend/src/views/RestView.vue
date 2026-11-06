@@ -1616,7 +1616,7 @@ function openCurlImport() {
     showCurlDialog.value = true
 }
 
-function importCurl() {
+async function importCurl() {
     const cmd = curlText.value.trim()
     if (!cmd) {
         ElMessage.warning('请粘贴 curl 命令')
@@ -1629,72 +1629,202 @@ function importCurl() {
         if (parsed.headers.length) {
             current.value.headers = parsed.headers.map((h: KV) => ({ ...h, enabled: true }))
         }
-        if (parsed.body) {
-            current.value.body = parsed.body
-            bodyType.value = 'json'
-        }
         if (parsed.params.length) {
             current.value.params = parsed.params.map((p: KV) => ({ ...p, enabled: true }))
         }
+
+        const contentType =
+            parsed.headers.find((h) => h.key.toLowerCase() === 'content-type')?.value.toLowerCase() || ''
+        const body = parsed.body
+
+        // 按 curl 的表单 / 编码 / JSON / 原始文本选择合适的 Body 类型
+        if (parsed.formParts.length) {
+            formFields.value = []
+            formFiles.value = []
+            for (const part of parsed.formParts) {
+                const idx = part.indexOf('=')
+                if (idx <= 0) continue
+                const key = part.slice(0, idx)
+                const value = part.slice(idx + 1)
+                if (value.startsWith('@')) {
+                    const filePath = value.slice(1)
+                    const fileName = filePath.split(/[\\/]/).pop() || filePath
+                    formFiles.value.push({ fieldName: key, fileName, filePath })
+                } else {
+                    formFields.value.push({ key, value, enabled: true })
+                }
+            }
+            bodyType.value = 'form'
+        } else if (parsed.urlencodedParts.length || (body && contentType.includes('application/x-www-form-urlencoded'))) {
+            const pairs = parsed.urlencodedParts.length ? parsed.urlencodedParts : body.split('&')
+            urlencodedFields.value = pairs
+                .map((pair) => {
+                    const idx = pair.indexOf('=')
+                    const key = idx >= 0 ? pair.slice(0, idx) : pair
+                    const value = idx >= 0 ? pair.slice(idx + 1) : ''
+                    return {
+                        key: safeDecode(key),
+                        value: safeDecode(value),
+                        enabled: true,
+                    }
+                })
+                .filter((f) => f.key)
+            bodyType.value = 'urlencoded'
+            current.value.body = body
+        } else if (body) {
+            const isJson = contentType.includes('json') || /^\s*[[{]/.test(body)
+            bodyType.value = isJson ? 'json' : 'raw'
+            current.value.body = body
+            rawBody.value = body
+        }
+
+        reqTab.value = 'body'
         showCurlDialog.value = false
         ElMessage.success('curl 导入成功')
+
+        // 用户当前已经停留在 JSON 标签时 watch(bodyType) 不会触发，
+        // 必须显式把解析出的 Body 写进编辑器，否则界面上看不到导入内容。
+        await nextTick()
+        if (bodyType.value === 'json') {
+            bodyEditorRef.value?.setContent(current.value.body)
+        } else if (bodyType.value === 'raw') {
+            rawBodyEditorRef.value?.setContent(rawBody.value)
+        }
     } catch (e: any) {
         ElMessage.error('解析失败: ' + (e?.message || e))
     }
 }
 
-function parseCurl(cmd: string): { method: string; url: string; headers: KV[]; body: string; params: KV[] } {
-    const result: { method: string; url: string; headers: KV[]; body: string; params: KV[] } = {
+function safeDecode(s: string): string {
+    try {
+        return decodeURIComponent(s.replace(/\+/g, ' '))
+    } catch {
+        return s
+    }
+}
+
+interface CurlParseResult {
+    method: string
+    url: string
+    headers: KV[]
+    body: string
+    params: KV[]
+    formParts: string[]
+    urlencodedParts: string[]
+}
+
+function parseCurl(cmd: string): CurlParseResult {
+    const result: CurlParseResult = {
         method: 'GET',
         url: '',
         headers: [],
         body: '',
         params: [],
+        formParts: [],
+        urlencodedParts: [],
     }
 
-    let s = cmd.replace(/\\(\r?\n|$)/g, ' ')
-    s = s.replace(/^curl\s+/i, '')
+    // Bash 反斜杠续行 / CMD 脱字符 / PowerShell 反引号续行
+    let s = cmd
+        .replace(/\\(\r?\n|$)/g, ' ')
+        .replace(/\^(\r?\n|$)/g, ' ')
+        .replace(/`(\r?\n|$)/g, ' ')
+    // 去掉命令行提示符与 curl 可执行名
+    s = s.replace(/^\s*(?:\$\s+)?curl(?:\.exe)?\s+/i, '')
 
     const tokens = tokenize(s)
+    const dataParts: string[] = []
+    let methodSet = false
+    let hasBody = false
+
+    const pushHeader = (raw: string) => {
+        const idx = raw.indexOf(':')
+        if (idx > 0) {
+            result.headers.push({
+                key: raw.slice(0, idx).trim(),
+                value: raw.slice(idx + 1).trim(),
+            })
+        }
+    }
+
+    // 取下一个参数，越界时返回空串
+    const next = (i: number) => (i + 1 < tokens.length ? tokens[i + 1] : '')
 
     let i = 0
     while (i < tokens.length) {
         const t = tokens[i]
 
         if (t === '-X' || t === '--request') {
+            const v = next(i)
+            if (v) result.method = v.toUpperCase()
+            methodSet = true
             i++
-            if (i < tokens.length) result.method = tokens[i].toUpperCase()
+        } else if (/^-X./.test(t)) {
+            // 紧凑写法 -XPOST
+            result.method = t.slice(2).toUpperCase()
+            methodSet = true
+        } else if (t === '--url') {
+            result.url = next(i)
+            i++
         } else if (t === '-H' || t === '--header') {
+            pushHeader(next(i))
             i++
-            if (i < tokens.length) {
-                const idx = tokens[i].indexOf(':')
-                if (idx > 0) {
-                    result.headers.push({
-                        key: tokens[i].slice(0, idx).trim(),
-                        value: tokens[i].slice(idx + 1).trim(),
-                    })
+        } else if (
+            t === '-d' ||
+            t === '--data' ||
+            t === '--data-raw' ||
+            t === '--data-binary' ||
+            t === '--data-ascii'
+        ) {
+            const v = next(i)
+            if (v) {
+                dataParts.push(v)
+                hasBody = true
+            }
+            i++
+        } else if (t === '--data-urlencode') {
+            const v = next(i)
+            if (v) {
+                result.urlencodedParts.push(v)
+                dataParts.push(v)
+                hasBody = true
+            }
+            i++
+        } else if (t === '-F' || t === '--form' || t === '--form-string') {
+            const v = next(i)
+            if (v) {
+                result.formParts.push(v)
+                hasBody = true
+            }
+            i++
+        } else if (t === '--json') {
+            const v = next(i)
+            if (v) {
+                dataParts.push(v)
+                hasBody = true
+                if (!result.headers.some((h) => h.key.toLowerCase() === 'content-type')) {
+                    result.headers.push({ key: 'Content-Type', value: 'application/json' })
                 }
             }
-        } else if (t === '-d' || t === '--data' || t === '--data-raw' || t === '--data-binary') {
             i++
-            if (i < tokens.length) {
-                result.body = tokens[i]
-                if (!result.method || result.method === 'GET') result.method = 'POST'
-            }
         } else if (t === '-u' || t === '--user') {
+            const v = next(i)
+            if (v) result.headers.push({ key: 'Authorization', value: 'Basic ' + btoa(v) })
             i++
-            if (i < tokens.length) {
-                result.headers.push({ key: 'Authorization', value: 'Basic ' + btoa(tokens[i]) })
-            }
+        } else if (t === '-A' || t === '--user-agent') {
+            const v = next(i)
+            if (v) result.headers.push({ key: 'User-Agent', value: v })
+            i++
         } else if (t === '-G' || t === '--get') {
             result.method = 'GET'
+            methodSet = true
         } else if (t === '-I' || t === '--head') {
             result.method = 'HEAD'
+            methodSet = true
         } else if (t === '-b' || t === '--cookie') {
+            const v = next(i)
+            if (v) result.headers.push({ key: 'Cookie', value: v })
             i++
-            if (i < tokens.length) {
-                result.headers.push({ key: 'Cookie', value: tokens[i] })
-            }
         } else if (t === '--compressed') {
             result.headers.push({ key: 'Accept-Encoding', value: 'gzip, deflate' })
         } else if (!t.startsWith('-') && !result.url) {
@@ -1703,6 +1833,10 @@ function parseCurl(cmd: string): { method: string; url: string; headers: KV[]; b
 
         i++
     }
+
+    result.body = dataParts.join('&')
+    // 带了请求体但没显式指定方法时，curl 默认使用 POST
+    if (hasBody && !methodSet) result.method = 'POST'
 
     if (!result.url) {
         for (const tk of tokens) {
@@ -1743,7 +1877,43 @@ function tokenize(s: string): string[] {
         while (i < s.length && /\s/.test(s[i])) i++
         if (i >= s.length) break
 
-        if (s[i] === "'") {
+        if (s[i] === '$' && (s[i + 1] === "'" || s[i + 1] === '"')) {
+            // $'...' ANSI-C 引用（Bash）：还原 \n / \t / \xNN 等转义
+            const quote = s[i + 1]
+            i += 2
+            let val = ''
+            while (i < s.length && s[i] !== quote) {
+                if (s[i] === '\\' && i + 1 < s.length) {
+                    const c = s[i + 1]
+                    const simple: Record<string, string> = {
+                        n: '\n',
+                        t: '\t',
+                        r: '\r',
+                        '\\': '\\',
+                        "'": "'",
+                        '"': '"',
+                        '0': '\0',
+                    }
+                    if (c in simple) {
+                        val += simple[c]
+                        i += 2
+                        continue
+                    }
+                    if (c === 'x' && /^[0-9a-f]{2}/i.test(s.slice(i + 2, i + 4))) {
+                        val += String.fromCharCode(parseInt(s.slice(i + 2, i + 4), 16))
+                        i += 4
+                        continue
+                    }
+                    val += c
+                    i += 2
+                    continue
+                }
+                val += s[i]
+                i++
+            }
+            i++
+            tokens.push(val)
+        } else if (s[i] === "'") {
             i++
             let val = ''
             while (i < s.length && s[i] !== "'") {

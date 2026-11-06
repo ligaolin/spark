@@ -455,6 +455,55 @@ func (s *FTPFileService) Upload(id, localPath, remotePath string) error {
 	return ftpErrHint(s.uploadFile(sess.conn, id, localPath, remotePath))
 }
 
+// Copy copies a remote file or directory (recursively) to a new remote path.
+func (s *FTPFileService) Copy(id, srcPath, dstPath string, isDir bool) error {
+	sess, err := s.get(id)
+	if err != nil {
+		return err
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	return ftpErrHint(copyFTP(sess.conn, srcPath, dstPath, isDir))
+}
+
+func copyFTP(conn *ftp.ServerConn, src, dst string, isDir bool) error {
+	if !isDir {
+		rc, err := conn.Retr(src)
+		if err != nil {
+			return err
+		}
+		defer rc.Close()
+		return conn.Stor(dst, rc)
+	}
+	if err := ensureRemoteDir(conn, dst); err != nil {
+		return err
+	}
+	entries, err := conn.List(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		sp := joinRemote(src, e.Name)
+		dp := joinRemote(dst, e.Name)
+		if e.Type == ftp.EntryTypeFolder {
+			if err := copyFTP(conn, sp, dp, true); err != nil {
+				return err
+			}
+			continue
+		}
+		rc, err := conn.Retr(sp)
+		if err != nil {
+			return err
+		}
+		err = conn.Stor(dp, rc)
+		rc.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *FTPFileService) uploadDir(conn *ftp.ServerConn, id, localDir, remoteDir string) error {
 	entries, err := os.ReadDir(localDir)
 	if err != nil {

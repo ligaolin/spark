@@ -152,7 +152,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
     Folder,
@@ -167,6 +167,9 @@ import {
     CircleClose,
     MagicStick,
     Refresh,
+    CopyDocument,
+    Scissor,
+    Files,
 } from '@element-plus/icons-vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
@@ -178,6 +181,8 @@ import { showInputDialog, showConfirmDialog } from '../utils/dialog'
 import { streamToDialog } from '../utils/ai'
 import { kindForName } from '../utils/fileKind'
 import { useSettingsStore } from '../stores/settings'
+import { uniqueName } from '../utils/fileBackend'
+import { fileClipboard } from '../utils/fileClipboard'
 import type { SearchResult } from '../types'
 
 interface TreeNode {
@@ -471,6 +476,91 @@ async function reorderNode(id: number, newParentId: number, targetId: number, po
     }
 }
 
+// ---------- 复制 / 剪切 / 粘贴 ----------
+
+const DOC_SCOPE = 'docs'
+
+function copySelected(cut: boolean) {
+    const node = selectedNode()
+    if (!node) {
+        ElMessage.warning('请先选择文件或目录')
+        return
+    }
+    fileClipboard.value = {
+        path: node.path,
+        name: node.name,
+        isDir: node.type === 'folder',
+        cut,
+        scope: DOC_SCOPE,
+        docId: node.id,
+    }
+    ElMessage.success(cut ? `已剪切：${node.name}` : `已复制：${node.name}`)
+}
+
+function canPaste(): boolean {
+    const c = fileClipboard.value
+    return !!c && c.docId != null && c.scope === DOC_SCOPE
+}
+
+// 粘贴目标：选中目录 → 该目录；选中文件 → 其父目录；未选中 → 根目录
+function pasteTargetId(): number {
+    const node = selectedNode()
+    if (!node) return 0
+    return node.type === 'folder' ? node.id : node.parentId ?? 0
+}
+
+async function paste() {
+    const c = fileClipboard.value
+    if (!c || c.docId == null || c.scope !== DOC_SCOPE) return
+    const targetId = pasteTargetId()
+    const src = nodeCache[c.docId]
+    if (src && src.parentId === targetId && c.cut) {
+        ElMessage.info('已在该目录中')
+        return
+    }
+    try {
+        if (c.cut) {
+            // 目标目录有同名节点时先自动重命名，再移动
+            const siblings = (await DocumentService.ListChildren(targetId)) ?? []
+            const name = uniqueName(siblings.map((n) => n.name), c.name)
+            if (name !== c.name) {
+                await DocumentService.Rename(c.docId, name)
+                const tab = tabs.value.find((t) => t.id === c.docId)
+                if (tab) tab.name = name
+            }
+            const oldParentId = src?.parentId ?? 0
+            await DocumentService.Move(c.docId, targetId)
+            updateDocPaths(c.path, name, src?.type === 'folder')
+            fileClipboard.value = null
+            selectedId.value = c.docId
+            await reloadParent(oldParentId)
+            await reloadParent(targetId)
+            ElMessage.success(`已移动：${name}`)
+        } else {
+            const created = await DocumentService.Copy(c.docId, targetId)
+            await reloadParent(targetId)
+            selectedId.value = created.id
+            treeRef.value?.setCurrentKey(created.id)
+            ElMessage.success(`已粘贴：${created.name}`)
+        }
+    } catch (e: any) {
+        ElMessage.error(`粘贴失败：${e?.message || e}`)
+    }
+}
+
+// 移动 / 重命名后同步已打开标签的展示路径（path 仅用于标签提示）
+function updateDocPaths(oldPath: string, newName: string, isDir: boolean | undefined) {
+    const parentPath = oldPath.slice(0, Math.max(0, oldPath.lastIndexOf('/')))
+    for (const t of tabs.value) {
+        if (t.path === oldPath) {
+            t.path = `${parentPath}/${newName}`
+            if (!isDir) t.name = newName
+        } else if (isDir && t.path.startsWith(oldPath + '/')) {
+            t.path = `${parentPath}/${newName}${t.path.slice(oldPath.length)}`
+        }
+    }
+}
+
 // ---------- 树交互 ----------
 
 function onNodeClick(data: TreeNode) {
@@ -500,6 +590,8 @@ function buildCtx(data: TreeNode | null): (CtxItem | 'divider')[] {
         return [
             { key: 'new-file', label: '新建文件', icon: DocumentAdd },
             { key: 'new-folder', label: '新建文件夹', icon: FolderAdd },
+            'divider',
+            { key: 'paste', label: '粘贴', icon: Files, disabled: !canPaste() },
         ]
     }
     const items: (CtxItem | 'divider')[] = []
@@ -510,7 +602,11 @@ function buildCtx(data: TreeNode | null): (CtxItem | 'divider')[] {
         items.push({ key: 'refresh', label: '刷新', icon: Refresh })
         items.push('divider')
     }
-    items.push({ key: 'rename', label: '重命名', icon: Edit })
+    items.push({ key: 'copy', label: '复制', icon: CopyDocument })
+    items.push({ key: 'cut', label: '剪切', icon: Scissor })
+    items.push({ key: 'paste', label: '粘贴到当前目录', icon: Files, disabled: !canPaste() })
+    items.push('divider')
+    items.push({ key: 'rename', label: '重命名（F12）', icon: Edit })
     items.push({ key: 'delete', label: '删除', icon: Delete, danger: true })
     return items
 }
@@ -538,6 +634,15 @@ async function onCtxPick(item: CtxItem) {
             break
         case 'rename':
             if (target) await renameNode(target)
+            break
+        case 'copy':
+            copySelected(false)
+            break
+        case 'cut':
+            copySelected(true)
+            break
+        case 'paste':
+            await paste()
             break
         case 'delete':
             if (target) await deleteNode(target)
@@ -863,6 +968,67 @@ function openResult(row: SearchResult) {
     }
     void openDocument(node, row.lineNo)
 }
+
+// ---------- 页面级快捷键：Ctrl+S / F12 / Ctrl+C/X/V ----------
+// 用 window 捕获阶段：焦点在标签栏、目录树或编辑器里都能生效；F12 在本页
+// 用于重命名，同时阻止全局开发者工具快捷键。
+
+function isTextEditing(t: HTMLElement | null): boolean {
+    if (!t) return false
+    return !!t.closest('.monaco-editor, textarea, input, [contenteditable="true"]')
+}
+
+function onViewKeydown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
+        if (!activeTab.value) return
+        e.preventDefault()
+        e.stopPropagation()
+        void save()
+        return
+    }
+    // 编辑器 / 输入框内保留原生编辑快捷键
+    if (isTextEditing(e.target as HTMLElement | null)) return
+    if (e.key === 'F12') {
+        if (selectedId.value == null) return
+        e.preventDefault()
+        e.stopPropagation()
+        void renameSelected()
+        return
+    }
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
+    const k = e.key.toLowerCase()
+    if (k === 'c') {
+        e.preventDefault()
+        e.stopPropagation()
+        copySelected(false)
+    } else if (k === 'x') {
+        e.preventDefault()
+        e.stopPropagation()
+        copySelected(true)
+    } else if (k === 'v') {
+        if (!canPaste()) return
+        e.preventDefault()
+        e.stopPropagation()
+        void paste()
+    }
+}
+
+let keyBound = false
+function bindKeys() {
+    if (keyBound) return
+    window.addEventListener('keydown', onViewKeydown, true)
+    keyBound = true
+}
+function unbindKeys() {
+    if (!keyBound) return
+    window.removeEventListener('keydown', onViewKeydown, true)
+    keyBound = false
+}
+
+onMounted(bindKeys)
+onActivated(bindKeys)
+onDeactivated(unbindKeys)
+onBeforeUnmount(unbindKeys)
 </script>
 
 <style scoped>

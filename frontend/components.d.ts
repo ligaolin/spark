@@ -56,6 +56,7 @@ declare module 'vue' {
     LocalTerminalPane: typeof import('./src/components/LocalTerminalPane.vue')['default']
     MarkdownEditor: typeof import('./src/components/MarkdownEditor.vue')['default']
     NetworkView: typeof import('./src/components/NetworkView.vue')['default']
+    PermissionDialog: typeof import('./src/components/PermissionDialog.vue')['default']
     ProcessManagerView: typeof import('./src/components/ProcessManagerView.vue')['default']
     RemoteEditorPanel: typeof import('./src/components/RemoteEditorPanel.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

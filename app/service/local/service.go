@@ -5,6 +5,7 @@ package local
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -160,6 +161,51 @@ func (l *LocalService) Rename(oldPath, newPath string) error {
 // Remove deletes a local file or directory (recursively).
 func (l *LocalService) Remove(p string) error {
 	return os.RemoveAll(p)
+}
+
+// Copy copies a local file or directory (recursively) to a new path.
+// The destination parent directory is created when missing.
+func (l *LocalService) Copy(src, dst string) error {
+	fi, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return copyLocalFile(src, dst, fi.Mode().Perm())
+	}
+	if err := os.MkdirAll(dst, fi.Mode().Perm()); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := l.Copy(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyLocalFile(src, dst string, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 // Search walks a local directory recursively and returns filename matches

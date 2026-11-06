@@ -1,5 +1,5 @@
 <template>
-  <div class="local-term-pane" @contextmenu.prevent="onContextMenu" @keydown="onTermKeydown">
+  <div class="local-term-pane" @contextmenu.prevent="onContextMenu" @keydown.capture="onTermKeydown">
     <div ref="termRef" class="term-container" />
     <div v-if="tab.status === 'starting'" class="term-overlay">
       <el-icon class="is-loading" :size="28"><Loading /></el-icon>
@@ -65,8 +65,8 @@ function onContextMenu(e: MouseEvent) {
   ctxX.value = e.clientX
   ctxY.value = e.clientY
   ctxItems.value = [
-    { key: 'copy', label: '复制', icon: CopyDocument, hint: 'Ctrl+Shift+C', disabled: !hasSelection() },
-    { key: 'paste', label: '粘贴', icon: Document, hint: 'Ctrl+Shift+V' },
+    { key: 'copy', label: '复制', icon: CopyDocument, hint: 'Ctrl+C / Ctrl+Shift+C', disabled: !hasSelection() },
+    { key: 'paste', label: '粘贴', icon: Document, hint: 'Ctrl+V / Ctrl+Shift+V' },
     { key: 'select-all', label: '全选', icon: Select },
     'divider',
     { key: 'clear', label: '清屏', icon: Delete },
@@ -77,14 +77,27 @@ function onContextMenu(e: MouseEvent) {
   })
 }
 
+// Ctrl+C 有选中文本时复制，无选中时照常发送中断信号（^C）；Ctrl+V 粘贴。
+// capture 阶段拦截，避免 xterm 先处理 Ctrl+C 导致有选中时也发出中断。
 function onTermKeydown(e: KeyboardEvent) {
   const combo = eventToCombo(e)
-  if (combo === 'ctrl+shift+c' || combo === 'ctrl+insert') {
+  if (combo === 'ctrl+c') {
+    if (!hasSelection()) return
     e.preventDefault()
-    doCopy()
+    e.stopPropagation()
+    void doCopy()
+  } else if (combo === 'ctrl+v') {
+    e.preventDefault()
+    e.stopPropagation()
+    void doPaste()
+  } else if (combo === 'ctrl+shift+c' || combo === 'ctrl+insert') {
+    e.preventDefault()
+    e.stopPropagation()
+    void doCopy()
   } else if (combo === 'ctrl+shift+v' || combo === 'shift+insert') {
     e.preventDefault()
-    doPaste()
+    e.stopPropagation()
+    void doPaste()
   }
 }
 

@@ -5,8 +5,8 @@
       <el-button size="small" @click="resetAll">恢复全部默认</el-button>
     </div>
     <div class="sc-note">
-      终端内复制 / 粘贴快捷键固定为 <b>Ctrl+Shift+C</b> / <b>Ctrl+Shift+V</b>（亦支持 Ctrl+Insert / Shift+Insert）；
-      Ctrl+C 保留为中断信号，Ctrl+V 走系统原生粘贴。
+      终端内 <b>Ctrl+C</b> 在有选中文本时复制，无选中时发送中断信号；<b>Ctrl+V</b> 粘贴。
+      同时保留 <b>Ctrl+Shift+C</b> / <b>Ctrl+Shift+V</b>（亦支持 Ctrl+Insert / Shift+Insert）。
     </div>
     <div class="sc-list">
       <div v-for="item in shortcuts.items" :key="item.id" class="sc-row">

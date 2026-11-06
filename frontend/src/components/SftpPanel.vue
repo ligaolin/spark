@@ -10,8 +10,9 @@
         <template v-else>
             <div class="sftp-file-area">
                 <FilePanel ref="remotePanel" :backend="remoteBackend" title="SFTP 远程" show-mode multi-select dock-editor
-                    placeholder="远程目录，回车跳转" :connected="connected" :fav-key="favKey" @drop="onRemoteDrop"
-                    @action="onPanelAction">
+                    placeholder="远程目录，回车跳转" :connected="connected" :fav-key="favKey"
+                    transfer-kind="sftp" transfer-scope="terminal-sftp" :session-id="sessionId"
+                    @drop="onRemoteDrop" @action="onPanelAction">
                     <template #head>
                         <span v-if="error" class="sftp-err" :title="error">{{ error }}</span>
                         <el-button v-if="error" size="small" type="primary" @click="reconnect">重试</el-button>
@@ -45,7 +46,7 @@
                 </FilePanel>
             </div>
 
-            <TransferDock />
+            <TransferDock scope="terminal-sftp" kind="sftp" title="SFTP 传输" />
         </template>
     </div>
 </template>
@@ -64,6 +65,7 @@ import { SFTPFileService, EVENTS, LocalService } from '../utils/wails'
 import type { ConnectOptions } from '../utils/wails'
 import type { DropPayload, PanelAction } from '../types'
 import { joinPath, makeSftpBackend, type FileBackend } from '../utils/fileBackend'
+import { runBatchTransfer } from '../utils/transferBatch'
 import { resolveHostKeyIssue } from '../utils/hostkey'
 import { useTerminalStore } from '../stores/terminal'
 
@@ -74,6 +76,8 @@ const props = defineProps<{
     tabKey: string
     // 目录收藏键（来源已保存连接 id；快速连接为 0 时不展示收藏）
     favKey?: number
+    // 面板是否可见：从其他板块切回 SFTP 时补连一次（防止首次连接时面板尚未激活导致空面板）
+    active?: boolean
 }>()
 
 const router = useRouter()
@@ -181,7 +185,7 @@ async function connectTab(key: string, hostKeyRetry = 0): Promise<boolean> {
 // 每个标签一个稳定后端对象（sessionId 用 getter 实时读取该标签当前会话，
 // 保存到编辑器板块里的后端不会因切换到其他标签而指向别的会话）。
 function buildTabBackend(key: string, opts: ConnectOptions): FileBackend {
-    const raw = makeSftpBackend(() => (tabs[key] ? tabs[key].id : ''))
+    const raw = makeSftpBackend(() => (tabs[key] ? tabs[key].id : ''), `sftp:${key}`)
     const wrap = (fn: (...args: any[]) => Promise<any>) =>
         async (...args: any[]) => {
             try {
@@ -197,10 +201,13 @@ function buildTabBackend(key: string, opts: ConnectOptions): FileBackend {
         ...raw,
         home: wrap(raw.home),
         list: wrap(raw.list),
+        stat: wrap(raw.stat!),
         mkdir: wrap(raw.mkdir),
         rename: wrap(raw.rename),
+        copy: wrap(raw.copy!),
         remove: wrap(raw.remove),
         chmod: wrap(raw.chmod!),
+        chmodRecursive: wrap(raw.chmodRecursive!),
         upload: wrap(raw.upload),
         download: wrap(raw.download),
         readFile: wrap(raw.readFile),
@@ -306,6 +313,38 @@ watch(
     { immediate: true },
 )
 
+// 连接参数晚于 tabKey 到达（新建标签 / 从连接管理跳转）：参数就绪后补连。
+// 以前只在 tabKey 变化时拨号，opts 为空就直接跳过，表现为“SFTP 面板空白，
+// 关掉再打开才能连上”。
+watch(
+    () => props.opts,
+    (opts) => {
+        const key = props.tabKey
+        if (!key || !opts) return
+        ensureTab(key, opts)
+        const t = tabs[key]
+        if (!t || t.id || t.pending) return
+        t.error = ''
+        void connectTab(key).then((ok) => {
+            if (ok && key === props.tabKey) void panelGoHome()
+        })
+    },
+)
+
+// 切回 SFTP 板块时，若会话尚未建立则补连一次
+watch(
+    () => props.active,
+    (on) => {
+        if (!on) return
+        const key = props.tabKey
+        const t = key ? tabs[key] : null
+        if (!t || !t.opts || t.id || t.pending) return
+        void connectTab(key).then((ok) => {
+            if (ok && key === props.tabKey) void panelGoHome()
+        })
+    },
+)
+
 // 标签列表变化 → 清理已被移除标签的会话（关闭其他标签时也要释放）
 watch(
     () => terminalStore.tabs.map((t) => t.key),
@@ -362,18 +401,6 @@ function basename(p: string): string {
     return parts[parts.length - 1] || p
 }
 
-function runTransfer(name: string, fn: () => Promise<void>) {
-    return fn()
-        .then(() => {
-            transfers.complete(sessionId.value, 'upload', name)
-            ElMessage.success(`上传完成：${name}`)
-        })
-        .catch((e: any) => {
-            transfers.fail(sessionId.value, 'upload', name, e?.message || String(e))
-            ElMessage.error(`上传失败：${e?.message || e}`)
-        })
-}
-
 async function uploadBatch(items: { path: string; name: string; isDir: boolean }[], remoteDirOverride?: string) {
     if (!items.length) return
     if (!sessionId.value) {
@@ -382,28 +409,18 @@ async function uploadBatch(items: { path: string; name: string; isDir: boolean }
     }
     const remoteDir = remoteDirOverride || remotePanel.value?.currentPath
     if (!remoteDir) return
-    let ok = 0
-    const failed: string[] = []
-    for (const it of items) {
-        const target = joinPath(remoteDir, it.name, '/')
-        const label = it.isDir ? `${it.name}/ (目录)` : it.name
-        try {
-            await remoteBackend.value.upload(it.path, target)
-            transfers.complete(sessionId.value, 'upload', label)
-            ok++
-        } catch (e: any) {
-            transfers.fail(sessionId.value, 'upload', label, e?.message || String(e))
-            failed.push(it.name)
-        }
-    }
+    await runBatchTransfer({
+        kind: 'sftp',
+        scope: 'terminal-sftp',
+        sessionId: sessionId.value,
+        op: 'upload',
+        label: items.length === 1 ? `上传 ${items[0].name}` : `上传 ${items.length} 项`,
+        items: items.map((it) => ({
+            name: it.isDir ? `${it.name}/` : it.name,
+            run: () => remoteBackend.value.upload(it.path, joinPath(remoteDir, it.name, '/')),
+        })),
+    })
     await remotePanel.value?.refresh()
-    if (failed.length === 0) {
-        ElMessage.success(`全部上传完成（${ok} 项）`)
-    } else {
-        ElMessage.error(
-            `上传完成：成功 ${ok} 项，失败 ${failed.length} 项（${failed.slice(0, 3).join('、')}${failed.length > 3 ? '…' : ''}）`,
-        )
-    }
 }
 
 async function pickAndUpload() {
@@ -438,10 +455,7 @@ async function pickDirAndUpload() {
     }
     if (!dir) return
     const name = basename(dir)
-    await runTransfer(`${name}/ (目录)`, () =>
-        remoteBackend.value.upload(dir, joinPath(remoteDir, name, '/')),
-    )
-    await remotePanel.value?.refresh()
+    await uploadBatch([{ path: dir, name, isDir: true }], remoteDir)
 }
 
 // 拖到远程面板：操作系统文件（Wails 原生拖放） / 面板内部条目都走批量上传
@@ -491,27 +505,18 @@ async function downloadBatch(items: { path: string; name: string; isDir: boolean
     }
     const dir = await pickDownloadDir()
     if (!dir) return
-    let ok = 0
-    const failed: string[] = []
-    for (const it of items) {
-        const target = joinPath(dir, it.name, '/')
-        const label = it.isDir ? `${it.name}/ (目录)` : it.name
-        try {
-            await remoteBackend.value.download(it.path, target, it.isDir)
-            transfers.complete(sessionId.value, 'download', label)
-            ok++
-        } catch (e: any) {
-            transfers.fail(sessionId.value, 'download', label, e?.message || String(e))
-            failed.push(it.name)
-        }
-    }
-    if (failed.length === 0) {
-        ElMessage.success(`全部下载完成（${ok} 项），保存位置：${dir}`)
-    } else {
-        ElMessage.error(
-            `下载完成：成功 ${ok} 项，失败 ${failed.length} 项（${failed.slice(0, 3).join('、')}${failed.length > 3 ? '…' : ''}）`,
-        )
-    }
+    await runBatchTransfer({
+        kind: 'sftp',
+        scope: 'terminal-sftp',
+        sessionId: sessionId.value,
+        op: 'download',
+        label: items.length === 1 ? `下载 ${items[0].name}` : `下载 ${items.length} 项`,
+        items: items.map((it) => ({
+            name: it.isDir ? `${it.name}/` : it.name,
+            run: () => remoteBackend.value.download(it.path, joinPath(dir, it.name, '/'), it.isDir),
+        })),
+        success: `下载完成，保存位置：${dir}`,
+    })
 }
 
 // 面板右键 / 双击动作

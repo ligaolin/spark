@@ -5,6 +5,7 @@ package documents
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"spark/app/model"
@@ -289,6 +290,72 @@ func (s *DocumentService) Search(pattern, mode string) ([]types.SearchResult, er
 		}
 	}
 	return results, nil
+}
+
+// Copy duplicates a node (and its whole subtree) under newParentID (0 = root).
+// The copied node is renamed automatically when the target folder already has
+// a sibling with the same name.
+func (s *DocumentService) Copy(id, newParentID uint) (model.DocNode, error) {
+	if id == 0 {
+		return model.DocNode{}, errors.New("节点 ID 不能为空")
+	}
+	var src model.DocNode
+	if err := db.GetDB().First(&src, id).Error; err != nil {
+		return model.DocNode{}, err
+	}
+	if isDescendant(id, newParentID) {
+		return model.DocNode{}, errors.New("不能复制到自身或其子目录")
+	}
+	return copyDocNode(src, newParentID)
+}
+
+func copyDocNode(src model.DocNode, parentID uint) (model.DocNode, error) {
+	name := uniqueDocName(parentID, src.Name)
+	n := model.DocNode{
+		ParentID: parentID,
+		Name:     name,
+		Type:     src.Type,
+		Kind:     src.Kind,
+		Content:  src.Content,
+		Sort:     nextSort(parentID),
+	}
+	if err := db.GetDB().Create(&n).Error; err != nil {
+		return n, err
+	}
+	if src.Type != "folder" {
+		return n, nil
+	}
+	var children []model.DocNode
+	if err := db.GetDB().Where("parent_id = ?", src.ID).Order("sort asc, name asc").Find(&children).Error; err != nil {
+		return n, err
+	}
+	for _, child := range children {
+		if _, err := copyDocNode(child, n.ID); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+// uniqueDocName returns name, or "name (1)" / "name (2)" ... when a sibling
+// with the same name already exists under parentID.
+func uniqueDocName(parentID uint, name string) string {
+	candidate := name
+	ext := ""
+	if i := strings.LastIndex(name, "."); i > 0 {
+		ext = name[i:]
+	}
+	base := strings.TrimSuffix(name, ext)
+	for i := 1; ; i++ {
+		var count int64
+		_ = db.GetDB().Model(&model.DocNode{}).
+			Where("parent_id = ? AND name = ?", parentID, candidate).
+			Count(&count).Error
+		if count == 0 {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s (%d)%s", base, i, ext)
+	}
 }
 
 func checkNameConflict(parentID uint, name string) error {

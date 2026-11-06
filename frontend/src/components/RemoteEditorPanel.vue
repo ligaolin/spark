@@ -12,7 +12,7 @@
                         <el-button size="small" text title="新建目录" @click="mkdir">
                             <el-icon><FolderAdd /></el-icon>
                         </el-button>
-                        <!-- <el-button size="small" text title="重命名" :disabled="!canOperateSelected" @click="renameNode">
+                        <el-button size="small" text title="重命名（F12）" :disabled="!canOperateSelected" @click="renameNode">
                             <el-icon><Edit /></el-icon>
                         </el-button>
                         <el-button size="small" text title="删除" :disabled="!canOperateSelected" @click="removeNode">
@@ -20,7 +20,7 @@
                         </el-button>
                         <el-button v-if="canChmod" size="small" text title="修改权限" :disabled="!canOperateSelected" @click="chmodNode">
                             <el-icon><Lock /></el-icon>
-                        </el-button> -->
+                        </el-button>
                         <el-button size="small" text title="刷新当前目录" @click="refreshCurrent">
                             <el-icon><Refresh /></el-icon>
                         </el-button>
@@ -108,6 +108,8 @@
 
         <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
         <ContextMenu v-model="tabCtxVisible" :x="tabCtxX" :y="tabCtxY" :items="tabCtxItems" @pick="onTabCtxPick" />
+        <PermissionDialog v-model="permVisible" :path="permPath" :mode="permMode" :is-dir="permIsDir"
+            @apply="onPermApply" />
     </div>
 </template>
 
@@ -131,17 +133,20 @@ import {
     Search,
     Upload,
     Download,
+    Files,
 } from '@element-plus/icons-vue'
 import CodeEditor from './CodeEditor.vue'
 import MarkdownEditor from './MarkdownEditor.vue'
 import ContextMenu from './ContextMenu.vue'
 import type { CtxItem } from './ContextMenu.vue'
 import SearchPanel from './SearchPanel.vue'
+import PermissionDialog from './PermissionDialog.vue'
 import { showConfirmDialog, showInputDialog } from '../utils/dialog'
 import { useSettingsStore } from '../stores/settings'
 import { LocalService } from '../utils/wails'
 import type { SearchResult } from '../types'
-import { parentDir, joinPath, type FileBackend } from '../utils/fileBackend'
+import { parentDir, joinPath, uniqueName, type FileBackend } from '../utils/fileBackend'
+import { fileClipboard } from '../utils/fileClipboard'
 
 // 两个编辑器组件暴露同一套操作方法
 interface EditorApi {
@@ -614,6 +619,72 @@ async function renameNode() {
     }
 }
 
+// ---------- 复制 / 剪切 / 粘贴（目录树） ----------
+
+function copySelected(cut: boolean) {
+    const n = selectedNode.value
+    if (!n || n.path === props.rootPath) {
+        ElMessage.warning('请先选择文件或目录')
+        return
+    }
+    fileClipboard.value = {
+        path: n.path,
+        name: n.name,
+        isDir: n.isDir,
+        cut,
+        scope: props.backend.scope,
+    }
+    ElMessage.success(cut ? `已剪切：${n.name}` : `已复制：${n.name}`)
+}
+
+function canPaste(): boolean {
+    const c = fileClipboard.value
+    return !!c && c.docId == null && !!props.backend.copy && c.scope === props.backend.scope
+}
+
+async function paste() {
+    const c = fileClipboard.value
+    if (!c || c.docId != null) return
+    if (c.scope !== props.backend.scope) {
+        ElMessage.warning('不能跨服务器 / 连接粘贴')
+        return
+    }
+    if (!props.backend.copy) {
+        ElMessage.warning('当前目录不支持粘贴')
+        return
+    }
+    const dir = currentDir.value
+    const sameDir = parentDir(c.path, props.backend.sep) === dir
+    if (c.cut && sameDir) {
+        ElMessage.info('已在该目录中')
+        return
+    }
+    let existing: string[] = []
+    try {
+        existing = (await props.backend.list(dir)).map((e) => e.name)
+    } catch {
+        /* 列目录失败时不做同名检测，交给后端处理 */
+    }
+    const name = uniqueName(existing, c.name)
+    const target = joinPath(dir, name, props.backend.sep)
+    try {
+        if (c.cut) {
+            await props.backend.rename(c.path, target)
+            updateOpenPaths(c.path, target, c.isDir)
+        } else {
+            await props.backend.copy(c.path, target, c.isDir)
+        }
+        if (c.cut) fileClipboard.value = null
+        ElMessage.success(c.cut ? `已移动：${name}` : `已粘贴：${name}`)
+        if (c.cut) await reloadDir(parentDir(c.path, props.backend.sep))
+        await reloadDir(dir)
+        selectedNode.value = { path: target, name, isDir: c.isDir }
+        void revealInTree(target)
+    } catch (e: any) {
+        ElMessage.error(`粘贴失败：${e?.message || e}`)
+    }
+}
+
 async function removeNode() {
     const n = selectedNode.value
     if (!n || n.path === props.rootPath) {
@@ -645,6 +716,13 @@ async function removeNode() {
     }
 }
 
+// ---------- 修改权限（宝塔风格 rwx 矩阵） ----------
+
+const permVisible = ref(false)
+const permPath = ref('')
+const permMode = ref('755')
+const permIsDir = ref(false)
+
 async function chmodNode() {
     const n = selectedNode.value
     if (!n || n.path === props.rootPath) {
@@ -652,19 +730,28 @@ async function chmodNode() {
         return
     }
     if (!props.backend.chmod) return
-    const values = await showInputDialog('修改权限', [
-        { key: 'mode', label: '八进制权限（如 755）', initial: '755' },
-    ])
-    if (!values) return
-    const mode = parseInt(values.mode.trim(), 8)
-    if (isNaN(mode)) {
-        ElMessage.error('权限格式不正确')
-        return
-    }
+    let mode = ''
     try {
-        await props.backend.chmod!(n.path, mode)
-        ElMessage.success('已修改')
-        await reloadDir(parentDir(n.path, props.backend.sep))
+        mode = (await props.backend.stat?.(n.path))?.mode || ''
+    } catch {
+        /* 取不到当前权限时用默认值 */
+    }
+    permPath.value = n.path
+    permMode.value = mode || '755'
+    permIsDir.value = n.isDir
+    permVisible.value = true
+}
+
+async function onPermApply(payload: { mode: number; recursive: boolean }) {
+    try {
+        if (payload.recursive && props.backend.chmodRecursive) {
+            await props.backend.chmodRecursive(permPath.value, payload.mode)
+        } else {
+            await props.backend.chmod!(permPath.value, payload.mode)
+        }
+        permVisible.value = false
+        ElMessage.success(payload.recursive ? '已应用（含子目录）' : '权限已修改')
+        await reloadDir(permIsDir.value ? permPath.value : parentDir(permPath.value, props.backend.sep))
     } catch (e: any) {
         ElMessage.error(`修改权限失败：${e?.message || e}`)
     }
@@ -773,12 +860,18 @@ function buildMenu(data: TreeNode | null): (CtxItem | 'divider')[] {
         if (data.isDir) {
             items.push({ key: 'refresh', label: '刷新', icon: Refresh })
         }
-        items.push({ key: 'rename', label: '重命名', icon: Edit })
+        items.push('divider')
+        items.push({ key: 'copy', label: '复制', icon: Files })
+        items.push({ key: 'cut', label: '剪切', icon: Edit })
+        items.push({ key: 'paste', label: '粘贴到当前目录', icon: Files, disabled: !canPaste() })
+        items.push('divider')
+        items.push({ key: 'rename', label: '重命名（F12）', icon: Edit })
         if (props.backend.chmod) {
             items.push({ key: 'chmod', label: '修改权限', icon: Lock })
         }
         items.push({ key: 'remove', label: '删除', icon: Delete, danger: true })
     } else {
+        items.push({ key: 'paste', label: '粘贴到当前目录', icon: Files, disabled: !canPaste() })
         items.push({ key: 'refresh', label: '刷新', icon: Refresh })
     }
     return items
@@ -809,6 +902,15 @@ async function onCtxPick(item: CtxItem) {
             break
         case 'rename':
             await renameNode()
+            break
+        case 'copy':
+            copySelected(false)
+            break
+        case 'cut':
+            copySelected(true)
+            break
+        case 'paste':
+            await paste()
             break
         case 'chmod':
             await chmodNode()
@@ -997,7 +1099,15 @@ async function confirmClose(): Promise<boolean> {
     return ok
 }
 
-defineExpose({ openPath, confirmClose, hasDirty: () => openFiles.value.some((f) => f.dirty) })
+defineExpose({
+    openPath,
+    confirmClose,
+    hasDirty: () => openFiles.value.some((f) => f.dirty),
+    saveActive,
+    copySelected,
+    paste,
+    renameSelected: renameNode,
+})
 </script>
 
 <style scoped>

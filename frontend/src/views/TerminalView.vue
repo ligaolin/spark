@@ -70,7 +70,7 @@
                             </div>
                             <div class="side-body">
                                 <SftpPanel v-show="panelTab === 'sftp'" :opts="activeTabOpts" :tab-key="store.activeKey"
-                                    :fav-key="activeTabConnId" />
+                                    :fav-key="activeTabConnId" :active="panelVisible && panelTab === 'sftp'" />
                                 <ServerInfoView v-show="panelTab === 'info'" :session-id="activeSessionId"
                                     :active="infoActive" />
                                 <ProcessManagerView v-show="panelTab === 'processes'" :session-id="activeSessionId"

@@ -1,6 +1,7 @@
 <template>
     <div ref="rootRef" class="file-panel" :class="{ 'drop-target': dragDepth > 0 }" data-file-drop-target="1"
-        :data-file-panel-id="panelId" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave"
+        :data-file-panel-id="panelId" tabindex="0" @mousedown="focusPanel" @keydown="onPanelKeydown"
+        @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave"
         @drop="onDrop" @contextmenu.prevent="onBlankContext">
         <div class="panel-head">
             <span class="panel-title">{{ title }}</span>
@@ -129,6 +130,9 @@
 
         <!-- 弹出式文本编辑器：仅非文档式（dockEditor=false）时使用 -->
         <TextEditor v-if="!props.dockEditor" ref="editorRef" />
+
+        <PermissionDialog v-model="permVisible" :path="permPath" :mode="permMode" :is-dir="permIsDir"
+            @apply="onPermApply" />
     </div>
 </template>
 
@@ -154,18 +158,25 @@ import {
     Star,
     Close,
     Search,
+    CopyDocument,
+    Scissor,
+    Files,
 } from '@element-plus/icons-vue'
 import ContextMenu from './ContextMenu.vue'
 import type { CtxItem } from './ContextMenu.vue'
 import TextEditor from './TextEditor.vue'
 import SearchPanel from './SearchPanel.vue'
+import PermissionDialog from './PermissionDialog.vue'
 import { FavoriteService, makeFavorite } from '../utils/wails'
 import type { Favorite } from '../utils/wails'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
 import { registerDropPanel } from '../utils/externalDrop'
 import type { DropPayload, FileEntry, PanelAction, SearchResult } from '../types'
 import { formatSize, formatTime } from '../types'
-import { joinPath, parentDir, type FileBackend } from '../utils/fileBackend'
+import { joinPath, parentDir, uniqueName, type FileBackend } from '../utils/fileBackend'
+import { fileClipboard } from '../utils/fileClipboard'
+import { useTransfersStore, type TransferKind } from '../stores/transfers'
+import { notifyScope } from '../utils/transferNotify'
 
 const props = defineProps<{
     backend: FileBackend
@@ -181,6 +192,10 @@ const props = defineProps<{
     // 文档式编辑器：开启后文件不在弹出窗中编辑，改为发 action（open-file /
     // open-in-editor）交给父组件的编辑板块处理
     dockEditor?: boolean
+    // 传输任务归属（用于进度条与提示按页面隔离）；不传则不显示进度任务
+    transferKind?: TransferKind
+    transferScope?: string
+    sessionId?: string
 }>()
 
 const emit = defineEmits<{
@@ -721,6 +736,97 @@ const ctxEntry = ref<FileEntry | null>(null)
 
 const linked = computed(() => props.connected !== false)
 
+const transfers = useTransfersStore()
+
+// ---------- 键盘：F12 重命名 / Ctrl+C 复制 / Ctrl+X 剪切 / Ctrl+V 粘贴 ----------
+
+function focusPanel(e: MouseEvent) {
+    const t = e.target as HTMLElement | null
+    if (t?.closest('input, textarea, .el-select, .el-button, [contenteditable="true"]')) return
+    rootRef.value?.focus({ preventScroll: true })
+}
+
+function onPanelKeydown(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+
+    if (e.key === 'F12') {
+        e.preventDefault()
+        e.stopPropagation()
+        void rename()
+        return
+    }
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
+    const k = e.key.toLowerCase()
+    if (k === 'c') {
+        e.preventDefault()
+        e.stopPropagation()
+        copySelected(false)
+    } else if (k === 'x') {
+        e.preventDefault()
+        e.stopPropagation()
+        copySelected(true)
+    } else if (k === 'v') {
+        e.preventDefault()
+        e.stopPropagation()
+        void paste()
+    }
+}
+
+function copySelected(cut: boolean) {
+    const entry = selected.value
+    if (!entry) return
+    fileClipboard.value = {
+        path: entry.path,
+        name: entry.name,
+        isDir: entry.isDir,
+        cut,
+        scope: props.backend.scope,
+    }
+    ElMessage.success(cut ? `已剪切：${entry.name}` : `已复制：${entry.name}`)
+}
+
+function canPaste(): boolean {
+    const c = fileClipboard.value
+    return !!c && !!props.backend.copy && c.scope === props.backend.scope
+}
+
+async function paste() {
+    const c = fileClipboard.value
+    if (!c) return
+    if (c.scope !== props.backend.scope) {
+        ElMessage.warning('不能跨服务器 / 连接粘贴，请在同一文件面板内操作')
+        return
+    }
+    const dir = currentPath.value
+    if (!dir) return
+    const sameDir = parentDir(c.path, props.backend.sep) === dir
+    if (c.cut && sameDir) {
+        ElMessage.info('已在该目录中')
+        return
+    }
+    if (!c.cut && !props.backend.copy) {
+        ElMessage.warning('当前面板不支持复制')
+        return
+    }
+    const targetName = uniqueName(entries.value.map((e) => e.name), c.name)
+    const target = joinPathSafe(dir, targetName, props.backend.sep)
+    try {
+        if (c.cut) {
+            await props.backend.rename(c.path, target)
+        } else {
+            await props.backend.copy!(c.path, target, c.isDir)
+        }
+        if (c.cut) fileClipboard.value = null
+        ElMessage.success(c.cut ? `已移动：${targetName}` : `已粘贴：${targetName}`)
+        await refresh()
+        const created = entries.value.find((e) => e.name === targetName)
+        if (created) selected.value = created
+    } catch (e: any) {
+        ElMessage.error(`粘贴失败：${e?.message || e}`)
+    }
+}
+
 function onBlankContext(e: MouseEvent) {
     ctxEntry.value = null
     ctxItems.value = buildMenu(null)
@@ -761,6 +867,8 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
         return [
             { key: 'pick-upload', label: '上传文件…', icon: Upload, disabled: !linked.value },
             { key: 'pick-upload-dir', label: '上传目录…', icon: FolderAdd, disabled: !linked.value },
+            'divider',
+            { key: 'paste', label: '粘贴', icon: Files, disabled: !linked.value || !canPaste() },
             'divider',
             // 文档式编辑板块：打开当前目录
             ...(props.dockEditor
@@ -821,6 +929,9 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
                 : { key: 'open-in-editor', label: '用编辑器打开当前目录', icon: EditPen, disabled: !linked.value },
         )
     }
+    items.push('divider', { key: 'copy', label: '复制', icon: CopyDocument })
+    items.push({ key: 'cut', label: '剪切', icon: Scissor })
+    items.push({ key: 'paste', label: '粘贴到当前目录', icon: Files, disabled: !canPaste() })
     items.push('divider', { key: 'rename', label: '重命名', icon: Edit })
     if (!isLocal && props.backend.chmod) {
         items.push({ key: 'chmod', label: '修改权限', icon: Lock })
@@ -867,6 +978,15 @@ async function onCtxPick(item: CtxItem) {
                     entry: { path: currentPath.value, name: '', isDir: true },
                 })
             }
+            break
+        case 'paste':
+            await paste()
+            break
+        case 'copy':
+            copySelected(false)
+            break
+        case 'cut':
+            copySelected(true)
             break
         case 'rename':
             await rename()
@@ -1002,6 +1122,11 @@ async function rename() {
     }
 }
 
+function notify(type: 'success' | 'warning' | 'error' | 'info', message: string) {
+    if (props.transferScope) notifyScope(props.transferScope, type, message)
+    else ElMessage[type](message)
+}
+
 async function remove() {
     // 多选模式且选中多项时批量删除；否则删除单选
     const targets =
@@ -1022,24 +1147,50 @@ async function remove() {
             : `确定删除选中的 ${targets.length} 个项目？`
     const ok = await showConfirmDialog('删除', tip, true, '删除')
     if (!ok) return
+
+    const canTrack =
+        !!props.transferKind && !!props.transferScope && !!props.sessionId
+    const taskKey = canTrack
+        ? transfers.start({
+            kind: props.transferKind!,
+            scope: props.transferScope!,
+            sessionId: props.sessionId!,
+            op: 'delete',
+            label: targets.length === 1 ? `删除 ${targets[0].name}` : `删除 ${targets.length} 项`,
+            fileTotal: targets.length,
+        })
+        : ''
+
     let okCount = 0
     const failed: string[] = []
     for (const t of targets) {
         try {
             await props.backend.remove(t.path, t.isDir)
             okCount++
+            if (taskKey) transfers.tick(taskKey)
         } catch (e: any) {
             failed.push(t.name)
-            ElMessage.error(`删除 ${t.name} 失败：${e?.message || e}`)
+            if (taskKey) transfers.tick(taskKey, { error: `${t.name}: ${e?.message || e}` })
         }
     }
-    if (failed.length === 0) {
-        ElMessage.success(`已删除 ${okCount} 项`)
-    } else {
-        ElMessage.error(`删除完成：成功 ${okCount} 项，失败 ${failed.length} 项`)
+    const msg =
+        failed.length === 0
+            ? `已删除 ${okCount} 项`
+            : `删除完成：成功 ${okCount} 项，失败 ${failed.length} 项（${failed.slice(0, 3).join('、')}${failed.length > 3 ? '…' : ''}）`
+    if (taskKey) {
+        if (failed.length === 0) transfers.finish(taskKey)
+        else transfers.fail(taskKey, msg)
     }
+    notify(failed.length === 0 ? 'success' : 'error', msg)
     await refresh()
 }
+
+// ---------- 修改权限（宝塔风格：所有者 / 用户组 / 公共 的 rwx 矩阵） ----------
+
+const permVisible = ref(false)
+const permPath = ref('')
+const permMode = ref('755')
+const permIsDir = ref(false)
 
 async function chmod() {
     if (!selected.value) {
@@ -1047,18 +1198,22 @@ async function chmod() {
         return
     }
     if (!props.backend.chmod) return
-    const values = await showInputDialog('修改权限', [
-        { key: 'mode', label: '八进制权限（如 755）', initial: '755' },
-    ])
-    if (!values) return
-    const n = parseInt(values.mode.trim(), 8)
-    if (isNaN(n)) {
-        ElMessage.error('权限格式不正确')
-        return
-    }
+    permPath.value = selected.value.path
+    permMode.value = selected.value.mode || '755'
+    permIsDir.value = selected.value.isDir
+    permVisible.value = true
+}
+
+async function onPermApply(payload: { mode: number; recursive: boolean }) {
+    if (!selected.value) return
     try {
-        await props.backend.chmod!(selected.value.path, n)
-        ElMessage.success('已修改')
+        if (payload.recursive && props.backend.chmodRecursive) {
+            await props.backend.chmodRecursive(selected.value.path, payload.mode)
+        } else {
+            await props.backend.chmod!(selected.value.path, payload.mode)
+        }
+        permVisible.value = false
+        ElMessage.success(payload.recursive ? '已应用（含子目录）' : '权限已修改')
         await refresh()
     } catch (e: any) {
         ElMessage.error(`修改权限失败：${e?.message || e}`)

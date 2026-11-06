@@ -207,7 +207,108 @@ func (s *SFTPFileService) Chmod(id, remotePath string, mode uint32) error {
 	if err != nil {
 		return err
 	}
-	return sess.sftp.Chmod(remotePath, os.FileMode(mode))
+	return sess.sftp.Chmod(remotePath, os.FileMode(mode).Perm())
+}
+
+// ChmodRecursive changes the permission mode of a remote path and, when
+// recursive is true, of every descendant (directories and files).
+func (s *SFTPFileService) ChmodRecursive(id, remotePath string, mode uint32, recursive bool) error {
+	sess, err := s.get(id)
+	if err != nil {
+		return err
+	}
+	perm := os.FileMode(mode).Perm()
+	if !recursive {
+		return sess.sftp.Chmod(remotePath, perm)
+	}
+	return chmodRemoteTree(sess.sftp, remotePath, perm)
+}
+
+func chmodRemoteTree(cl *sftplib.Client, p string, perm os.FileMode) error {
+	if err := cl.Chmod(p, perm); err != nil {
+		return err
+	}
+	fi, err := cl.Stat(p)
+	if err != nil || !fi.IsDir() {
+		return nil
+	}
+	entries, err := cl.ReadDir(p)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			if err := cl.Chmod(path.Join(p, e.Name()), perm); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := chmodRemoteTree(cl, path.Join(p, e.Name()), perm); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Copy copies a remote file or directory (recursively) to a new remote path.
+// The destination parent directories are created when missing.
+func (s *SFTPFileService) Copy(id, srcPath, dstPath string) error {
+	sess, err := s.get(id)
+	if err != nil {
+		return err
+	}
+	return copyRemote(sess.sftp, srcPath, dstPath)
+}
+
+func copyRemote(cl *sftplib.Client, src, dst string) error {
+	fi, err := cl.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		if err := copyRemoteFile(cl, src, dst, fi.Mode().Perm()); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err := ensureRemoteDir(cl, dst); err != nil {
+		return err
+	}
+	entries, err := cl.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := copyRemote(cl, path.Join(src, e.Name()), path.Join(dst, e.Name())); err != nil {
+			return err
+		}
+	}
+	_ = cl.Chmod(dst, fi.Mode().Perm())
+	return nil
+}
+
+func copyRemoteFile(cl *sftplib.Client, src, dst string, perm os.FileMode) error {
+	if err := ensureRemoteDir(cl, path.Dir(dst)); err != nil {
+		return err
+	}
+	in, err := cl.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := cl.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	_ = cl.Chmod(dst, perm)
+	return nil
 }
 
 // Search walks a remote directory recursively and returns filename matches

@@ -15,6 +15,14 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as types$0 from "../types/models.js";
 
 /**
+ * Copy copies a local file or directory (recursively) to a new path.
+ * The destination parent directory is created when missing.
+ */
+export function Copy(src: string, dst: string): $CancellablePromise<void> {
+    return $Call.ByID(138195381, src, dst);
+}
+
+/**
  * DefaultDownloadDir returns the user's Downloads folder (falls back to the
  * home directory). Used as the save location when the user cancels the
  * directory picker during a download.

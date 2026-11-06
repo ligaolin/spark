@@ -18,6 +18,15 @@ import * as model$0 from "../../model/models.js";
 import * as types$0 from "../types/models.js";
 
 /**
+ * Copy duplicates a node (and its whole subtree) under newParentID (0 = root).
+ * The copied node is renamed automatically when the target folder already has
+ * a sibling with the same name.
+ */
+export function Copy(id: number, newParentID: number): $CancellablePromise<model$0.DocNode> {
+    return $Call.ByID(3177528932, id, newParentID);
+}
+
+/**
  * Create adds a new folder or file under parentID (0 = root) and returns it.
  * 文件类型由文件名扩展名决定（如 .md → Markdown），新建时无需专门选择类型。
  */

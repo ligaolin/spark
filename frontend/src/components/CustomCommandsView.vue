@@ -210,8 +210,10 @@ async function remove(cmd: CustomCommand) {
     font-size: 11.5px;
     color: var(--text-secondary);
     margin-top: 3px;
-    word-break: break-all;
-    white-space: pre-wrap;
+    /* 只展示一行，超出省略（完整命令见 title 提示） */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .cc-add {

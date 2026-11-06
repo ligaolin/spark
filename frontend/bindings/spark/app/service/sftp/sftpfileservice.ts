@@ -22,11 +22,27 @@ export function Chmod(id: string, remotePath: string, mode: number): $Cancellabl
 }
 
 /**
+ * ChmodRecursive changes the permission mode of a remote path and, when
+ * recursive is true, of every descendant (directories and files).
+ */
+export function ChmodRecursive(id: string, remotePath: string, mode: number, recursive: boolean): $CancellablePromise<void> {
+    return $Call.ByID(2189701371, id, remotePath, mode, recursive);
+}
+
+/**
  * Connect dials a new SSH connection and opens the SFTP subsystem.
  * It returns the new session id.
  */
 export function Connect(opts: types$0.ConnectOptions): $CancellablePromise<string> {
     return $Call.ByID(1131825958, opts);
+}
+
+/**
+ * Copy copies a remote file or directory (recursively) to a new remote path.
+ * The destination parent directories are created when missing.
+ */
+export function Copy(id: string, srcPath: string, dstPath: string): $CancellablePromise<void> {
+    return $Call.ByID(690419117, id, srcPath, dstPath);
 }
 
 /**
