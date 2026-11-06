@@ -12,7 +12,7 @@
                         <el-button size="small" text title="新建目录" @click="mkdir">
                             <el-icon><FolderAdd /></el-icon>
                         </el-button>
-                        <el-button size="small" text title="重命名（F12）" :disabled="!canOperateSelected" @click="renameNode">
+                        <el-button size="small" text title="重命名（F2）" :disabled="!canOperateSelected" @click="renameNode">
                             <el-icon><Edit /></el-icon>
                         </el-button>
                         <el-button size="small" text title="删除" :disabled="!canOperateSelected" @click="removeNode">
@@ -902,7 +902,7 @@ function buildMenu(data: TreeNode | null): (CtxItem | 'divider')[] {
         items.push({ key: 'cut', label: '剪切', icon: Edit })
         items.push({ key: 'paste', label: '粘贴到当前目录', icon: Files, disabled: !canPaste() })
         items.push('divider')
-        items.push({ key: 'rename', label: '重命名（F12）', icon: Edit })
+        items.push({ key: 'rename', label: '重命名（F2）', icon: Edit })
         if (props.backend.chmod) {
             items.push({ key: 'chmod', label: '修改权限', icon: Lock })
         }

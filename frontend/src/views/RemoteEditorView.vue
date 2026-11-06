@@ -179,9 +179,8 @@ watch(
   { immediate: true, flush: 'post' },
 )
 
-// ---------- 页面级快捷键：Ctrl+S 保存、F12 重命名、Ctrl+C/X/V 复制粘贴 ----------
-// 在 window 捕获阶段处理：无论焦点在标签栏 / 目录树还是编辑器都能生效，
-// 同时避免 F12 触发全局开发者工具。
+// ---------- 页面级快捷键：Ctrl+S 保存、F2 重命名、Ctrl+C/X/V 复制粘贴 ----------
+// 在 window 捕获阶段处理：无论焦点在标签栏 / 目录树还是编辑器都能生效。
 
 function isTextEditing(t: HTMLElement | null): boolean {
   if (!t) return false
@@ -203,7 +202,7 @@ function onViewKeydown(e: KeyboardEvent) {
   // 编辑器 / 输入框内保留原生编辑快捷键
   if (isTextEditing(e.target as HTMLElement | null)) return
 
-  if (e.key === 'F12') {
+  if (e.key === 'F2') {
     e.preventDefault()
     e.stopPropagation()
     void inst.renameSelected()

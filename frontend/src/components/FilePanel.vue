@@ -738,7 +738,7 @@ const linked = computed(() => props.connected !== false)
 
 const transfers = useTransfersStore()
 
-// ---------- 键盘：F12 重命名 / Ctrl+C 复制 / Ctrl+X 剪切 / Ctrl+V 粘贴 ----------
+// ---------- 键盘：F2 重命名 / Ctrl+C 复制 / Ctrl+X 剪切 / Ctrl+V 粘贴 ----------
 
 function focusPanel(e: MouseEvent) {
     const t = e.target as HTMLElement | null
@@ -750,7 +750,7 @@ function onPanelKeydown(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
 
-    if (e.key === 'F12') {
+    if (e.key === 'F2') {
         e.preventDefault()
         e.stopPropagation()
         void rename()

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"os"
 	"path"
@@ -451,13 +450,15 @@ func (s *FTPFileService) Upload(id, localPath, remotePath string) error {
 		return err
 	}
 	if fi.IsDir() {
+		// 一次遍历同时得到总大小和各级目录列表，上传时不再重复读目录
+		plan := scanLocalTree(localPath)
 		counter := &transferCounter{
 			id:    id,
 			op:    "upload",
 			name:  path.Base(remotePath),
-			total: localTreeSize(localPath),
+			total: plan.total,
 		}
-		return ftpErrHint(s.uploadDir(sess.conn, id, localPath, remotePath, counter))
+		return ftpErrHint(s.uploadDir(sess.conn, id, localPath, remotePath, counter, plan))
 	}
 	return ftpErrHint(s.uploadFile(sess.conn, id, localPath, remotePath, nil))
 }
@@ -475,12 +476,7 @@ func (s *FTPFileService) Copy(id, srcPath, dstPath string, isDir bool) error {
 
 func copyFTP(conn *ftp.ServerConn, src, dst string, isDir bool) error {
 	if !isDir {
-		rc, err := conn.Retr(src)
-		if err != nil {
-			return err
-		}
-		defer rc.Close()
-		return conn.Stor(dst, rc)
+		return copyFTPFile(conn, src, dst)
 	}
 	if err := ensureRemoteDir(conn, dst); err != nil {
 		return err
@@ -498,26 +494,56 @@ func copyFTP(conn *ftp.ServerConn, src, dst string, isDir bool) error {
 			}
 			continue
 		}
-		rc, err := conn.Retr(sp)
-		if err != nil {
-			return err
-		}
-		err = conn.Stor(dp, rc)
-		rc.Close()
-		if err != nil {
+		if err := copyFTPFile(conn, sp, dp); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// copyFTPFile 复制单个文件。FTP 同一控制连接上不能同时挂着 RETR 的数据流又
+// 发 STOR，否则 STOR 会读到 RETR 残留的 226 响应而报错；所以先完整取回到
+// 本地临时文件并消费完 226，再发起上传。
+func copyFTPFile(conn *ftp.ServerConn, src, dst string) error {
+	tmp, err := os.CreateTemp("", "spark-ftp-copy-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer func() {
+		tmp.Close()
+		os.Remove(name)
+	}()
+
+	rc, err := conn.Retr(src)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(tmp, rc)
+	closeErr := rc.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	return conn.Stor(dst, tmp)
+}
+
 // uploadDir uploads a directory tree. All files in the tree share one counter
 // and its grand total, so progress moves 0→100% across the whole directory
 // instead of resetting for every file.
-func (s *FTPFileService) uploadDir(conn *ftp.ServerConn, id, localDir, remoteDir string, counter *transferCounter) error {
-	entries, err := os.ReadDir(localDir)
-	if err != nil {
-		return err
+func (s *FTPFileService) uploadDir(conn *ftp.ServerConn, id, localDir, remoteDir string, counter *transferCounter, plan *localPlan) error {
+	entries, ok := plan.dirs[localDir]
+	if !ok {
+		var err error
+		entries, err = os.ReadDir(localDir)
+		if err != nil {
+			return err
+		}
 	}
 	if err := ensureRemoteDir(conn, remoteDir); err != nil {
 		return err
@@ -526,7 +552,7 @@ func (s *FTPFileService) uploadDir(conn *ftp.ServerConn, id, localDir, remoteDir
 		lp := filepath.Join(localDir, e.Name())
 		rp := joinRemote(remoteDir, e.Name())
 		if e.IsDir() {
-			if err := s.uploadDir(conn, id, lp, rp, counter); err != nil {
+			if err := s.uploadDir(conn, id, lp, rp, counter, plan); err != nil {
 				return err
 			}
 		} else {
@@ -547,8 +573,11 @@ func (s *FTPFileService) uploadFile(conn *ftp.ServerConn, id, localPath, remoteP
 	}
 	defer local.Close()
 
-	if err := ensureRemoteDir(conn, path.Dir(remotePath)); err != nil {
-		return err
+	// uploadDir 已确保目录存在，只有单文件上传才需要在这里补建父目录
+	if counter == nil {
+		if err := ensureRemoteDir(conn, path.Dir(remotePath)); err != nil {
+			return err
+		}
 	}
 
 	total := int64(0)
@@ -595,21 +624,27 @@ func (s *FTPFileService) Download(id, remotePath, localPath string, isDir bool) 
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	if isDir {
+		// 一次遍历同时得到总大小和各级目录列表，下载时不再重复列目录
+		plan := scanRemoteTree(sess.conn, remotePath)
 		counter := &transferCounter{
 			id:    id,
 			op:    "download",
 			name:  path.Base(remotePath),
-			total: remoteTreeSize(sess.conn, remotePath),
+			total: plan.total,
 		}
-		return ftpErrHint(s.downloadDir(sess.conn, id, remotePath, localPath, counter))
+		return ftpErrHint(s.downloadDir(sess.conn, id, remotePath, localPath, counter, plan))
 	}
 	return ftpErrHint(s.downloadFile(sess.conn, id, remotePath, localPath, nil))
 }
 
-func (s *FTPFileService) downloadDir(conn *ftp.ServerConn, id, remoteDir, localDir string, counter *transferCounter) error {
-	entries, err := conn.List(remoteDir)
-	if err != nil {
-		return err
+func (s *FTPFileService) downloadDir(conn *ftp.ServerConn, id, remoteDir, localDir string, counter *transferCounter, plan *remotePlan) error {
+	entries, ok := plan.dirs[remoteDir]
+	if !ok {
+		var err error
+		entries, err = conn.List(remoteDir)
+		if err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		return err
@@ -618,7 +653,7 @@ func (s *FTPFileService) downloadDir(conn *ftp.ServerConn, id, remoteDir, localD
 		rp := joinRemote(remoteDir, e.Name)
 		lp := filepath.Join(localDir, e.Name)
 		if e.Type == ftp.EntryTypeFolder {
-			if err := s.downloadDir(conn, id, rp, lp, counter); err != nil {
+			if err := s.downloadDir(conn, id, rp, lp, counter, plan); err != nil {
 				return err
 			}
 		} else if e.Type == ftp.EntryTypeFile {
@@ -797,39 +832,63 @@ func (p *progressReader) Read(buf []byte) (int, error) {
 	return n, err
 }
 
-// localTreeSize returns the total size of all regular files under root.
-func localTreeSize(root string) int64 {
-	var total int64
-	_ = filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if info, ierr := d.Info(); ierr == nil {
-			total += info.Size()
-		}
-		return nil
-	})
-	return total
+// localPlan caches one traversal of a local directory tree: the grand total
+// size plus per-directory entries, so the upload does not list dirs twice.
+type localPlan struct {
+	total int64
+	dirs  map[string][]os.DirEntry
 }
 
-// remoteTreeSize returns the total size of all regular files under root.
-func remoteTreeSize(conn *ftp.ServerConn, root string) int64 {
-	entries, err := conn.List(root)
-	if err != nil {
-		return 0
-	}
-	var total int64
-	for _, e := range entries {
-		switch e.Type {
-		case ftp.EntryTypeFolder:
-			total += remoteTreeSize(conn, joinRemote(root, e.Name))
-		case ftp.EntryTypeFile:
-			if e.Size > 0 {
-				total += int64(e.Size)
-			} else if sz, szErr := conn.FileSize(joinRemote(root, e.Name)); szErr == nil && sz > 0 {
-				total += sz
+func scanLocalTree(root string) *localPlan {
+	p := &localPlan{dirs: make(map[string][]os.DirEntry)}
+	var walk func(dir string)
+	walk = func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		p.dirs[dir] = entries
+		for _, e := range entries {
+			if e.IsDir() {
+				walk(filepath.Join(dir, e.Name()))
+			} else if info, ierr := e.Info(); ierr == nil {
+				p.total += info.Size()
 			}
 		}
 	}
-	return total
+	walk(root)
+	return p
+}
+
+// remotePlan caches one traversal of a remote directory tree: the grand total
+// size plus per-directory entries, so the download does not list dirs twice.
+type remotePlan struct {
+	total int64
+	dirs  map[string][]*ftp.Entry
+}
+
+func scanRemoteTree(conn *ftp.ServerConn, root string) *remotePlan {
+	p := &remotePlan{dirs: make(map[string][]*ftp.Entry)}
+	var walk func(dir string)
+	walk = func(dir string) {
+		entries, err := conn.List(dir)
+		if err != nil {
+			return
+		}
+		p.dirs[dir] = entries
+		for _, e := range entries {
+			switch e.Type {
+			case ftp.EntryTypeFolder:
+				walk(joinRemote(dir, e.Name))
+			case ftp.EntryTypeFile:
+				if e.Size > 0 {
+					p.total += int64(e.Size)
+				} else if sz, szErr := conn.FileSize(joinRemote(dir, e.Name)); szErr == nil && sz > 0 {
+					p.total += sz
+				}
+			}
+		}
+	}
+	walk(root)
+	return p
 }

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"os"
 	"path"
@@ -692,13 +691,15 @@ func (s *SFTPFileService) Upload(id, localPath, remotePath string) error {
 		return err
 	}
 	if fi.IsDir() {
+		// 一次遍历同时得到总大小和各级目录列表，上传时不再重复读目录
+		plan := scanLocalTree(localPath)
 		counter := &transferCounter{
 			id:    id,
 			op:    "upload",
 			name:  path.Base(remotePath),
-			total: localTreeSize(localPath),
+			total: plan.total,
 		}
-		return s.uploadDir(sess.sftp, id, localPath, remotePath, counter)
+		return s.uploadDir(sess.sftp, id, localPath, remotePath, counter, plan)
 	}
 	return s.uploadFile(sess.sftp, id, localPath, remotePath, nil)
 }
@@ -706,10 +707,14 @@ func (s *SFTPFileService) Upload(id, localPath, remotePath string) error {
 // uploadDir uploads a directory tree. All files in the tree share one counter
 // and its grand total, so progress moves 0→100% across the whole directory
 // instead of resetting for every file.
-func (s *SFTPFileService) uploadDir(cl *sftplib.Client, id, localDir, remoteDir string, counter *transferCounter) error {
-	entries, err := os.ReadDir(localDir)
-	if err != nil {
-		return err
+func (s *SFTPFileService) uploadDir(cl *sftplib.Client, id, localDir, remoteDir string, counter *transferCounter, plan *localPlan) error {
+	entries, ok := plan.dirs[localDir]
+	if !ok {
+		var err error
+		entries, err = os.ReadDir(localDir)
+		if err != nil {
+			return err
+		}
 	}
 	if err := ensureRemoteDir(cl, remoteDir); err != nil {
 		return err
@@ -718,7 +723,7 @@ func (s *SFTPFileService) uploadDir(cl *sftplib.Client, id, localDir, remoteDir 
 		lp := filepath.Join(localDir, e.Name())
 		rp := path.Join(remoteDir, e.Name())
 		if e.IsDir() {
-			if err := s.uploadDir(cl, id, lp, rp, counter); err != nil {
+			if err := s.uploadDir(cl, id, lp, rp, counter, plan); err != nil {
 				return err
 			}
 		} else {
@@ -739,8 +744,11 @@ func (s *SFTPFileService) uploadFile(cl *sftplib.Client, id, localPath, remotePa
 	}
 	defer local.Close()
 
-	if err := ensureRemoteDir(cl, path.Dir(remotePath)); err != nil {
-		return err
+	// uploadDir 已确保目录存在，只有单文件上传才需要在这里补建父目录
+	if counter == nil {
+		if err := ensureRemoteDir(cl, path.Dir(remotePath)); err != nil {
+			return err
+		}
 	}
 
 	total := int64(0)
@@ -797,22 +805,28 @@ func (s *SFTPFileService) Download(id, remotePath, localPath string) error {
 		return err
 	}
 	if fi.IsDir() {
+		// 一次遍历同时得到总大小和各级目录列表，下载时不再重复读目录
+		plan := scanRemoteTree(sess.sftp, remotePath)
 		counter := &transferCounter{
 			id:    id,
 			op:    "download",
 			name:  path.Base(remotePath),
-			total: remoteTreeSize(sess.sftp, remotePath),
+			total: plan.total,
 		}
-		return s.downloadDir(sess.sftp, id, remotePath, localPath, counter)
+		return s.downloadDir(sess.sftp, id, remotePath, localPath, counter, plan)
 	}
 	return s.downloadFile(sess.sftp, id, remotePath, localPath, nil)
 }
 
 // downloadDir downloads a directory tree with one shared progress counter.
-func (s *SFTPFileService) downloadDir(cl *sftplib.Client, id, remoteDir, localDir string, counter *transferCounter) error {
-	entries, err := cl.ReadDir(remoteDir)
-	if err != nil {
-		return err
+func (s *SFTPFileService) downloadDir(cl *sftplib.Client, id, remoteDir, localDir string, counter *transferCounter, plan *remotePlan) error {
+	entries, ok := plan.dirs[remoteDir]
+	if !ok {
+		var err error
+		entries, err = cl.ReadDir(remoteDir)
+		if err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(localDir, 0o755); err != nil {
 		return err
@@ -821,7 +835,7 @@ func (s *SFTPFileService) downloadDir(cl *sftplib.Client, id, remoteDir, localDi
 		rp := path.Join(remoteDir, e.Name())
 		lp := filepath.Join(localDir, e.Name())
 		if e.IsDir() {
-			if err := s.downloadDir(cl, id, rp, lp, counter); err != nil {
+			if err := s.downloadDir(cl, id, rp, lp, counter, plan); err != nil {
 				return err
 			}
 		} else {
@@ -939,23 +953,61 @@ func ensureRemoteDir(cl *sftplib.Client, dir string) error {
 }
 
 func removeRemote(cl *sftplib.Client, p string) error {
-	fi, err := cl.Stat(p)
+	// 用 Lstat：符号链接只删除链接本身，不跟随到目标目录
+	fi, err := cl.Lstat(p)
 	if err != nil {
 		return err
 	}
 	if !fi.IsDir() {
 		return cl.Remove(p)
 	}
-	entries, err := cl.ReadDir(p)
+	return removeRemoteDir(cl, p)
+}
+
+// removeRemoteDir 删除目录树：直接用 ReadDir 返回的类型，避免每个子项再
+// Stat 一次；同一目录内的文件并发删除，大目录不必逐个等待往返。
+func removeRemoteDir(cl *sftplib.Client, dir string) error {
+	entries, err := cl.ReadDir(dir)
 	if err != nil {
 		return err
 	}
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 16)
+	errCh := make(chan error, 1)
 	for _, e := range entries {
-		if err := removeRemote(cl, path.Join(p, e.Name())); err != nil {
+		if e.IsDir() {
+			continue
+		}
+		wg.Add(1)
+		go func(child string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if err := cl.Remove(child); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+			}
+		}(path.Join(dir, e.Name()))
+	}
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		return err
+	default:
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if err := removeRemoteDir(cl, path.Join(dir, e.Name())); err != nil {
 			return err
 		}
 	}
-	return cl.RemoveDirectory(p)
+	return cl.RemoveDirectory(dir)
 }
 
 // transferCounter accumulates bytes for one logical transfer (a single file or
@@ -1001,32 +1053,58 @@ func (p *progressReader) Read(buf []byte) (int, error) {
 	return n, err
 }
 
-// localTreeSize returns the total size of all regular files under root.
-func localTreeSize(root string) int64 {
-	var total int64
-	_ = filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if info, ierr := d.Info(); ierr == nil {
-			total += info.Size()
-		}
-		return nil
-	})
-	return total
+// localPlan caches one traversal of a local directory tree: the grand total
+// size plus per-directory entries, so the upload does not list dirs twice.
+type localPlan struct {
+	total int64
+	dirs  map[string][]os.DirEntry
 }
 
-// remoteTreeSize returns the total size of all regular files under root.
-func remoteTreeSize(cl *sftplib.Client, root string) int64 {
-	var total int64
-	w := cl.Walk(root)
-	for w.Step() {
-		if w.Err() != nil {
-			continue
+func scanLocalTree(root string) *localPlan {
+	p := &localPlan{dirs: make(map[string][]os.DirEntry)}
+	var walk func(dir string)
+	walk = func(dir string) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
 		}
-		if info := w.Stat(); info != nil && !info.IsDir() {
-			total += info.Size()
+		p.dirs[dir] = entries
+		for _, e := range entries {
+			if e.IsDir() {
+				walk(filepath.Join(dir, e.Name()))
+			} else if info, ierr := e.Info(); ierr == nil {
+				p.total += info.Size()
+			}
 		}
 	}
-	return total
+	walk(root)
+	return p
+}
+
+// remotePlan caches one traversal of a remote directory tree: the grand total
+// size plus per-directory entries, so the download does not list dirs twice.
+type remotePlan struct {
+	total int64
+	dirs  map[string][]os.FileInfo
+}
+
+func scanRemoteTree(cl *sftplib.Client, root string) *remotePlan {
+	p := &remotePlan{dirs: make(map[string][]os.FileInfo)}
+	var walk func(dir string)
+	walk = func(dir string) {
+		entries, err := cl.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		p.dirs[dir] = entries
+		for _, e := range entries {
+			if e.IsDir() {
+				walk(path.Join(dir, e.Name()))
+			} else {
+				p.total += e.Size()
+			}
+		}
+	}
+	walk(root)
+	return p
 }

@@ -606,7 +606,7 @@ function buildCtx(data: TreeNode | null): (CtxItem | 'divider')[] {
     items.push({ key: 'cut', label: '剪切', icon: Scissor })
     items.push({ key: 'paste', label: '粘贴到当前目录', icon: Files, disabled: !canPaste() })
     items.push('divider')
-    items.push({ key: 'rename', label: '重命名（F12）', icon: Edit })
+    items.push({ key: 'rename', label: '重命名（F2）', icon: Edit })
     items.push({ key: 'delete', label: '删除', icon: Delete, danger: true })
     return items
 }
@@ -969,9 +969,9 @@ function openResult(row: SearchResult) {
     void openDocument(node, row.lineNo)
 }
 
-// ---------- 页面级快捷键：Ctrl+S / F12 / Ctrl+C/X/V ----------
-// 用 window 捕获阶段：焦点在标签栏、目录树或编辑器里都能生效；F12 在本页
-// 用于重命名，同时阻止全局开发者工具快捷键。
+// ---------- 页面级快捷键：Ctrl+S / F2 / Ctrl+C/X/V ----------
+// 用 window 捕获阶段：焦点在标签栏、目录树或编辑器里都能生效；F2 在本页
+// 用于重命名。
 
 function isTextEditing(t: HTMLElement | null): boolean {
     if (!t) return false
@@ -988,7 +988,7 @@ function onViewKeydown(e: KeyboardEvent) {
     }
     // 编辑器 / 输入框内保留原生编辑快捷键
     if (isTextEditing(e.target as HTMLElement | null)) return
-    if (e.key === 'F12') {
+    if (e.key === 'F2') {
         if (selectedId.value == null) return
         e.preventDefault()
         e.stopPropagation()

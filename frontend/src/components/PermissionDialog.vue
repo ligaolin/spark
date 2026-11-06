@@ -14,7 +14,8 @@
       </div>
 
       <div class="perm-bottom">
-        <el-input v-model="octal" class="perm-octal" maxlength="4" @change="onOctalChange" />
+        <el-input v-model="octal" class="perm-octal" maxlength="4" @input="onOctalInput"
+          @change="onOctalChange" />
         <span class="perm-text">权限，所有者</span>
         <el-select v-model="ownerUid" class="perm-owner" filterable :loading="ownerLoading"
           :disabled="!canChangeOwner" :placeholder="owner || '保持不变'">
@@ -86,7 +87,17 @@ watch(
   { deep: true },
 )
 
-// 八进制 → 勾选矩阵
+// 输入过程中即时更新上面的勾选；这里不重写输入框内容，避免打断连续输入
+function onOctalInput(v: string) {
+  if (syncing) return
+  const raw = (v ?? '').trim()
+  if (!/^[0-7]{1,4}$/.test(raw)) return
+  syncing = true
+  Object.assign(bits, octalToBits(parseInt(raw, 8)))
+  syncing = false
+}
+
+// 八进制 → 勾选矩阵（失焦/回车时校验并规范为三位）
 function onOctalChange(v: string) {
   if (syncing) return
   const raw = v.trim()
