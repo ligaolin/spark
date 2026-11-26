@@ -25,6 +25,22 @@ export interface AIConfig {
 }
 
 /**
+ * AIProviderInfo is one saved AI endpoint shown in the settings list. The key
+ * itself is never exposed; HasKey reports whether one is stored.
+ */
+export interface AIProviderInfo {
+    "id": number;
+    "name": string;
+    "baseUrl": string;
+    "model": string;
+    "temperature": number;
+    "maxTokens": number;
+    "systemPrompt": string;
+    "hasKey": boolean;
+    "active": boolean;
+}
+
+/**
  * AgentAsk asks the frontend to approve (or reject/edit) a proposed command.
  */
 export interface AgentAsk {
@@ -33,6 +49,19 @@ export interface AgentAsk {
     "command": string;
     "reason": string;
     "why": string;
+}
+
+/**
+ * AgentConversationInfo is one persisted AI conversation of a server.
+ * Transcript carries the UI entries (JSON) only when a specific conversation
+ * is selected, to keep the list payload lean.
+ */
+export interface AgentConversationInfo {
+    "id": number;
+    "title": string;
+    "serverKey": string;
+    "transcript"?: string;
+    "updatedAt": string;
 }
 
 /**
@@ -88,6 +117,23 @@ export interface AgentStep {
 }
 
 /**
+ * BatchExecResult is the per-server outcome of a batch command run.
+ */
+export interface BatchExecResult {
+    "connId": number;
+    "name": string;
+    "host": string;
+    "output": string;
+    "error": string;
+    "exitCode": number;
+
+    /**
+     * milliseconds
+     */
+    "duration": number;
+}
+
+/**
  * ChatMessage is one turn in a chat conversation.
  */
 export interface ChatMessage {
@@ -116,10 +162,28 @@ export interface ConnectOptions {
     "passphrase": string;
 
     /**
+     * KeyID references a managed key (ssh_keys table). When set with UseKey and
+     * an empty PrivateKey, the backend fills PrivateKey/Passphrase before dialing.
+     */
+    "keyId": number;
+
+    /**
      * ForwardAgent enables SSH agent forwarding: the remote session can use the
      * local machine's SSH agent identities (SSH-only).
      */
     "forwardAgent": boolean;
+
+    /**
+     * JumpID references a saved connection used as a jump host (ProxyJump).
+     * The backend expands it into Jump before dialing.
+     */
+    "jumpId": number;
+
+    /**
+     * Jump lists SSH jump hosts, outermost first. Each hop is a full
+     * ConnectOptions with its own credentials and host key verification.
+     */
+    "jump": ConnectOptions[] | null;
 
     /**
      * Terminal options (SSH only)
@@ -152,6 +216,15 @@ export interface ConnectOptions {
      * Optional pre-assigned session id (used to reuse an existing session)
      */
     "sessionId": string;
+}
+
+/**
+ * DirSizeInfo is the recursively computed size of a directory.
+ * Files 为 -1 表示服务端快速路径（du）未统计文件数。
+ */
+export interface DirSizeInfo {
+    "size": number;
+    "files": number;
 }
 
 /**
@@ -236,6 +309,43 @@ export interface IpStatus {
 export interface KV {
     "key": string;
     "value": string;
+}
+
+/**
+ * MirrorDiff 是镜像比较的完整结果。
+ */
+export interface MirrorDiff {
+    "items": MirrorItem[] | null;
+
+    /**
+     * 待传输文件总大小
+     */
+    "bytes": number;
+}
+
+/**
+ * MirrorItem 是本地目录与远程目录镜像比较得到的一处文件差异。
+ */
+export interface MirrorItem {
+    /**
+     * 相对路径（/ 分隔）
+     */
+    "rel": string;
+
+    /**
+     * upload | download | delete-remote | delete-local
+     */
+    "action": string;
+
+    /**
+     * new | changed | extra
+     */
+    "reason": string;
+
+    /**
+     * 传输方向上的源文件大小
+     */
+    "size": number;
 }
 
 /**

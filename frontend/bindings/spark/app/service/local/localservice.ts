@@ -32,6 +32,15 @@ export function DefaultDownloadDir(): $CancellablePromise<string> {
 }
 
 /**
+ * DirSize walks dir recursively and returns the total size of its regular
+ * files. Unreadable entries are skipped so a permission error deep in the tree
+ * does not abort the whole calculation.
+ */
+export function DirSize(dir: string): $CancellablePromise<types$0.DirSizeInfo> {
+    return $Call.ByID(2573223142, dir);
+}
+
+/**
  * Home returns the current user's home directory.
  */
 export function Home(): $CancellablePromise<string> {
@@ -60,10 +69,11 @@ export function PickDirectory(): $CancellablePromise<string> {
 }
 
 /**
- * PickFiles opens a native multi-select file dialog for uploads.
+ * PickFiles opens a native multi-select file dialog. An empty title falls
+ * back to the upload dialog title.
  */
-export function PickFiles(): $CancellablePromise<string[] | null> {
-    return $Call.ByID(3327664812);
+export function PickFiles(title: string): $CancellablePromise<string[] | null> {
+    return $Call.ByID(3327664812, title);
 }
 
 /**
@@ -78,6 +88,14 @@ export function PickOpenFile(title: string): $CancellablePromise<string> {
  */
 export function PickSaveFile(defaultName: string): $CancellablePromise<string> {
     return $Call.ByID(3239093266, defaultName);
+}
+
+/**
+ * ReadBinary reads a local file and returns its content as base64 (used by
+ * the image/PDF preview), capped at fileutil.MaxPreviewSize.
+ */
+export function ReadBinary(path: string): $CancellablePromise<string> {
+    return $Call.ByID(3861430377, path);
 }
 
 /**

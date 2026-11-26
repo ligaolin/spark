@@ -50,7 +50,7 @@ func migrateSiteAccountsToLink(d *gorm.DB) {
 
 func Migrate() {
 	d := db.GetDB()
-	d.AutoMigrate(&SavedConnection{}, &CustomCommand{}, &Favorite{}, &Setting{}, &ConnectionGroup{}, &DocNode{}, &SiteFolder{}, &Site{}, &SiteLink{}, &SiteAccount{}, &RestFolder{}, &RestFolderEnv{}, &RestRequestModel{})
+	d.AutoMigrate(&SavedConnection{}, &SSHKey{}, &CustomCommand{}, &Favorite{}, &Setting{}, &ConnectionGroup{}, &DocNode{}, &SiteFolder{}, &Site{}, &SiteLink{}, &SiteAccount{}, &RestFolder{}, &RestFolderEnv{}, &RestRequestModel{}, &AgentConversation{}, &AIProvider{})
 
 	// 迁移：账号挂在链接下（link_id）。
 	migrateSiteAccountsToLink(d)

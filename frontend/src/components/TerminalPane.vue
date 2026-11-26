@@ -50,7 +50,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import 'xterm/css/xterm.css'
 import { Events, Clipboard } from '@wailsio/runtime'
 import { ElMessage } from 'element-plus'
-import { EVENTS, TerminalService } from '../utils/wails'
+import { EVENTS, TerminalService, LocalService } from '../utils/wails'
 import { useTerminalStore, type TerminalTab } from '../stores/terminal'
 import { useSettingsStore } from '../stores/settings'
 import { resolveHostKeyIssue } from '../utils/hostkey'
@@ -65,6 +65,7 @@ import {
     Document,
     Select,
     Delete,
+    Download,
 } from '@element-plus/icons-vue'
 
 const props = defineProps<{ tab: TerminalTab }>()
@@ -100,6 +101,7 @@ function onContextMenu(e: MouseEvent) {
         { key: 'paste', label: '粘贴', icon: Document, hint: 'Ctrl+V / Ctrl+Shift+V' },
         { key: 'select-all', label: '全选', icon: Select },
         'divider',
+        { key: 'export', label: '导出输出…', icon: Download },
         { key: 'clear', label: '清屏', icon: Delete },
     ]
     ctxVisible.value = false
@@ -183,9 +185,53 @@ async function onCtxPick(item: CtxItem) {
         case 'select-all':
             term.selectAll()
             break
+        case 'export':
+            await exportOutput()
+            break
         case 'clear':
             term.clear()
             break
+    }
+}
+
+// 读取 xterm 缓冲区全部可见内容（含回滚），去掉尾部空行
+function bufferText(): string {
+    if (!term) return ''
+    const buf = term.buffer.active
+    const lines: string[] = []
+    for (let i = 0; i < buf.length; i++) {
+        const line = buf.getLine(i)
+        lines.push(line ? line.translateToString(true) : '')
+    }
+    while (lines.length && lines[lines.length - 1] === '') lines.pop()
+    return lines.join('\n') + '\n'
+}
+
+async function exportOutput() {
+    if (!term) return
+    const text = bufferText()
+    if (!text.trim()) {
+        ElMessage.warning('当前终端没有可导出的内容')
+        return
+    }
+    const host = props.tab.opts?.host || 'local'
+    const stamp = new Date()
+        .toISOString()
+        .replace(/[-:T]/g, '')
+        .slice(0, 14)
+    let path = ''
+    try {
+        path = await LocalService.PickSaveFile(`terminal-${host}-${stamp}.log`)
+    } catch (e: any) {
+        ElMessage.error(`打开保存对话框失败：${e?.message || e}`)
+        return
+    }
+    if (!path) return
+    try {
+        await LocalService.WriteFile(path, text)
+        ElMessage.success(`已导出到 ${path}`)
+    } catch (e: any) {
+        ElMessage.error(`导出失败：${e?.message || e}`)
     }
 }
 

@@ -29,7 +29,12 @@
                                     <span v-if="data.type === 'request'" class="tree-method"
                                         :class="'method-' + (data.method || 'get').toLowerCase()">{{ data.method
                                         }}</span>
-                                    <span class="tree-node-name" :title="data.name">{{ data.name }}</span>
+                                    <el-input v-if="renamingNodeKey === data.nodeKey" :ref="setRenameInputRef"
+                                        v-model="renameDraft" size="small" class="rest-rename-input"
+                                        @click.stop @mousedown.stop @dblclick.stop
+                                        @keyup.enter="onRenameEnter" @keyup.esc="cancelRename"
+                                        @blur="commitRename" />
+                                    <span v-else class="tree-node-name" :title="data.name">{{ data.name }}</span>
                                     <span v-if="data.type === 'folder' && data.activeBaseUrl"
                                         class="tree-base-url-tag">{{ data.activeBaseUrl }}</span>
                                 </span>
@@ -99,6 +104,11 @@
                             </el-button>
                             <template #dropdown>
                                 <el-dropdown-menu>
+                                    <el-dropdown-item @click="openHistory">
+                                        <el-icon>
+                                            <Clock />
+                                        </el-icon>请求历史
+                                    </el-dropdown-item>
                                     <el-dropdown-item @click="openCurlImport">
                                         <el-icon>
                                             <Download />
@@ -343,163 +353,45 @@
             </el-splitter-panel>
         </el-splitter>
 
-        <!-- 设置环境弹窗（目录右键：基础链接 + 公共请求头，同一页面） -->
-        <el-dialog v-model="showEnvDialog" :title="'设置环境 - ' + (envTargetNode?.name || '')" width="750px"
-            destroy-on-close>
-            <!-- 基础链接区域 -->
-            <el-divider content-position="left">
-                <el-icon>
-                    <Connection />
-                </el-icon>
-                <span style="margin-left:4px">基础链接</span>
-            </el-divider>
-            <p class="env-tab-hint">
-                <el-icon>
-                    <InfoFilled />
-                </el-icon>
-                可配置多个基础链接（如正式/测试），标记一个为「当前使用」。为空则继承上级目录。
-            </p>
-            <div class="env-base-url-list">
-                <div class="env-base-item" v-for="(item, i) in folderEnvList" :key="item.id || ('new_' + i)">
-                    <el-input v-model="item.name" class="env-base-name" placeholder="名称（如：正式、测试）" size="small" />
-                    <el-input v-model="item.baseUrl" class="env-base-url" placeholder="https://api.example.com"
-                        size="small" />
-                    <el-tag v-if="item.isActive" size="small" type="success" class="env-active-tag">当前使用</el-tag>
-                    <el-button v-else size="small" text type="primary" @click="setActiveEnvItem(item, i)">启用</el-button>
-                    <el-button size="small" text type="danger" :icon="Delete" @click="removeEnvItem(i)" />
-                </div>
-                <el-button size="small" :icon="Plus" @click="addEnvItem">添加基础链接</el-button>
-            </div>
-
-            <!-- 公共请求头区域 -->
-            <el-divider content-position="left" style="margin-top:20px">
-                <el-icon>
-                    <Setting />
-                </el-icon>
-                <span style="margin-left:4px">公共请求头</span>
-            </el-divider>
-            <p class="env-tab-hint">
-                <el-icon>
-                    <InfoFilled />
-                </el-icon>
-                文件夹级公共请求头，所有子请求自动携带。优先级：请求自身 Headers > 文件夹公共请求头。同 key 由高优先级覆盖。
-            </p>
-            <div class="kv-editor"
-                style="height: auto; max-height: 300px; border: 1px solid var(--border-color); border-radius: 6px;">
-                <div class="kv-row" v-for="(row, i) in folderHeadersForm" :key="i">
-                    <el-input v-model="row.key" class="kv-key" placeholder="Header 名" size="small" />
-                    <el-input v-model="row.value" class="kv-val" placeholder="Header 值" size="small" />
-                    <el-button size="small" :icon="Delete" circle @click="folderHeadersForm.splice(i, 1)" />
-                </div>
-                <el-button size="small" :icon="Plus"
-                    @click="folderHeadersForm.push({ key: '', value: '', enabled: true })">
-                    添加请求头
-                </el-button>
-            </div>
-            <template #footer>
-                <el-button @click="showEnvDialog = false">取消</el-button>
-                <el-button type="primary" @click="saveEnvSettings" :loading="savingEnv">保存</el-button>
-            </template>
-        </el-dialog>
+        <!-- 设置环境弹窗（目录右键：基础链接 + 公共请求头） -->
+        <RestEnvDialog v-model="showEnvDialog" :node="envTargetNode" @saved="onEnvSaved" />
 
         <!-- curl 导入弹窗 -->
-        <el-dialog v-model="showCurlDialog" title="导入 curl" width="650px" destroy-on-close>
-            <el-input v-model="curlText" type="textarea" :rows="10"
-                placeholder="粘贴 curl 命令，例如：&#10;curl -X POST https://api.example.com/users \&#10;  -H 'Content-Type: application/json' \&#10;  -d '{&quot;name&quot;: &quot;test&quot;}'" />
-            <template #footer>
-                <el-button @click="showCurlDialog = false">取消</el-button>
-                <el-button type="primary" @click="importCurl">解析并导入</el-button>
-            </template>
-        </el-dialog>
+        <RestCurlImportDialog v-model="showCurlDialog" @import="applyCurlImport" />
 
         <!-- curl 生成弹窗 -->
-        <el-dialog v-model="showGenCurlDialog" :title="genDialogTitle" width="750px" destroy-on-close>
-            <div class="curl-gen-toolbar">
-                <span class="curl-gen-label">生成：</span>
-                <el-select v-model="codeLanguage" size="small" class="curl-gen-select">
-                    <el-option label="cURL（Bash/Linux）" value="curl" />
-                    <el-option label="cURL（CMD）" value="curl-cmd" />
-                    <el-option label="cURL（PowerShell）" value="curl-ps" />
-                    <el-option label="cURL（单行）" value="curl-single" />
-                    <el-option label="Python（requests）" value="python" />
-                    <el-option label="JavaScript（fetch）" value="javascript" />
-                    <el-option label="Go（net/http）" value="go" />
-                </el-select>
-                <el-button size="small" class="curl-gen-copy" :icon="CopyDocument"
-                    @click="copyGeneratedCurl">复制</el-button>
-            </div>
-            <div class="curl-gen-editor">
-                <CodeEditor ref="curlEditorRef" :filename="genEditorFilename" wrap />
-            </div>
-        </el-dialog>
+        <RestGenCodeDialog v-model="showGenCurlDialog" v-model:language="codeLanguage" :code="generatedCurl" />
 
         <!-- 压力测试弹窗 -->
-        <el-dialog v-model="showStressDialog" title="压力测试" width="700px" destroy-on-close @close="stopStress">
-            <el-form label-width="90px">
-                <el-form-item label="并发数">
-                    <el-input-number v-model="stressForm.concurrency" :min="1" :max="1000" :step="1"
-                        :disabled="stressRunning" />
-                </el-form-item>
-                <el-form-item label="总请求数">
-                    <el-input-number v-model="stressForm.total" :min="1" :max="100000" :step="10"
-                        :disabled="stressRunning" />
-                </el-form-item>
-                <el-form-item label="超时(秒)">
-                    <el-input-number v-model="stressForm.timeout" :min="1" :max="120" :step="1"
-                        :disabled="stressRunning" />
-                </el-form-item>
-            </el-form>
+        <RestStressDialog v-model="showStressDialog" :running="stressRunning" :progress="stressProgress"
+            :result="stressResult" :latency-rows="latencyRows" :status-rows="statusRows" :url="stressUrl"
+            @start="runStress" @stop="stopStress" />
 
-            <div class="stress-progress" v-if="stressRunning">
-                <el-progress :percentage="Math.round((stressProgress.current / stressProgress.total) * 100)"
-                    :text-inside="true" :stroke-width="20" />
-                <p class="stress-progress-text">{{ stressProgress.current }} / {{ stressProgress.total }}</p>
+        <!-- 请求历史抽屉 -->
+        <el-drawer v-model="historyOpen" title="请求历史" size="520px">
+            <div class="history-toolbar">
+                <span class="history-count">共 {{ history.length }} 条 · 最多保留 {{ HISTORY_MAX }} 条</span>
+                <el-button size="small" text type="danger" :disabled="!history.length" @click="clearHistory">清空</el-button>
             </div>
-
-            <div class="stress-result" v-if="stressResult">
-                <div class="stress-summary">
-                    <el-tag :type="stressResult.failure === 0 ? 'success' : 'warning'" size="large">
-                        {{ stressResult.failure === 0 ? '全部通过' : stressResult.success + ' 成功 / ' + stressResult.failure
-                            + ' 失败'
-                        }}
-                    </el-tag>
-                    <span class="stress-qps">QPS: {{ stressResult.qps }}</span>
-                    <span class="stress-dur">{{ stressResult.duration }} ms</span>
+            <div v-if="!history.length" class="history-empty">暂无记录，发送请求后会自动记录</div>
+            <div v-for="(h, i) in history" :key="h.id" class="history-item" @click="applyHistory(h)">
+                <div class="history-line1">
+                    <span class="tree-method" :class="'method-' + h.method.toLowerCase()">{{ h.method }}</span>
+                    <span class="history-url" :title="h.resolvedUrl">{{ h.resolvedUrl }}</span>
+                    <el-icon class="history-del" title="删除该记录" @click.stop="removeHistory(i)">
+                        <Delete />
+                    </el-icon>
                 </div>
-
-                <el-table :data="latencyRows" size="small" class="stress-table">
-                    <el-table-column prop="label" label="指标" width="80" />
-                    <el-table-column prop="min" label="最小(ms)" width="90" />
-                    <el-table-column prop="avg" label="平均(ms)" width="90" />
-                    <el-table-column prop="max" label="最大(ms)" width="90" />
-                    <el-table-column prop="p50" label="P50(ms)" width="90" />
-                    <el-table-column prop="p95" label="P95(ms)" width="90" />
-                    <el-table-column prop="p99" label="P99(ms)" width="90" />
-                </el-table>
-
-                <el-table :data="statusRows" size="small" class="stress-table" v-if="statusRows.length">
-                    <el-table-column prop="code" label="状态码" width="120" />
-                    <el-table-column prop="count" label="次数" />
-                    <el-table-column prop="pct" label="占比" width="100">
-                        <template #default="{ row }">
-                            <el-progress :percentage="row.pctNum" :stroke-width="10" />
-                        </template>
-                    </el-table-column>
-                </el-table>
+                <div class="history-line2">
+                    <span class="history-time">{{ fmtHistoryTime(h.time) }}</span>
+                    <span v-if="h.error" class="history-status err" :title="h.error">失败</span>
+                    <span v-else class="history-status"
+                        :class="h.status >= 400 ? 'err' : h.status >= 300 ? 'warn' : 'ok'">
+                        {{ h.status }} · {{ h.duration }}ms
+                    </span>
+                </div>
             </div>
-
-            <div class="stress-empty" v-if="!stressRunning && !stressResult">
-                <p>使用当前请求参数发起并发压力测试</p>
-                <p class="stress-empty-hint">URL: {{ buildURL() }}</p>
-            </div>
-
-            <template #footer>
-                <el-button @click="showStressDialog = false" :disabled="stressRunning">关闭</el-button>
-                <el-button type="warning" @click="runStress" :loading="stressRunning" :disabled="!buildURL()">
-                    {{ stressRunning ? '测试中...' : '开始压测' }}
-                </el-button>
-            </template>
-        </el-dialog>
+        </el-drawer>
 
         <!-- 右键菜单 -->
         <ContextMenu v-model="ctxVisible" :x="ctxX" :y="ctxY" :items="ctxItems" @pick="onCtxPick" />
@@ -510,25 +402,25 @@
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Events } from '@wailsio/runtime'
-import { Delete, Select, Plus, Promotion, Setting, Connection, Folder, Download, CopyDocument, MoreFilled, TrendCharts, Search, InfoFilled, Document, Lock, MagicStick, Refresh, CloseBold, Edit } from '@element-plus/icons-vue'
+import { Delete, Select, Plus, Promotion, Setting, Connection, Folder, Download, CopyDocument, MoreFilled, TrendCharts, Search, Lock, MagicStick, Refresh, CloseBold, Edit, Clock } from '@element-plus/icons-vue'
 import CodeEditor from '../components/CodeEditor.vue'
+import RestEnvDialog from '../components/rest/RestEnvDialog.vue'
+import RestCurlImportDialog from '../components/rest/RestCurlImportDialog.vue'
+import RestGenCodeDialog from '../components/rest/RestGenCodeDialog.vue'
+import RestStressDialog from '../components/rest/RestStressDialog.vue'
 import { useSettingsStore } from '../stores/settings'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
 import { EVENTS } from '../utils/wails'
 import { stripJsonComments } from '../utils/monaco'
+import { safeDecode, type CurlParseResult, type KV } from '../utils/restCurl'
+import { buildCode, type CodeLanguage } from '../utils/restCodegen'
 import * as RestService from '../../bindings/spark/app/service/rest/restservice.js'
 import type { RestRequest, RestResponse, StressTestRequest, StressTestResult, FormKV } from '../../bindings/spark/app/service/types/models.js'
 
 interface StressProgress {
     current: number
     total: number
-}
-
-interface KV {
-    key: string
-    value: string
-    enabled?: boolean
 }
 
 interface TreeNode {
@@ -545,15 +437,6 @@ interface TreeNode {
     leaf: boolean
     sort: number
     children?: TreeNode[]
-}
-
-interface FolderEnvItem {
-    id: number
-    folderId: number
-    name: string
-    baseUrl: string
-    isActive: boolean
-    sort: number
 }
 
 const methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'WS']
@@ -588,6 +471,16 @@ const editingRequestId = ref<number>(0)
 const folderEffectiveBaseUrl = ref('')
 const folderCommonHeaders = ref<KV[]>([])
 
+// 行内重命名（VSCode 式）：编辑中的节点 key 与输入内容
+const renamingNodeKey = ref('')
+const renameDraft = ref('')
+const renameTarget = ref<TreeNode | null>(null)
+const renameInputRef = ref<{ focus: () => void; select?: () => void } | null>(null)
+
+function setRenameInputRef(el: any) {
+    renameInputRef.value = el
+}
+
 // 右键菜单
 const ctxVisible = ref(false)
 const ctxX = ref(0)
@@ -600,11 +493,6 @@ const copiedNode = ref<TreeNode | null>(null)
 
 // 压力测试
 const showStressDialog = ref(false)
-const stressForm = ref({
-    concurrency: 10,
-    total: 100,
-    timeout: 10,
-})
 const stressRunning = ref(false)
 const stressProgress = ref<StressProgress>({ current: 0, total: 0 })
 const stressResult = ref<StressTestResult | null>(null)
@@ -613,9 +501,6 @@ let stressTimer: ReturnType<typeof setInterval> | null = null
 // 设置环境弹窗（目录右键：基础链接 + 公共请求头）
 const showEnvDialog = ref(false)
 const envTargetNode = ref<TreeNode | null>(null)
-const folderEnvList = ref<FolderEnvItem[]>([])
-const folderHeadersForm = ref<KV[]>([])
-const savingEnv = ref(false)
 
 // HTML 预览
 const htmlPreview = ref(true)
@@ -685,30 +570,101 @@ let unWsMsg: (() => void) | null = null
 
 // curl import
 const showCurlDialog = ref(false)
-const curlText = ref('')
+
+// ========== 请求历史（localStorage，最多保留 100 条） ==========
+
+interface RestHistoryEntry {
+    id: string
+    time: number
+    method: string
+    url: string
+    resolvedUrl: string
+    status: number
+    duration: number
+    error?: string
+    headers: KV[]
+    params: KV[]
+    body: string
+    rawBody: string
+    bodyType: 'json' | 'raw' | 'form' | 'urlencoded' | 'binary'
+    formFields: FormKV[]
+    urlencodedFields: FormKV[]
+}
+
+const HISTORY_KEY = 'rest.history'
+const HISTORY_MAX = 100
+const historyOpen = ref(false)
+const history = ref<RestHistoryEntry[]>([])
+
+function loadHistory() {
+    try {
+        const arr = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]')
+        history.value = Array.isArray(arr) ? arr : []
+    } catch {
+        history.value = []
+    }
+}
+
+function persistHistory() {
+    try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(history.value.slice(0, HISTORY_MAX)))
+    } catch {
+        // 容量超限时放弃本次写入，不影响请求本身
+    }
+}
+
+function recordHistory(entry: Omit<RestHistoryEntry, 'id' | 'time'>) {
+    history.value.unshift({
+        ...entry,
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        time: Date.now(),
+    })
+    if (history.value.length > HISTORY_MAX) history.value.length = HISTORY_MAX
+    persistHistory()
+}
+
+function openHistory() {
+    loadHistory()
+    historyOpen.value = true
+}
+
+function removeHistory(i: number) {
+    history.value.splice(i, 1)
+    persistHistory()
+}
+
+function clearHistory() {
+    history.value = []
+    persistHistory()
+}
+
+function fmtHistoryTime(t: number) {
+    const d = new Date(t)
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+async function applyHistory(h: RestHistoryEntry) {
+    current.value.method = h.method
+    current.value.url = h.url
+    current.value.headers = JSON.parse(JSON.stringify(h.headers || []))
+    current.value.params = JSON.parse(JSON.stringify(h.params || []))
+    current.value.body = h.body || ''
+    rawBody.value = h.rawBody || ''
+    formFields.value = JSON.parse(JSON.stringify(h.formFields || []))
+    urlencodedFields.value = JSON.parse(JSON.stringify(h.urlencodedFields || []))
+    bodyType.value = h.bodyType || 'json'
+    await nextTick()
+    bodyEditorRef.value?.setContent(current.value.body)
+    rawBodyEditorRef.value?.setContent(rawBody.value)
+    historyOpen.value = false
+    ElMessage.success('已回填到编辑器')
+}
 
 // curl generate
-type CodeLanguage = 'curl' | 'curl-single' | 'curl-cmd' | 'curl-ps' | 'python' | 'javascript' | 'go'
 const codeLanguage = ref<CodeLanguage>('curl')
-const genEditorFilename = computed(() => {
-    const map: Record<string, string> = { python: 'request.py', javascript: 'request.js', go: 'request.go' }
-    return map[codeLanguage.value] || 'curl.sh'
-})
-const genDialogTitle = computed(() => {
-    const map: Record<string, string> = {
-        curl: '生成 cURL 命令（Bash/Linux · 独立行）',
-        'curl-single': '生成 cURL 命令（单行）',
-        'curl-cmd': '生成 cURL 命令（CMD · 独立行）',
-        'curl-ps': '生成 cURL 命令（PowerShell · 独立行）',
-        python: '生成 Python 代码',
-        javascript: '生成 JavaScript 代码',
-        go: '生成 Go 代码',
-    }
-    return map[codeLanguage.value] || '生成代码'
-})
 const generatedCurl = ref('')
 const showGenCurlDialog = ref(false)
-const curlEditorRef = ref<InstanceType<typeof CodeEditor> | null>(null)
 
 // 计算
 const methodClass = computed(() => 'method-' + current.value.method.toLowerCase())
@@ -760,6 +716,9 @@ const statusRows = computed(() => {
     rows.sort((a, b) => b.count - a.count)
     return rows
 })
+
+// 压测弹窗里展示/校验的完整 URL（随请求参数实时变化）
+const stressUrl = computed(() => buildURL())
 
 watch(responseSeq, async () => {
     await nextTick()
@@ -879,7 +838,11 @@ async function reloadParent(parentId: number) {
         if (parentId === 0) {
             treeData.value = children
         } else {
-            treeRef.value?.updateKeyChildren(makeNodeKey('folder', parentId), children)
+            const key = makeNodeKey('folder', parentId)
+            treeRef.value?.updateKeyChildren(key, children)
+            // 懒加载节点只替换子级时 loaded 仍为 false，之后展开会再次 load 并追加重复节点
+            const node = treeRef.value?.getNode(key) as any
+            if (node) node.loaded = true
         }
     } catch (e: any) {
         ElMessage.error('刷新失败: ' + (e?.message || e))
@@ -933,8 +896,12 @@ async function onNodeDragEnd(
     dropNode: any,
     dropType: string,
 ) {
-    const dragData: TreeNode = draggingNode.data
+    const dragData: TreeNode = draggingNode?.data
+    // 拖到树外（dropNode 为 null）或无效落点（none）时节点并没有被移动，直接忽略。
+    // 少了这一步会在读 dropNode.data 时抛错，并中断 EP 的拖拽状态清理，之后每次拖拽都会错乱。
+    if (!dragData || !dropNode || dropType === 'none') return
     const dropData: TreeNode = dropNode.data
+    if (!dropData) return
 
     let newParentId: number
     let targetId: number
@@ -1134,22 +1101,45 @@ async function createRequest(parentId: number) {
     }
 }
 
+// VSCode 式行内重命名：树节点上直接出现输入框，Enter / 失焦提交，Esc 取消
 async function renameNode(node: TreeNode) {
+    renameTarget.value = node
+    renamingNodeKey.value = node.nodeKey
+    renameDraft.value = node.name
+    await nextTick()
+    renameInputRef.value?.focus()
+    renameInputRef.value?.select?.()
+}
+
+function onRenameEnter(e: KeyboardEvent) {
+    if (e.isComposing) return
+    void commitRename()
+}
+
+function cancelRename() {
+    renameTarget.value = null
+    renamingNodeKey.value = ''
+}
+
+async function commitRename() {
+    const node = renameTarget.value
+    if (!node) return
+    renameTarget.value = null
+    renamingNodeKey.value = ''
+    const name = renameDraft.value.trim()
+    if (!name || name === node.name) return
     try {
-        const { value } = await ElMessageBox.prompt('请输入新名称', '重命名', {
-            confirmButtonText: '确定',
-            cancelButtonText: '取消',
-            inputValue: node.name,
-        })
-        if (!value || !value.trim() || value.trim() === node.name) return
         if (node.type === 'folder') {
-            await RestService.RenameFolder(node.id, value.trim())
+            await RestService.RenameFolder(node.id, name)
         } else {
-            await RestService.RenameRequest(node.id, value.trim())
+            await RestService.RenameRequest(node.id, name)
+        }
+        if (editingNode.value?.id === node.id && editingNode.value.type === node.type) {
+            editingNode.value = { ...editingNode.value, name }
         }
         await reloadParent(node.parentId)
-    } catch {
-        // 取消
+    } catch (e: any) {
+        ElMessage.error(`重命名失败：${e?.message || e}`)
     }
 }
 
@@ -1277,6 +1267,16 @@ async function saveCurrentRequest() {
 }
 
 function onKeyDown(e: KeyboardEvent) {
+    const t = e.target as HTMLElement | null
+    const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+    if (e.key === 'F2' && !typing && !renamingNodeKey.value) {
+        const node = treeRef.value?.getCurrentNode?.() as TreeNode | undefined
+        if (node) {
+            e.preventDefault()
+            void renameNode(node)
+            return
+        }
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault()
         if (editingRequestId.value) {
@@ -1306,106 +1306,23 @@ function resetEditor() {
 
 // ========== 设置环境（目录右键：基础链接 + 公共请求头） ==========
 
-async function openEnvEditor(node: TreeNode) {
+function openEnvEditor(node: TreeNode) {
     envTargetNode.value = node
-
-    // 加载基础链接列表
-    try {
-        const list = await RestService.ListFolderEnvs(node.id)
-        folderEnvList.value = (list ?? []) as FolderEnvItem[]
-    } catch {
-        folderEnvList.value = []
-    }
-
-    // 加载公共请求头
-    try {
-        if (node.commonHeaders) {
-            folderHeadersForm.value = JSON.parse(node.commonHeaders).map((h: KV) => ({ enabled: true, ...h }))
-        } else {
-            folderHeadersForm.value = []
-        }
-    } catch {
-        folderHeadersForm.value = []
-    }
-
     showEnvDialog.value = true
 }
 
-function addEnvItem() {
-    folderEnvList.value.push({
-        id: 0,
-        folderId: envTargetNode.value?.id ?? 0,
-        name: '',
-        baseUrl: '',
-        isActive: folderEnvList.value.length === 0,
-        sort: folderEnvList.value.length,
-    })
-}
-
-function removeEnvItem(index: number) {
-    folderEnvList.value.splice(index, 1)
-}
-
-async function setActiveEnvItem(item: FolderEnvItem, _index: number) {
-    if (item.id) {
+// 弹窗保存完成后：刷新树，并同步当前编辑请求生效的公共请求头 / 基础链接
+async function onEnvSaved(node: { id: number; parentId: number }) {
+    await reloadParent(node.parentId)
+    if (editingNode.value) {
         try {
-            await RestService.SetActiveFolderEnv(item.id)
-            for (const e of folderEnvList.value) {
-                e.isActive = e.id === item.id
-            }
-        } catch (e: any) {
-            ElMessage.error('设置失败: ' + (e?.message || e))
-        }
-    } else {
-        // 新条目，先标记
-        for (const e of folderEnvList.value) {
-            e.isActive = e === item
-        }
-    }
-}
-
-async function saveEnvSettings() {
-    const target = envTargetNode.value
-    if (!target) return
-
-    savingEnv.value = true
-    try {
-        // 1. 保存所有基础链接
-        for (const item of folderEnvList.value) {
-            await RestService.SaveFolderEnv({
-                id: item.id,
-                folderId: target.id,
-                name: item.name.trim(),
-                baseUrl: item.baseUrl.trim(),
-                isActive: item.isActive,
-            })
-        }
-        // 删除已移除的基础链接（需要后台支持，这里先跳过）
-
-        // 2. 保存公共请求头
-        const validHeaders = folderHeadersForm.value.filter((h) => h.key.trim())
-        await RestService.SetFolderCommonHeaders(target.id, JSON.stringify(validHeaders))
-
-        showEnvDialog.value = false
-        await reloadParent(target.parentId)
-
-        // 刷新当前编辑请求的有效公共请求头
-        if (editingNode.value) {
-            try {
-                const eff = await RestService.GetEffectiveCommonHeaders(editingNode.value.parentId)
-                folderCommonHeaders.value = (eff || []).map((h: KV) => ({ enabled: true, ...h }))
-            } catch { /* ignore */ }
-            try {
-                const eff = await RestService.GetEffectiveBaseURL(editingNode.value.parentId)
-                folderEffectiveBaseUrl.value = eff || ''
-            } catch { /* ignore */ }
-        }
-
-        ElMessage.success('环境设置已保存')
-    } catch (e: any) {
-        ElMessage.error('保存失败: ' + (e?.message || e))
-    } finally {
-        savingEnv.value = false
+            const eff = await RestService.GetEffectiveCommonHeaders(editingNode.value.parentId)
+            folderCommonHeaders.value = (eff || []).map((h: KV) => ({ enabled: true, ...h }))
+        } catch { /* ignore */ }
+        try {
+            const eff = await RestService.GetEffectiveBaseURL(editingNode.value.parentId)
+            folderEffectiveBaseUrl.value = eff || ''
+        } catch { /* ignore */ }
     }
 }
 
@@ -1518,8 +1435,22 @@ async function send() {
     sending.value = true
     response.value = null
 
+    const snapshot: Omit<RestHistoryEntry, 'id' | 'time' | 'status' | 'duration'> = {
+        method: current.value.method,
+        url: current.value.url,
+        resolvedUrl: url,
+        headers: JSON.parse(JSON.stringify(current.value.headers)),
+        params: JSON.parse(JSON.stringify(current.value.params)),
+        body: current.value.body,
+        rawBody: bodyType.value === 'raw' ? body : rawBody.value,
+        bodyType: bodyType.value,
+        formFields: JSON.parse(JSON.stringify(formFields.value)),
+        urlencodedFields: JSON.parse(JSON.stringify(urlencodedFields.value)),
+    }
+
     try {
         const resp = await RestService.Send(req)
+        recordHistory({ ...snapshot, status: resp.status, duration: resp.duration, error: resp.error || undefined })
         response.value = resp
         responseSeq.value++
         resTab.value = 'body'
@@ -1543,6 +1474,7 @@ async function send() {
             }, 150)
         }
     } catch (e: any) {
+        recordHistory({ ...snapshot, status: 0, duration: 0, error: e?.message || String(e) })
         ElMessage.error({ message: '请求失败: ' + (e?.message || String(e)), duration: 2000, showClose: true })
     } finally {
         sending.value = false
@@ -1612,18 +1544,12 @@ function selectBinaryFile() {
 // ========== curl 导入/生成 ==========
 
 function openCurlImport() {
-    curlText.value = ''
     showCurlDialog.value = true
 }
 
-async function importCurl() {
-    const cmd = curlText.value.trim()
-    if (!cmd) {
-        ElMessage.warning('请粘贴 curl 命令')
-        return
-    }
+// 弹窗解析完成后，把解析结果套用到当前请求
+async function applyCurlImport(parsed: CurlParseResult) {
     try {
-        const parsed = parseCurl(cmd)
         if (parsed.method) current.value.method = parsed.method
         if (parsed.url) current.value.url = parsed.url
         if (parsed.headers.length) {
@@ -1691,357 +1617,28 @@ async function importCurl() {
             rawBodyEditorRef.value?.setContent(rawBody.value)
         }
     } catch (e: any) {
-        ElMessage.error('解析失败: ' + (e?.message || e))
+        ElMessage.error('导入失败: ' + (e?.message || e))
     }
 }
 
-function safeDecode(s: string): string {
-    try {
-        return decodeURIComponent(s.replace(/\+/g, ' '))
-    } catch {
-        return s
-    }
-}
+// ========== 代码生成 ==========
 
-interface CurlParseResult {
-    method: string
-    url: string
-    headers: KV[]
-    body: string
-    params: KV[]
-    formParts: string[]
-    urlencodedParts: string[]
-}
-
-function parseCurl(cmd: string): CurlParseResult {
-    const result: CurlParseResult = {
-        method: 'GET',
-        url: '',
-        headers: [],
-        body: '',
-        params: [],
-        formParts: [],
-        urlencodedParts: [],
-    }
-
-    // Bash 反斜杠续行 / CMD 脱字符 / PowerShell 反引号续行
-    let s = cmd
-        .replace(/\\(\r?\n|$)/g, ' ')
-        .replace(/\^(\r?\n|$)/g, ' ')
-        .replace(/`(\r?\n|$)/g, ' ')
-    // 去掉命令行提示符与 curl 可执行名
-    s = s.replace(/^\s*(?:\$\s+)?curl(?:\.exe)?\s+/i, '')
-
-    const tokens = tokenize(s)
-    const dataParts: string[] = []
-    let methodSet = false
-    let hasBody = false
-
-    const pushHeader = (raw: string) => {
-        const idx = raw.indexOf(':')
-        if (idx > 0) {
-            result.headers.push({
-                key: raw.slice(0, idx).trim(),
-                value: raw.slice(idx + 1).trim(),
-            })
-        }
-    }
-
-    // 取下一个参数，越界时返回空串
-    const next = (i: number) => (i + 1 < tokens.length ? tokens[i + 1] : '')
-
-    let i = 0
-    while (i < tokens.length) {
-        const t = tokens[i]
-
-        if (t === '-X' || t === '--request') {
-            const v = next(i)
-            if (v) result.method = v.toUpperCase()
-            methodSet = true
-            i++
-        } else if (/^-X./.test(t)) {
-            // 紧凑写法 -XPOST
-            result.method = t.slice(2).toUpperCase()
-            methodSet = true
-        } else if (t === '--url') {
-            result.url = next(i)
-            i++
-        } else if (t === '-H' || t === '--header') {
-            pushHeader(next(i))
-            i++
-        } else if (
-            t === '-d' ||
-            t === '--data' ||
-            t === '--data-raw' ||
-            t === '--data-binary' ||
-            t === '--data-ascii'
-        ) {
-            const v = next(i)
-            if (v) {
-                dataParts.push(v)
-                hasBody = true
-            }
-            i++
-        } else if (t === '--data-urlencode') {
-            const v = next(i)
-            if (v) {
-                result.urlencodedParts.push(v)
-                dataParts.push(v)
-                hasBody = true
-            }
-            i++
-        } else if (t === '-F' || t === '--form' || t === '--form-string') {
-            const v = next(i)
-            if (v) {
-                result.formParts.push(v)
-                hasBody = true
-            }
-            i++
-        } else if (t === '--json') {
-            const v = next(i)
-            if (v) {
-                dataParts.push(v)
-                hasBody = true
-                if (!result.headers.some((h) => h.key.toLowerCase() === 'content-type')) {
-                    result.headers.push({ key: 'Content-Type', value: 'application/json' })
-                }
-            }
-            i++
-        } else if (t === '-u' || t === '--user') {
-            const v = next(i)
-            if (v) result.headers.push({ key: 'Authorization', value: 'Basic ' + btoa(v) })
-            i++
-        } else if (t === '-A' || t === '--user-agent') {
-            const v = next(i)
-            if (v) result.headers.push({ key: 'User-Agent', value: v })
-            i++
-        } else if (t === '-G' || t === '--get') {
-            result.method = 'GET'
-            methodSet = true
-        } else if (t === '-I' || t === '--head') {
-            result.method = 'HEAD'
-            methodSet = true
-        } else if (t === '-b' || t === '--cookie') {
-            const v = next(i)
-            if (v) result.headers.push({ key: 'Cookie', value: v })
-            i++
-        } else if (t === '--compressed') {
-            result.headers.push({ key: 'Accept-Encoding', value: 'gzip, deflate' })
-        } else if (!t.startsWith('-') && !result.url) {
-            result.url = t
-        }
-
-        i++
-    }
-
-    result.body = dataParts.join('&')
-    // 带了请求体但没显式指定方法时，curl 默认使用 POST
-    if (hasBody && !methodSet) result.method = 'POST'
-
-    if (!result.url) {
-        for (const tk of tokens) {
-            if (/^https?:\/\//i.test(tk)) {
-                result.url = tk
-                break
-            }
-        }
-    }
-
-    if (result.url) {
-        const qIdx = result.url.indexOf('?')
-        if (qIdx >= 0) {
-            const queryString = result.url.slice(qIdx + 1)
-            result.url = result.url.slice(0, qIdx)
-            if (queryString) {
-                result.params = queryString.split('&').map((pair) => {
-                    const eqIdx = pair.indexOf('=')
-                    if (eqIdx >= 0) {
-                        return {
-                            key: decodeURIComponent(pair.slice(0, eqIdx)),
-                            value: decodeURIComponent(pair.slice(eqIdx + 1)),
-                        }
-                    }
-                    return { key: decodeURIComponent(pair), value: '' }
-                })
-            }
-        }
-    }
-
-    return result
-}
-
-function tokenize(s: string): string[] {
-    const tokens: string[] = []
-    let i = 0
-    while (i < s.length) {
-        while (i < s.length && /\s/.test(s[i])) i++
-        if (i >= s.length) break
-
-        if (s[i] === '$' && (s[i + 1] === "'" || s[i + 1] === '"')) {
-            // $'...' ANSI-C 引用（Bash）：还原 \n / \t / \xNN 等转义
-            const quote = s[i + 1]
-            i += 2
-            let val = ''
-            while (i < s.length && s[i] !== quote) {
-                if (s[i] === '\\' && i + 1 < s.length) {
-                    const c = s[i + 1]
-                    const simple: Record<string, string> = {
-                        n: '\n',
-                        t: '\t',
-                        r: '\r',
-                        '\\': '\\',
-                        "'": "'",
-                        '"': '"',
-                        '0': '\0',
-                    }
-                    if (c in simple) {
-                        val += simple[c]
-                        i += 2
-                        continue
-                    }
-                    if (c === 'x' && /^[0-9a-f]{2}/i.test(s.slice(i + 2, i + 4))) {
-                        val += String.fromCharCode(parseInt(s.slice(i + 2, i + 4), 16))
-                        i += 4
-                        continue
-                    }
-                    val += c
-                    i += 2
-                    continue
-                }
-                val += s[i]
-                i++
-            }
-            i++
-            tokens.push(val)
-        } else if (s[i] === "'") {
-            i++
-            let val = ''
-            while (i < s.length && s[i] !== "'") {
-                val += s[i]
-                i++
-            }
-            i++
-            tokens.push(val)
-        } else if (s[i] === '"') {
-            i++
-            let val = ''
-            while (i < s.length && s[i] !== '"') {
-                if (s[i] === '\\' && i + 1 < s.length) {
-                    val += s[i + 1]
-                    i += 2
-                } else {
-                    val += s[i]
-                    i++
-                }
-            }
-            i++
-            tokens.push(val)
-        } else {
-            let val = ''
-            while (i < s.length && !/\s/.test(s[i])) {
-                if (s[i] === '\\' && i + 1 < s.length) {
-                    val += s[i + 1]
-                    i += 2
-                } else {
-                    val += s[i]
-                    i++
-                }
-            }
-            tokens.push(val)
-        }
-    }
-    return tokens
-}
-
-function shellQuote(s: string, shell: 'bash' | 'cmd' | 'powershell' = 'bash'): string {
-    if (/^[a-zA-Z0-9_\-./:?=#%]+$/.test(s)) return s
-    if (shell === 'cmd') {
-        if (!s.includes('"')) return `"${s}"`
-        return `"${s.replace(/"/g, '""')}"`
-    }
-    if (shell === 'powershell') {
-        if (!s.includes("'")) return `'${s}'`
-        if (!s.includes('"')) return `"${s}"`
-        return `@"` + "\n" + `${s}` + "\n" + `"@`
-    }
-    if (!s.includes("'")) return `'${s}'`
-    if (!s.includes('"')) return `"${s}"`
-    return `'${s.replace(/'/g, "'\\''")}'`
-}
-
-function buildCurl(continuation: string, style: 'single' | 'multiline'): string {
-    const url = buildURL()
-    if (!url) return ''
-
-    const shell: 'bash' | 'cmd' | 'powershell' =
-        continuation === '^' ? 'cmd' : continuation === '`' ? 'powershell' : 'bash'
-    const NL = continuation === '^' ? '\r\n' : '\n'
-
-    const tokens: string[] = []
-    tokens.push(shell === 'cmd' || shell === 'powershell' ? 'curl.exe' : 'curl')
-
-    tokens.push(shellQuote(url, shell))
-
-    const method = current.value.method.toUpperCase()
-    if (method !== 'GET') {
-        tokens.push('-X', shellQuote(method, shell))
-    }
-
-    const headers = buildHeaders()
-    for (const [k, v] of Object.entries(headers)) {
-        if (k === 'User-Agent') continue
-        tokens.push('-H', shellQuote(`${k}: ${v}`, shell))
-    }
-
-    const curlBody = getCleanBody()
-    if (curlBody) {
-        tokens.push('-d', shellQuote(curlBody, shell))
-    }
-
-    if (style === 'single') {
-        return tokens.join(' ')
-    }
-
-    let firstLine = tokens[0] + ' ' + tokens[1]
-    let flagStart = 2
-    if (tokens.length > 2 && tokens[2] === '-X') {
-        firstLine += ' ' + tokens[2] + ' ' + tokens[3]
-        flagStart = 4
-    }
-    const lines: string[] = [firstLine]
-    for (let i = flagStart; i < tokens.length; i += 2) {
-        lines.push('  ' + tokens[i] + (i + 1 < tokens.length ? ' ' + tokens[i + 1] : ''))
-    }
-    return lines.map((l, idx) => (idx < lines.length - 1 ? l + ' ' + continuation : l)).join(NL)
-}
-
-function genCode() {
-    const url = buildURL()
-    if (!url) {
-        ElMessage.warning('请输入 URL')
-        return
-    }
-    generatedCurl.value = buildCode()
-    showGenCurlDialog.value = true
-    nextTick(() => {
-        curlEditorRef.value?.setContent(generatedCurl.value)
+function currentCode(): string {
+    return buildCode(codeLanguage.value, {
+        url: buildURL(),
+        method: current.value.method.toUpperCase(),
+        headers: buildHeaders(),
+        body: getCleanBody(),
     })
 }
 
-function buildCode(): string {
-    const lang = codeLanguage.value
-    if (lang === 'curl') return buildCurl('\\', 'multiline')
-    if (lang === 'curl-single') return buildCurl('\\', 'single')
-    if (lang === 'curl-cmd') return buildCurl('^', 'multiline')
-    if (lang === 'curl-ps') return buildCurl('`', 'multiline')
-    if (lang === 'python') return buildPython()
-    if (lang === 'javascript') return buildJavaScript()
-    if (lang === 'go') return buildGo()
-    return ''
-}
-
-function jsQuote(s: string): string {
-    return JSON.stringify(s)
+function genCode() {
+    if (!buildURL()) {
+        ElMessage.warning('请输入 URL')
+        return
+    }
+    generatedCurl.value = currentCode()
+    showGenCurlDialog.value = true
 }
 
 function getCleanBody(): string {
@@ -2062,148 +1659,9 @@ function getCleanBody(): string {
     return body
 }
 
-function buildPython(): string {
-    const url = buildURL()
-    if (!url) return ''
-
-    const method = current.value.method.toUpperCase()
-    const headers = buildHeaders()
-    const body = getCleanBody()
-
-    const lines: string[] = ['import requests', '']
-    lines.push(`url = ${jsQuote(url)}`)
-    if (Object.keys(headers).length > 0) {
-        const headerLines = Object.entries(headers)
-            .filter(([k]) => k !== 'User-Agent')
-            .map(([k, v]) => `    ${jsQuote(k)}: ${jsQuote(v)}`)
-        lines.push(`headers = {`)
-        lines.push(headerLines.join(',\n'))
-        lines.push(`}`)
-    }
-    if (body) {
-        lines.push(`data = ${jsQuote(body)}`)
-    }
-
-    const args: string[] = ['url']
-    if (Object.keys(headers).filter(k => k !== 'User-Agent').length > 0) args.push('headers=headers')
-    if (body) args.push('data=data')
-
-    const methodLower = method.toLowerCase()
-    lines.push(`response = requests.${methodLower}(${args.join(', ')})`)
-    lines.push('print(response.text)')
-
-    return lines.join('\n')
-}
-
-function buildJavaScript(): string {
-    const url = buildURL()
-    if (!url) return ''
-
-    const method = current.value.method.toUpperCase()
-    const headers = buildHeaders()
-    const body = getCleanBody()
-
-    const filteredHeaders = Object.entries(headers).filter(([k]) => k !== 'User-Agent')
-    const hasHeaders = filteredHeaders.length > 0
-
-    const lines: string[] = []
-    lines.push(`const url = ${jsQuote(url)};`)
-    lines.push('')
-    lines.push(`const options = {`)
-    lines.push(`  method: ${jsQuote(method)},`)
-    if (hasHeaders) {
-        lines.push('  headers: {')
-        filteredHeaders.forEach(([k, v], i) => {
-            lines.push(`    ${jsQuote(k)}: ${jsQuote(v)}` + (i < filteredHeaders.length - 1 ? ',' : ''))
-        })
-        lines.push('  },')
-    }
-    if (body) {
-        lines.push(`  body: ${jsQuote(body)},`)
-    }
-    lines.push('};')
-    lines.push('')
-    lines.push('fetch(url, options)')
-    lines.push('  .then(res => res.json())')
-    lines.push('  .then(data => console.log(data));')
-
-    return lines.join('\n')
-}
-
-function buildGo(): string {
-    const url = buildURL()
-    if (!url) return ''
-
-    const method = current.value.method.toUpperCase()
-    const headers = buildHeaders()
-    const body = getCleanBody()
-    const hasBody = body.length > 0
-
-    const lines: string[] = [
-        'package main',
-        '',
-        'import (',
-    ]
-    if (hasBody) {
-        lines.push('    "fmt"', '    "io"', '    "net/http"', '    "strings"')
-    } else {
-        lines.push('    "fmt"', '    "io"', '    "net/http"')
-    }
-    lines.push(')', '')
-    lines.push('func main() {')
-    lines.push(`    url := ${jsQuote(url)}`)
-    lines.push(`    method := ${jsQuote(method)}`)
-    lines.push('')
-
-    if (hasBody) {
-        lines.push(`    payload := strings.NewReader(${jsQuote(body)})`)
-        lines.push(`    req, err := http.NewRequest(method, url, payload)`)
-    } else {
-        lines.push(`    req, err := http.NewRequest(method, url, nil)`)
-    }
-    lines.push('    if err != nil {')
-    lines.push('        fmt.Println(err)')
-    lines.push('        return')
-    lines.push('    }')
-    lines.push('')
-
-    for (const [k, v] of Object.entries(headers)) {
-        if (k === 'User-Agent') continue
-        lines.push(`    req.Header.Add(${jsQuote(k)}, ${jsQuote(v)})`)
-    }
-    lines.push('')
-    lines.push('    res, err := http.DefaultClient.Do(req)')
-    lines.push('    if err != nil {')
-    lines.push('        fmt.Println(err)')
-    lines.push('        return')
-    lines.push('    }')
-    lines.push('    defer res.Body.Close()')
-    lines.push('')
-    lines.push('    body, err := io.ReadAll(res.Body)')
-    lines.push('    if err != nil {')
-    lines.push('        fmt.Println(err)')
-    lines.push('        return')
-    lines.push('    }')
-    lines.push('    fmt.Println(string(body))')
-    lines.push('}')
-
-    return lines.join('\n')
-}
-
 watch(codeLanguage, () => {
-    const code = buildCode()
-    generatedCurl.value = code
-    curlEditorRef.value?.setContent(code)
+    generatedCurl.value = currentCode()
 })
-
-function copyGeneratedCurl() {
-    const text = curlEditorRef.value?.getContent() ?? generatedCurl.value
-    navigator.clipboard.writeText(text).then(() => {
-        ElMessage.success('已复制到剪贴板')
-    }).catch(() => {
-        ElMessage.warning('复制失败，请手动选择复制')
-    })
-}
 
 // ========== WebSocket ==========
 
@@ -2266,7 +1724,7 @@ async function wsDoClose() {
 
 // ========== 压力测试 ==========
 
-async function runStress() {
+async function runStress(form: { concurrency: number; total: number; timeout: number }) {
     const url = buildURL()
     if (!url) {
         ElMessage.warning('请输入 URL')
@@ -2282,14 +1740,14 @@ async function runStress() {
     }
 
     stressResult.value = null
+    stressProgress.value = { current: 0, total: form.total }
     stressRunning.value = true
-    stressProgress.value = { current: 0, total: stressForm.value.total }
 
     stressTimer = setInterval(() => {
-        if (stressProgress.value.current < stressForm.value.total) {
+        if (stressProgress.value.current < form.total) {
             stressProgress.value.current = Math.min(
-                stressProgress.value.current + stressForm.value.concurrency * 2,
-                stressForm.value.total,
+                stressProgress.value.current + form.concurrency * 2,
+                form.total,
             )
         }
     }, 300)
@@ -2300,14 +1758,14 @@ async function runStress() {
             url,
             headers: buildHeaders(),
             body: body || '',
-            timeout: stressForm.value.timeout,
-            concurrency: stressForm.value.concurrency,
-            total: stressForm.value.total,
+            timeout: form.timeout,
+            concurrency: form.concurrency,
+            total: form.total,
             insecure: current.value.insecure,
         }
         const result = await RestService.StressTest(req)
         stressResult.value = result
-        stressProgress.value.current = stressForm.value.total
+        stressProgress.value.current = form.total
         if (result.failure === 0) {
             ElMessage.success(`压测完成: ${result.total} 次全部成功, QPS ${result.qps}`)
         } else {
@@ -2404,6 +1862,16 @@ function stopStress() {
     border-radius: 3px;
     flex-shrink: 0;
     text-transform: uppercase;
+}
+
+.rest-rename-input {
+    width: 160px;
+    max-width: 100%;
+}
+
+.rest-rename-input :deep(.el-input__wrapper) {
+    padding: 0 4px;
+    height: 22px;
 }
 
 .tree-method.method-get {
@@ -2729,98 +2197,7 @@ function stopStress() {
     color: var(--text-tertiary);
 }
 
-/* 设置环境弹窗 */
-.env-tab-hint {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    color: var(--text-tertiary);
-    margin-bottom: 12px;
-    padding: 6px 10px;
-    background: var(--bg-tertiary);
-    border-radius: 4px;
-}
-
-.env-base-url-list {
-    max-height: 450px;
-    overflow-y: auto;
-}
-
-.env-base-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 8px;
-    padding: 6px 8px;
-    background: var(--bg-secondary);
-    border-radius: 6px;
-}
-
-.env-base-name {
-    width: 120px;
-    flex-shrink: 0;
-}
-
-.env-base-url {
-    flex: 1;
-}
-
-.env-active-tag {
-    flex-shrink: 0;
-}
-
-/* 压力测试 */
-.stress-progress {
-    padding: 16px 0;
-    text-align: center;
-}
-
-.stress-progress-text {
-    margin-top: 8px;
-    font-size: 13px;
-    color: var(--text-secondary);
-}
-
-.stress-result {
-    margin-top: 16px;
-}
-
-.stress-summary {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-bottom: 16px;
-}
-
-.stress-qps {
-    font-weight: 700;
-    font-size: 15px;
-    color: var(--primary-color);
-}
-
-.stress-dur {
-    font-size: 12px;
-    color: var(--text-secondary);
-}
-
-.stress-table {
-    margin-top: 12px;
-}
-
-.stress-empty {
-    text-align: center;
-    padding: 24px 0;
-    color: var(--text-secondary);
-    font-size: 14px;
-}
-
-.stress-empty-hint {
-    font-size: 12px;
-    margin-top: 4px;
-    color: var(--text-tertiary);
-    word-break: break-all;
-}
+/* 设置环境弹窗 / 压力测试 / curl 生成弹窗的样式已随组件拆分到 components/rest/ */
 
 /* WebSocket */
 .ws-panel {
@@ -2911,32 +2288,99 @@ function stopStress() {
     flex: 1;
 }
 
-/* curl */
-.curl-gen-toolbar {
+.toolbar-more {
+    margin-left: auto;
+}
+
+/* 请求历史抽屉 */
+.history-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 8px;
+}
+
+.history-count {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.history-empty {
+    padding: 48px 0;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.history-item {
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 1px solid transparent;
+}
+
+.history-item:hover {
+    background: var(--tab-hover-2);
+    border-color: var(--border-color);
+}
+
+.history-line1 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.history-url {
+    flex: 1;
+    min-width: 0;
+    font-size: 12.5px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.history-del {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    visibility: hidden;
+}
+
+.history-item:hover .history-del {
+    visibility: visible;
+}
+
+.history-del:hover {
+    color: var(--danger-color);
+}
+
+.history-line2 {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 10px;
+    margin-top: 4px;
+    padding-left: 2px;
+    font-size: 11.5px;
+    color: var(--text-muted);
 }
 
-.curl-gen-label {
-    font-size: 13px;
-    color: var(--text-secondary);
-    flex-shrink: 0;
+.history-status {
+    font-weight: 600;
 }
 
-.curl-gen-copy {
-    margin-left: auto;
+.history-status.ok {
+    color: var(--success-color);
 }
 
-.curl-gen-editor {
-    height: 380px;
-    border-radius: 6px;
-    overflow: hidden;
-    border: 1px solid var(--border-color);
+.history-status.warn {
+    color: var(--warning-color);
 }
 
-.toolbar-more {
-    margin-left: auto;
+.history-status.err {
+    color: var(--danger-color);
 }
 </style>

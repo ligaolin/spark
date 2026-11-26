@@ -15,6 +15,21 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as types$0 from "../types/models.js";
 
 /**
+ * Archive compresses a remote file or directory into a .tar.gz at dstPath,
+ * using the server's tar (both are present on virtually every Linux/macOS).
+ */
+export function Archive(id: string, srcPath: string, dstPath: string): $CancellablePromise<void> {
+    return $Call.ByID(2373917406, id, srcPath, dstPath);
+}
+
+/**
+ * CancelSearch 请求取消指定 searchId 的搜索（尽力而为，已返回的结果仍有效）。
+ */
+export function CancelSearch(searchID: string): $CancellablePromise<void> {
+    return $Call.ByID(1706043266, searchID);
+}
+
+/**
  * Chmod changes the permission mode of a remote path.
  */
 export function Chmod(id: string, remotePath: string, mode: number): $CancellablePromise<void> {
@@ -38,6 +53,15 @@ export function Chown(id: string, remotePath: string, uid: number, gid: number, 
 }
 
 /**
+ * CompareMirror 比较本地目录与远程目录树，返回差异清单（dry-run，不做任何修改）。
+ * direction 为 "upload"（本地 → 远程）或 "download"（远程 → 本地）；
+ * deleteExtra 为 true 时，把目标端多余的文件也列为删除项（仅文件，不动目录）。
+ */
+export function CompareMirror(id: string, localDir: string, remoteDir: string, direction: string, deleteExtra: boolean): $CancellablePromise<types$0.MirrorDiff> {
+    return $Call.ByID(3843677916, id, localDir, remoteDir, direction, deleteExtra);
+}
+
+/**
  * Connect dials a new SSH connection and opens the SFTP subsystem.
  * It returns the new session id.
  */
@@ -48,9 +72,19 @@ export function Connect(opts: types$0.ConnectOptions): $CancellablePromise<strin
 /**
  * Copy copies a remote file or directory (recursively) to a new remote path.
  * The destination parent directories are created when missing.
+ * Byte progress is reported as op "copy" so the UI can show it like uploads.
  */
 export function Copy(id: string, srcPath: string, dstPath: string): $CancellablePromise<void> {
     return $Call.ByID(690419117, id, srcPath, dstPath);
+}
+
+/**
+ * DirSize returns the total apparent size of a remote directory tree. A
+ * server-side `du -sb` costs one round trip; when du is unavailable the tree
+ * is walked with concurrent ReadDir calls instead.
+ */
+export function DirSize(id: string, remotePath: string): $CancellablePromise<types$0.DirSizeInfo> {
+    return $Call.ByID(1841775838, id, remotePath);
 }
 
 /**
@@ -66,6 +100,15 @@ export function Disconnect(id: string): $CancellablePromise<void> {
  */
 export function Download(id: string, remotePath: string, localPath: string): $CancellablePromise<void> {
     return $Call.ByID(1557144192, id, remotePath, localPath);
+}
+
+/**
+ * Extract unpacks a remote archive into dstDir. Supported formats: zip, tar,
+ * tar.gz/tgz, tar.bz2/tbz2/tbz, tar.xz/txz. The destination is created when
+ * missing; unzip is required on the server for .zip archives.
+ */
+export function Extract(id: string, archivePath: string, dstDir: string): $CancellablePromise<void> {
+    return $Call.ByID(2180496321, id, archivePath, dstDir);
 }
 
 /**
@@ -105,11 +148,28 @@ export function Owner(id: string, remotePath: string): $CancellablePromise<types
 }
 
 /**
+ * ReadBinary reads a remote file and returns its content as base64 (used by
+ * the image/PDF preview), capped at fileutil.MaxPreviewSize.
+ */
+export function ReadBinary(id: string, remotePath: string): $CancellablePromise<string> {
+    return $Call.ByID(136055441, id, remotePath);
+}
+
+/**
  * ReadFile reads a remote text file for the built-in editor, enforcing a size
  * limit and rejecting binary content.
  */
 export function ReadFile(id: string, remotePath: string): $CancellablePromise<string> {
     return $Call.ByID(227163154, id, remotePath);
+}
+
+/**
+ * RelayTo 把 srcID 会话中的远程文件 / 目录流式复制到已保存连接 targetID 的
+ * destDir（目标服务器）。数据只在应用内存中中转，不落本地磁盘。
+ * 返回目标端的最终路径（destDir/源文件名）。
+ */
+export function RelayTo(srcID: string, srcPath: string, targetID: number, destDir: string): $CancellablePromise<string> {
+    return $Call.ByID(1866108760, srcID, srcPath, targetID, destDir);
 }
 
 /**
@@ -141,6 +201,14 @@ export function Replace(id: string, dir: string, pattern: string, replacement: s
  */
 export function Search(id: string, dir: string, pattern: string, mode: string, opts: types$0.SearchOptions): $CancellablePromise<types$0.SearchResult[] | null> {
     return $Call.ByID(1898693004, id, dir, pattern, mode, opts);
+}
+
+/**
+ * SearchStream 与 Search 相同，但会通过 sftp:search 事件推送进度与增量结果，
+ * 并可被 CancelSearch(searchID) 取消。
+ */
+export function SearchStream(id: string, dir: string, pattern: string, mode: string, searchID: string, opts: types$0.SearchOptions): $CancellablePromise<types$0.SearchResult[] | null> {
+    return $Call.ByID(1942282196, id, dir, pattern, mode, searchID, opts);
 }
 
 /**

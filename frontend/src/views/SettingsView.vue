@@ -11,6 +11,9 @@
       <el-tab-pane label="快捷键" name="shortcuts">
         <SettingsShortcuts />
       </el-tab-pane>
+      <el-tab-pane label="SSH 密钥" name="keys">
+        <SettingsKeys />
+      </el-tab-pane>
       <el-tab-pane label="同步" name="database">
         <SettingsDatabase />
       </el-tab-pane>
@@ -29,6 +32,7 @@ import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsShortcuts from './SettingsShortcuts.vue'
+import SettingsKeys from './SettingsKeys.vue'
 import SettingsDatabase from './SettingsDatabase.vue'
 import SettingsAi from './SettingsAi.vue'
 import SettingsAbout from './SettingsAbout.vue'

@@ -28,6 +28,8 @@ type SavedConnection struct {
 	PrivateKey   string    `gorm:"column:private_key" json:"privateKey"` // PEM content
 	Passphrase   string    `gorm:"column:passphrase" json:"passphrase"`
 	ForwardAgent bool      `gorm:"column:forward_agent" json:"forwardAgent"` // SSH agent forwarding
+	JumpID       uint      `gorm:"column:jump_id" json:"jumpId"`             // 跳板机连接 ID（0 = 直连）
+	KeyID        uint      `gorm:"column:key_id" json:"keyId"`               // 引用的密钥库密钥 ID（0 = 使用内联私钥）
 	DefaultDir   string    `gorm:"column:default_dir" json:"defaultDir"`
 	TLS          bool      `gorm:"column:tls" json:"tls"` // FTP explicit TLS
 	CreatedAt    time.Time `json:"createdAt"`

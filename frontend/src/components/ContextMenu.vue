@@ -9,10 +9,12 @@
       @keydown.esc="close"
     >
       <div
+        ref="menuRef"
         class="ctx-menu"
         :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
         @mousedown.stop
         @contextmenu.stop
+        @wheel.stop
       >
         <template v-for="(item, i) in items" :key="i">
           <div v-if="item === 'divider'" class="ctx-divider" />
@@ -33,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { nextTick, reactive, ref, watch } from 'vue'
 
 export interface CtxItem {
   key: string
@@ -57,21 +59,26 @@ const emit = defineEmits<{
 }>()
 
 const visible = ref(props.modelValue)
+const menuRef = ref<HTMLElement | null>(null)
 const pos = reactive({ x: 0, y: 0 })
+
+// 按菜单真实尺寸夹在视口内：估算行高和分隔线容易偏差，超出视口就会被窗口裁掉
+function place() {
+    const el = menuRef.value
+    const w = el?.offsetWidth ?? 190
+    const h = el?.offsetHeight ?? 300
+    pos.x = Math.max(8, Math.min(props.x, window.innerWidth - w - 8))
+    pos.y = Math.max(8, Math.min(props.y, window.innerHeight - h - 8))
+}
 
 watch(
   () => props.modelValue,
   (v) => {
     visible.value = v
     if (v) {
-      // 菜单尺寸估算：条目数 * 30 + 边框，夹在视口内
-      const count = props.items.filter((i) => i !== 'divider').length
-      const w = 190
-      const h = count * 30 + 12
-      pos.x = Math.min(props.x, window.innerWidth - w - 8)
-      pos.y = Math.min(props.y, window.innerHeight - h - 8)
-      if (pos.x < 8) pos.x = 8
-      if (pos.y < 8) pos.y = 8
+      pos.x = props.x
+      pos.y = props.y
+      nextTick(place)
     }
   },
 )
@@ -98,6 +105,9 @@ function pick(item: CtxItem) {
 .ctx-menu {
   position: fixed;
   min-width: 180px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 5px;
   background: var(--menu-bg);
   border: 1px solid var(--border-strong);

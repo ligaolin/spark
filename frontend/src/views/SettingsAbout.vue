@@ -4,9 +4,8 @@
     <div class="about-name">Spark 终端</div>
     <div class="about-version">版本 {{ version }}</div>
     <div class="about-desc">
-      SSH 终端 / SFTP / FTP 桌面终端，基于 Wails v3 + Vue3 + xterm.js。
-      功能：多标签 SSH 终端、文件管理（拖拽 / 右键菜单 / 断点续传 / 目录收藏）、
-      服务器信息、进程管理、自定义命令、连接保活、凭据加密。
+      跨平台 SSH / SFTP / FTP 终端工具：多标签终端、跳板机、文件管理、
+      服务器监控、AI 助手与站点管理，数据本地加密保存。
     </div>
     <div class="about-links">
       <el-link type="primary" href="https://github.com/ligaolin/spark" target="_blank">

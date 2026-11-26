@@ -14,6 +14,8 @@ const (
 	MaxContentSearchSize = 10 << 20
 	// MaxEditSize is the largest file (bytes) the built-in editor opens.
 	MaxEditSize = 20 << 20
+	// MaxPreviewSize is the largest file (bytes) loaded for image/PDF preview.
+	MaxPreviewSize = 32 << 20
 	// MaxMatchesPerFile caps how many content matches are returned per file.
 	MaxMatchesPerFile = 200
 	// MaxSearchResults caps the total number of results returned per search.
@@ -118,15 +120,67 @@ func splitExcludePatterns(exclude string) []string {
 	return out
 }
 
+// DefaultExcludeDirs 是搜索/替换默认跳过的目录名。用户填写的排除在此之上叠加，
+// 避免默认把 node_modules、.git、构建产物等整棵树扫一遍。
+var DefaultExcludeDirs = []string{
+	".git", ".svn", ".hg", "node_modules", "bower_components",
+	"dist", "build", "out", "target", "vendor",
+	".venv", "venv", "__pycache__", ".idea", ".vscode",
+}
+
+// DefaultExcludeFiles 是默认跳过的文件通配（压缩产物、锁文件、日志等）。
+var DefaultExcludeFiles = []string{"*.min.js", "*.min.css", "*.map", "*.lock", "package-lock.json", "*.log"}
+
+// binaryExts 是内容搜索时无需打开就能判定为二进制的扩展名。
+var binaryExts = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".ico": true,
+	".bmp": true, ".tif": true, ".tiff": true, ".psd": true, ".pdf": true,
+	".zip": true, ".gz": true, ".tgz": true, ".bz2": true, ".xz": true, ".7z": true,
+	".rar": true, ".tar": true, ".jar": true, ".war": true, ".class": true,
+	".exe": true, ".dll": true, ".so": true, ".dylib": true, ".bin": true, ".iso": true,
+	".woff": true, ".woff2": true, ".ttf": true, ".otf": true, ".eot": true,
+	".mp3": true, ".mp4": true, ".mkv": true, ".avi": true, ".mov": true, ".webm": true,
+	".flac": true, ".wav": true, ".db": true, ".sqlite": true, ".sqlite3": true,
+}
+
+// IsLikelyBinaryName reports whether name looks binary by extension.
+func IsLikelyBinaryName(name string) bool {
+	i := strings.LastIndexByte(name, '.')
+	if i < 0 {
+		return false
+	}
+	return binaryExts[strings.ToLower(name[i:])]
+}
+
+// ExcludePatterns splits an exclude string into individual patterns.
+func ExcludePatterns(exclude string) []string {
+	return splitExcludePatterns(exclude)
+}
+
 // CompileExcludes compiles comma/newline-separated glob patterns into regexps.
-// Invalid patterns are silently skipped.
+// 用户排除始终叠加内置默认排除；重复模式只编译一次，非法模式静默跳过。
 func CompileExcludes(exclude string) []*regexp.Regexp {
 	patterns := splitExcludePatterns(exclude)
-	if len(patterns) == 0 {
-		return nil
+	seen := make(map[string]bool, len(patterns)+len(DefaultExcludeDirs)+len(DefaultExcludeFiles))
+	merged := make([]string, 0, len(patterns)+len(DefaultExcludeDirs)+len(DefaultExcludeFiles))
+	add := func(p string) {
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		merged = append(merged, p)
 	}
-	res := make([]*regexp.Regexp, 0, len(patterns))
 	for _, p := range patterns {
+		add(p)
+	}
+	for _, p := range DefaultExcludeDirs {
+		add(p)
+	}
+	for _, p := range DefaultExcludeFiles {
+		add(p)
+	}
+	res := make([]*regexp.Regexp, 0, len(merged))
+	for _, p := range merged {
 		if re, err := regexp.Compile(globToRegexp(p)); err == nil {
 			res = append(res, re)
 		}

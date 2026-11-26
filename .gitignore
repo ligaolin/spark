@@ -17,6 +17,9 @@ build.log
 *.sqlite
 *.sqlite3
 spark.exe
+# 意外遗留的临时/工具文件
+changeme.exe
+.tmp_path_test.js
 # Android 签名（含私钥，严禁提交到仓库）
 spark-release.keystore
 android-signing.txt

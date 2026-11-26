@@ -15,6 +15,13 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as types$0 from "../types/models.js";
 
 /**
+ * ActivateProvider applies a saved endpoint as the current AI config.
+ */
+export function ActivateProvider(id: number): $CancellablePromise<void> {
+    return $Call.ByID(2915449748, id);
+}
+
+/**
  * Cancel stops an in-flight streaming request by id.
  */
 export function Cancel(requestID: string): $CancellablePromise<void> {
@@ -33,10 +40,18 @@ export function ChatStream(requestID: string, messages: types$0.ChatMessage[] | 
 }
 
 /**
- * ClearKey removes the stored API key.
+ * ClearKey removes the stored API key (including the active provider's copy).
  */
 export function ClearKey(): $CancellablePromise<void> {
     return $Call.ByID(1088636408);
+}
+
+/**
+ * ClearProviderKey removes one saved endpoint's API key; when that endpoint is
+ * the active one the live config is cleared too.
+ */
+export function ClearProviderKey(id: number): $CancellablePromise<void> {
+    return $Call.ByID(3675774599, id);
 }
 
 /**
@@ -59,6 +74,14 @@ export function CompleteStream(requestID: string, systemPrompt: string, userCont
 }
 
 /**
+ * DeleteProvider removes a saved endpoint. Deleting the active one falls back
+ * to the first remaining provider (if any).
+ */
+export function DeleteProvider(id: number): $CancellablePromise<void> {
+    return $Call.ByID(1286385190, id);
+}
+
+/**
  * GetConfig returns the current AI settings. The API key itself is never
  * exposed; HasKey reports whether one is stored.
  */
@@ -76,9 +99,39 @@ export function ListModels(): $CancellablePromise<string[] | null> {
 }
 
 /**
+ * ListModelsForProvider 用某条已保存接口自己的地址与密钥取模型列表，
+ * 便于在尚未切换的情况下先确认它有哪些模型。
+ */
+export function ListModelsForProvider(id: number): $CancellablePromise<string[] | null> {
+    return $Call.ByID(3669768084, id);
+}
+
+/**
+ * ListProviders returns all saved endpoints, marking the active one.
+ */
+export function ListProviders(): $CancellablePromise<types$0.AIProviderInfo[] | null> {
+    return $Call.ByID(225403558);
+}
+
+/**
  * SaveConfig persists AI settings. When apiKey is empty the previously stored
  * key is kept; when non-empty it replaces the stored key (encrypted).
  */
 export function SaveConfig(cfg: types$0.AIConfig, apiKey: string): $CancellablePromise<void> {
     return $Call.ByID(1149932747, cfg, apiKey);
+}
+
+/**
+ * SaveProvider creates (ID 0) or updates one endpoint; an empty apiKey keeps
+ * the stored key. It returns the provider id.
+ */
+export function SaveProvider(p: types$0.AIProviderInfo, apiKey: string): $CancellablePromise<number> {
+    return $Call.ByID(3739010080, p, apiKey);
+}
+
+/**
+ * SetActiveModel 终端面板切换模型时同步更新当前接口记录。
+ */
+export function SetActiveModel(modelName: string): $CancellablePromise<void> {
+    return $Call.ByID(2849835843, modelName);
 }

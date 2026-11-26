@@ -8,6 +8,7 @@ export type {
     Favorite,
     RestFolder,
     RestRequestModel,
+    SSHKey,
     SavedConnection,
     Site,
     SiteAccount,

@@ -130,6 +130,13 @@ export function ServerInfo(id: string): $CancellablePromise<types$0.ServerInfo |
 }
 
 /**
+ * ServerKey exposes the session's server key as a frontend binding.
+ */
+export function ServerKey(id: string): $CancellablePromise<string> {
+    return $Call.ByID(27260394, id);
+}
+
+/**
  * SystemForwardStatus 探测远端防火墙后端、权限与已有的转发规则。
  */
 export function SystemForwardStatus(id: string): $CancellablePromise<types$0.SystemForwardStatus | null> {

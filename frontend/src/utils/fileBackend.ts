@@ -1,8 +1,8 @@
 // 文件面板后端适配器：把 SFTP / FTP / 本地文件操作统一成同一个接口，
 // 供 FilePanel 组件复用。
 import { LocalService, SFTPFileService, FTPFileService } from './wails'
-import type { FileEntry, SearchResult, SearchOptions, ReplaceResult } from '../types'
-import type { OSUser, FileOwner } from './wails'
+import type { FileEntry, SearchResult, SearchOptions, ReplaceResult, DirSizeInfo } from '../types'
+import type { OSUser, FileOwner, MirrorDiff } from './wails'
 
 export interface FileBackend {
   kind: 'local' | 'remote'
@@ -17,6 +17,9 @@ export interface FileBackend {
   mkdir(path: string): Promise<void>
   rename(oldPath: string, newPath: string): Promise<void>
   copy?(srcPath: string, dstPath: string, isDir?: boolean): Promise<void>
+  // 服务器端压缩 / 解压（SFTP 专有：借助服务器 tar / unzip 命令）
+  archive?(srcPath: string, dstPath: string): Promise<void>
+  extract?(archivePath: string, dstDir: string): Promise<void>
   remove(path: string, isDir: boolean): Promise<void>
   chmod?(path: string, mode: number): Promise<void>
   chmodRecursive?(path: string, mode: number): Promise<void>
@@ -29,8 +32,30 @@ export interface FileBackend {
   // 编辑器：读取 / 保存文本文件
   readFile(path: string): Promise<string>
   writeFile(path: string, content: string): Promise<void>
+  // 二进制预览（图片 / PDF）：读取文件内容并返回 base64（不含 data: 前缀）
+  readBinary?(path: string): Promise<string>
   // 搜索：按文件名或文件内容递归搜索（options：区分大小写 / 正则）
   search(dir: string, pattern: string, mode: 'name' | 'content', options: SearchOptions): Promise<SearchResult[]>
+  // 流式搜索（SFTP 专有）：进度/增量结果经 sftp:search 事件推送，返回最终完整结果
+  searchStream?(
+    dir: string,
+    pattern: string,
+    mode: 'name' | 'content',
+    options: SearchOptions,
+    searchId: string,
+  ): Promise<SearchResult[]>
+  cancelSearch?(searchId: string): Promise<void>
+  // 递归计算目录大小（本地 / SFTP / FTP 均支持）
+  dirSize?(path: string): Promise<DirSizeInfo>
+  // 镜像同步比较（SFTP 专有）：dry-run 返回本地目录与远程目录树之间的差异
+  compareMirror?(
+    localDir: string,
+    remoteDir: string,
+    direction: 'upload' | 'download',
+    deleteExtra: boolean,
+  ): Promise<MirrorDiff>
+  // 服务器间直传（SFTP 专有）：把远程文件 / 目录流式复制到另一台已保存连接
+  relayTo?(srcPath: string, targetConnID: number, destDir: string): Promise<string>
   // 替换：对内容搜索结果执行全局替换
   replace(dir: string, pattern: string, replacement: string, mode: 'name' | 'content', options: SearchOptions): Promise<ReplaceResult>
 }
@@ -51,7 +76,9 @@ export function makeLocalBackend(): FileBackend {
     download: async () => {},
     readFile: (p) => LocalService.ReadFile(p),
     writeFile: (p, c) => LocalService.WriteFile(p, c),
+    readBinary: (p) => LocalService.ReadBinary(p),
     search: async (d, p, m, opts) => (await LocalService.Search(d, p, m, opts)) ?? [],
+    dirSize: (p) => LocalService.DirSize(p),
     replace: (d, p, r, m, opts) => LocalService.Replace(d, p, r, m, opts),
   }
 }
@@ -71,6 +98,8 @@ export function makeSftpBackend(getSessionId: () => string, scope?: string): Fil
     mkdir: (p) => SFTPFileService.Mkdir(getSessionId(), p),
     rename: (a, b) => SFTPFileService.Rename(getSessionId(), a, b),
     copy: (a, b) => SFTPFileService.Copy(getSessionId(), a, b),
+    archive: (src, dst) => SFTPFileService.Archive(getSessionId(), src, dst),
+    extract: (p, dir) => SFTPFileService.Extract(getSessionId(), p, dir),
     remove: (p) => SFTPFileService.Remove(getSessionId(), p),
     chmod: (p, m) => SFTPFileService.Chmod(getSessionId(), p, m),
     chmodRecursive: (p, m) => SFTPFileService.ChmodRecursive(getSessionId(), p, m, true),
@@ -81,7 +110,14 @@ export function makeSftpBackend(getSessionId: () => string, scope?: string): Fil
     download: (r, l) => SFTPFileService.Download(getSessionId(), r, l),
     readFile: (p) => SFTPFileService.ReadFile(getSessionId(), p),
     writeFile: (p, c) => SFTPFileService.WriteFile(getSessionId(), p, c),
+    readBinary: (p) => SFTPFileService.ReadBinary(getSessionId(), p),
     search: async (d, p, m, opts) => (await SFTPFileService.Search(getSessionId(), d, p, m, opts)) ?? [],
+    searchStream: async (d, p, m, opts, sid) =>
+      (await SFTPFileService.SearchStream(getSessionId(), d, p, m, sid, opts)) ?? [],
+    cancelSearch: (sid) => SFTPFileService.CancelSearch(sid),
+    dirSize: (p) => SFTPFileService.DirSize(getSessionId(), p),
+    compareMirror: (l, r, d, del) => SFTPFileService.CompareMirror(getSessionId(), l, r, d, del),
+    relayTo: (src, id, dir) => SFTPFileService.RelayTo(getSessionId(), src, id, dir),
     replace: (d, p, r, m, opts) => SFTPFileService.Replace(getSessionId(), d, p, r, m, opts),
   }
 }
@@ -102,7 +138,9 @@ export function makeFtpBackend(getSessionId: () => string, scope?: string): File
     download: (r, l, isDir) => FTPFileService.Download(getSessionId(), r, l, !!isDir),
     readFile: (p) => FTPFileService.ReadFile(getSessionId(), p),
     writeFile: (p, c) => FTPFileService.WriteFile(getSessionId(), p, c),
+    readBinary: (p) => FTPFileService.ReadBinary(getSessionId(), p),
     search: async (d, p, m, opts) => (await FTPFileService.Search(getSessionId(), d, p, m, opts)) ?? [],
+    dirSize: (p) => FTPFileService.DirSize(getSessionId(), p),
     replace: (d, p, r, m, opts) => FTPFileService.Replace(getSessionId(), d, p, r, m, opts),
   }
 }

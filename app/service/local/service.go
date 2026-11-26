@@ -3,9 +3,11 @@
 package local
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -72,10 +74,44 @@ func (l *LocalService) List(dir string) ([]types.FileEntry, error) {
 	return out, nil
 }
 
-// PickFiles opens a native multi-select file dialog for uploads.
-func (l *LocalService) PickFiles() ([]string, error) {
+// DirSize walks dir recursively and returns the total size of its regular
+// files. Unreadable entries are skipped so a permission error deep in the tree
+// does not abort the whole calculation.
+func (l *LocalService) DirSize(dir string) (types.DirSizeInfo, error) {
+	root := expandUserPath(dir)
+	info := types.DirSizeInfo{}
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if p == root {
+				return walkErr
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		fi, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		info.Files++
+		if fi.Mode().IsRegular() {
+			info.Size += fi.Size()
+		}
+		return nil
+	})
+	return info, err
+}
+
+// PickFiles opens a native multi-select file dialog. An empty title falls
+// back to the upload dialog title.
+func (l *LocalService) PickFiles(title string) ([]string, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = "选择要上传的文件"
+	}
 	return application.Get().Dialog.OpenFile().
-		SetTitle("选择要上传的文件").
+		SetTitle(title).
 		CanChooseFiles(true).
 		CanChooseDirectories(false).
 		PromptForMultipleSelection()
@@ -370,4 +406,25 @@ func (l *LocalService) ReadFile(path string) (string, error) {
 func (l *LocalService) WriteFile(path, content string) error {
 	path = expandUserPath(path)
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+// ReadBinary reads a local file and returns its content as base64 (used by
+// the image/PDF preview), capped at fileutil.MaxPreviewSize.
+func (l *LocalService) ReadBinary(path string) (string, error) {
+	path = expandUserPath(path)
+	st, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if st.IsDir() {
+		return "", errors.New("不能预览目录")
+	}
+	if st.Size() > fileutil.MaxPreviewSize {
+		return "", fmt.Errorf("文件过大（超过 %d MB），无法预览", fileutil.MaxPreviewSize>>20)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
 }

@@ -93,6 +93,8 @@ tasks:
           OBFUSCATED:
             ref: .OBFUSCATED
     cmds:
+      # 清掉上次构建产物，避免旧哈希文件残留被打进二进制
+      - cmd: node -e "require('fs').rmSync('dist',{recursive:true,force:true})"
       - task: frontend:run
         vars:
           SCRIPT: '{{if eq .DEV "true"}}build:dev{{else}}build{{end}}'

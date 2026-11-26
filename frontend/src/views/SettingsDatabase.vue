@@ -19,7 +19,7 @@
                     <el-option value="mysql" label="MySQL" />
                     <el-option value="postgres" label="PostgreSQL" />
                     <el-option value="sqlserver" label="SQL Server" />
-                    <el-option value="oracle" label="Oracle（纯 Go 驱动）" />
+                    <el-option value="oracle" label="Oracle" />
                 </el-select>
             </el-form-item>
 

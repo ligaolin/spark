@@ -5,6 +5,12 @@
             <div class="head-actions">
                 <el-input v-model="keyword" size="small" placeholder="搜索名称 / IP" clearable class="conn-search" />
                 <span v-if="keyword.trim()" class="conn-filter-hint">匹配 {{ filteredList.length }} 条</span>
+                <el-button size="small" :disabled="!batchTargets.length" @click="batchVisible = true">
+                    <el-icon style="margin-right: 4px">
+                        <Promotion />
+                    </el-icon>
+                    批量执行{{ batchTargets.length ? `（${batchTargets.length}）` : '' }}
+                </el-button>
                 <el-button size="small" @click="openHostKeys">
                     <el-icon style="margin-right: 4px">
                         <Key />
@@ -87,7 +93,10 @@
                         <el-alert v-if="undecryptedCount > 0" type="warning" :closable="false" show-icon class="decrypt-warn"
                             :title="`${undecryptedCount} 个连接的密码无法解密（可能同步密钥不匹配，或数据来自设置了其他密钥的机器）`"
                             description="请在「设置 → 数据库」确认同步密钥与来源机器一致；或编辑这些连接重新填写密码（保存后会用当前密钥重新加密）。" />
-                        <el-table :data="filteredList" size="small" :loading="connStore.loading" :empty-text="emptyText">
+                        <el-table :data="filteredList" size="small" :loading="connStore.loading" :empty-text="emptyText"
+                            @selection-change="onSelectionChange">
+                            <el-table-column type="selection" width="36"
+                                :selectable="(row: SavedConnection) => row.type !== 'ftp'" />
                             <el-table-column label="名称">
                                 <template #default="{ row }">
                                     <span class="conn-name">{{ row.name }}</span>
@@ -142,12 +151,14 @@
         </div>
 
         <ConnectDialog v-model="dialogVisible" :mode="dialogMode" :conn-type="dialogType" :connection="editing"
-            :groups="connStore.groupNames" @saved="onSaved" @connect="onQuickConnect" />
+            :groups="connStore.groupNames" :connections="connStore.list" @saved="onSaved" @connect="onQuickConnect" />
 
         <SshConfigImport v-model="sshImportVisible" :groups="connStore.groupNames" @imported="onImported" />
 
+        <BatchExecDialog v-model="batchVisible" :targets="batchTargets" />
+
         <!-- 主机密钥管理 -->
-        <el-dialog v-model="hostKeyVisible" title="已保存的主机密钥（known_hosts）" width="640px">
+        <el-dialog v-model="hostKeyVisible" title="已保存的主机密钥（known_hosts）" width="700px">
             <el-table :data="hostKeys" size="small" empty-text="还没有保存任何主机密钥">
                 <el-table-column label="主机" width="170">
                     <template #default="{ row }">
@@ -203,10 +214,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Plus, Key, Edit, Delete, Folder, Menu, Upload, Remove } from '@element-plus/icons-vue'
+import { Plus, Key, Edit, Delete, Folder, Menu, Upload, Remove, Promotion } from '@element-plus/icons-vue'
 import { showConfirmDialog, showInputDialog, showAlertDialog } from '../utils/dialog'
 import ConnectDialog from '../components/ConnectDialog.vue'
 import SshConfigImport from '../components/SshConfigImport.vue'
+import BatchExecDialog from '../components/BatchExecDialog.vue'
 import { useConnectionsStore } from '../stores/connections'
 import { useTerminalStore } from '../stores/terminal'
 import { useSettingsStore } from '../stores/settings'
@@ -279,6 +291,13 @@ const sshImportVisible = ref(false)
 const dedupVisible = ref(false)
 const dedupDeep = ref(false)
 const dedupRunning = ref(false)
+
+const batchVisible = ref(false)
+const batchTargets = ref<SavedConnection[]>([])
+
+function onSelectionChange(rows: SavedConnection[]) {
+    batchTargets.value = rows
+}
 
 onMounted(() => connStore.load())
 
@@ -418,7 +437,9 @@ async function onQuickConnect(opts: ConnectOptions, save: boolean) {
                     useKey: opts.useKey,
                     privateKey: opts.privateKey,
                     passphrase: opts.passphrase,
+                    keyId: opts.keyId || 0,
                     forwardAgent: opts.forwardAgent,
+                    jumpId: opts.jumpId,
                     defaultDir: opts.defaultDir || '',
                     tls: !!opts.tls,
                 }),
@@ -439,7 +460,9 @@ function connToOpts(conn: SavedConnection): ConnectOptions {
         useKey: conn.useKey,
         privateKey: conn.privateKey,
         passphrase: conn.passphrase,
+        keyId: conn.keyId ?? 0,
         forwardAgent: conn.forwardAgent,
+        jumpId: conn.jumpId ?? 0,
         defaultDir: conn.defaultDir,
         tls: conn.tls,
     })

@@ -83,6 +83,10 @@ function opLabel(op: string): string {
       return '删除'
     case 'copy':
       return '复制'
+    case 'compress':
+      return '压缩'
+    case 'extract':
+      return '解压'
     default:
       return op
   }

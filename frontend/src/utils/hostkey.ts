@@ -43,6 +43,16 @@ export async function resolveHostKeyIssue(
   const issue = parseHostKeyError(err?.message || String(err))
   if (!issue) return false
 
+  // 跳板机链路中的主机密钥问题：无法确定是哪一跳的密钥，提示用户先单独信任
+  if ((err?.message || String(err)).includes('跳板机')) {
+    await showAlertDialog(
+      '跳板机主机密钥未信任',
+      `跳板机链路中的主机密钥尚未在本机保存，无法确认服务器身份。<br/><br/>` +
+        `请先在终端中<b>直接连接该跳板机</b>并确认信任其主机密钥，然后再使用此链路连接。`,
+    )
+    return false
+  }
+
   let html: string
   let title: string
   if (issue.type === 'unknown') {

@@ -81,6 +81,7 @@
       v-model="dialogVisible"
       mode="connect"
       :conn-type="savedConnType"
+      :connections="connStore.list"
       @connect="onQuickConnect"
     />
   </div>
@@ -193,6 +194,14 @@ const remoteBackend: FileBackend = {
     props.mode === 'sftp'
       ? SFTPFileService.Replace(currentSessionId.value, d, p, r, m, opts)
       : FTPFileService.Replace(currentSessionId.value, d, p, r, m, opts),
+  compareMirror:
+    props.mode === 'sftp'
+      ? (l, r, d, del) => SFTPFileService.CompareMirror(currentSessionId.value, l, r, d, del)
+      : undefined,
+  relayTo:
+    props.mode === 'sftp'
+      ? (src, id, dir) => SFTPFileService.RelayTo(currentSessionId.value, src, id, dir)
+      : undefined,
 }
 
 // ---------- 编辑器（独立页面「远程编辑器」，见 stores/remoteEditor） ----------
@@ -238,7 +247,9 @@ function optsFromConn(conn: SavedConnection): ConnectOptions {
     useKey: conn.useKey,
     privateKey: conn.privateKey,
     passphrase: conn.passphrase,
+    keyId: conn.keyId ?? 0,
     forwardAgent: conn.forwardAgent,
+    jumpId: conn.jumpId ?? 0,
     defaultDir: conn.defaultDir,
     tls: conn.tls,
     insecure: false,
@@ -268,7 +279,9 @@ async function onQuickConnect(opts: ConnectOptions, save: boolean) {
           useKey: opts.useKey,
           privateKey: opts.privateKey,
           passphrase: opts.passphrase,
+          keyId: opts.keyId || 0,
           forwardAgent: opts.forwardAgent,
+          jumpId: opts.jumpId,
           defaultDir: opts.defaultDir || '',
           tls: !!opts.tls,
         }),
@@ -356,7 +369,7 @@ async function pickAndUpload() {
   }
   let files: string[]
   try {
-    files = (await LocalService.PickFiles()) ?? []
+    files = (await LocalService.PickFiles('选择要上传的文件')) ?? []
   } catch (e: any) {
     ElMessage.error(`选择文件失败：${e?.message || e}`)
     return

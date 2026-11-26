@@ -4,7 +4,7 @@ import { Events } from '@wailsio/runtime'
 import type { TransferProgress } from '../types'
 
 export type TransferKind = 'sftp' | 'ftp' | 'editor' | 'local'
-export type TransferOp = 'upload' | 'download' | 'delete' | 'copy'
+export type TransferOp = 'upload' | 'download' | 'delete' | 'copy' | 'compress' | 'extract'
 
 // 一次批量传输（上传一批文件 / 下载一批文件 / 批量删除）对应界面上的
 // 一条进度条，不再按文件逐条刷屏。

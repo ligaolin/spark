@@ -160,6 +160,99 @@ func buildAuthMethods(opts types.ConnectOptions) ([]xssh.AuthMethod, error) {
 	return auths, nil
 }
 
+// Dial opens an SSH client connection to opts.Host, hopping through
+// opts.Jump (outermost first) when a jump chain is configured. Every hop
+// performs its own host key verification; a failure is reported with the
+// hop's host in the message so the user knows which machine to trust.
+func Dial(opts types.ConnectOptions) (*xssh.Client, error) {
+	return dialWith(opts, nil)
+}
+
+// dialWith is Dial with an optional host key callback override (used by
+// TestLogin to skip known_hosts verification on every hop).
+func dialWith(opts types.ConnectOptions, hk xssh.HostKeyCallback) (*xssh.Client, error) {
+	build := func(o types.ConnectOptions) (*xssh.ClientConfig, error) {
+		if hk == nil {
+			return BuildClientConfig(o)
+		}
+		auths, err := buildAuthMethods(o)
+		if err != nil {
+			return nil, err
+		}
+		return &xssh.ClientConfig{
+			User:            o.Username,
+			Auth:            auths,
+			HostKeyCallback: hk,
+			Timeout:         15 * time.Second,
+		}, nil
+	}
+
+	targetAddr := net.JoinHostPort(opts.Host, strconv.Itoa(normalizePort(opts.Port)))
+
+	var client *xssh.Client
+	for _, hop := range opts.Jump {
+		hopAddr := net.JoinHostPort(hop.Host, strconv.Itoa(normalizePort(hop.Port)))
+		cfg, err := build(hop)
+		if err != nil {
+			closeClient(client)
+			return nil, fmt.Errorf("跳板机 %s 配置失败: %w", hop.Host, err)
+		}
+		if client == nil {
+			client, err = xssh.Dial("tcp", hopAddr, cfg)
+			if err != nil {
+				return nil, fmt.Errorf("连接跳板机 %s 失败: %w", hop.Host, err)
+			}
+			continue
+		}
+		conn, err := client.Dial("tcp", hopAddr)
+		if err != nil {
+			closeClient(client)
+			return nil, fmt.Errorf("经跳板机转发连接 %s 失败: %w", hop.Host, err)
+		}
+		nc, chans, reqs, err := xssh.NewClientConn(conn, hopAddr, cfg)
+		if err != nil {
+			_ = conn.Close()
+			closeClient(client)
+			return nil, fmt.Errorf("跳板机 %s 认证失败: %w", hop.Host, err)
+		}
+		client = xssh.NewClient(nc, chans, reqs)
+	}
+
+	cfg, err := build(opts)
+	if err != nil {
+		closeClient(client)
+		return nil, err
+	}
+	if client == nil {
+		return xssh.Dial("tcp", targetAddr, cfg)
+	}
+	conn, err := client.Dial("tcp", targetAddr)
+	if err != nil {
+		closeClient(client)
+		return nil, fmt.Errorf("经跳板机连接 %s 失败: %w", targetAddr, err)
+	}
+	nc, chans, reqs, err := xssh.NewClientConn(conn, targetAddr, cfg)
+	if err != nil {
+		_ = conn.Close()
+		closeClient(client)
+		return nil, err
+	}
+	return xssh.NewClient(nc, chans, reqs), nil
+}
+
+func normalizePort(port int) int {
+	if port <= 0 || port > 65535 {
+		return 22
+	}
+	return port
+}
+
+func closeClient(c *xssh.Client) {
+	if c != nil {
+		_ = c.Close()
+	}
+}
+
 // BuildClientConfig creates an SSH client config from connection options.
 func BuildClientConfig(opts types.ConnectOptions) (*xssh.ClientConfig, error) {
 	auths, err := buildAuthMethods(opts)
@@ -184,30 +277,13 @@ func BuildClientConfig(opts types.ConnectOptions) (*xssh.ClientConfig, error) {
 // given credentials. It skips known_hosts verification (a login probe should
 // not be blocked by an untrusted key) and returns nil on successful auth.
 func TestLogin(opts types.ConnectOptions) error {
-	auths, err := buildAuthMethods(opts)
+	client, err := dialWith(opts, func(string, net.Addr, xssh.PublicKey) error {
+		return nil // 测试用：跳过主机密钥校验
+	})
 	if err != nil {
 		return err
 	}
-	port := opts.Port
-	if port <= 0 || port > 65535 {
-		port = 22
-	}
-	addr := net.JoinHostPort(opts.Host, strconv.Itoa(port))
-
-	config := &xssh.ClientConfig{
-		User: opts.Username,
-		Auth: auths,
-		HostKeyCallback: func(string, net.Addr, xssh.PublicKey) error {
-			return nil // 测试用：跳过主机密钥校验
-		},
-		Timeout: 10 * time.Second,
-	}
-
-	conn, err := xssh.Dial("tcp", addr, config)
-	if err != nil {
-		return err
-	}
-	_ = conn.Close()
+	_ = client.Close()
 	return nil
 }
 

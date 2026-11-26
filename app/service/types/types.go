@@ -21,9 +21,21 @@ type ConnectOptions struct {
 	PrivateKey string `json:"privateKey"`
 	Passphrase string `json:"passphrase"`
 
+	// KeyID references a managed key (ssh_keys table). When set with UseKey and
+	// an empty PrivateKey, the backend fills PrivateKey/Passphrase before dialing.
+	KeyID uint `json:"keyId"`
+
 	// ForwardAgent enables SSH agent forwarding: the remote session can use the
 	// local machine's SSH agent identities (SSH-only).
 	ForwardAgent bool `json:"forwardAgent"`
+
+	// JumpID references a saved connection used as a jump host (ProxyJump).
+	// The backend expands it into Jump before dialing.
+	JumpID uint `json:"jumpId"`
+
+	// Jump lists SSH jump hosts, outermost first. Each hop is a full
+	// ConnectOptions with its own credentials and host key verification.
+	Jump []ConnectOptions `json:"jump"`
 
 	// Terminal options (SSH only)
 	Rows  int    `json:"rows"`
@@ -51,6 +63,27 @@ type FileEntry struct {
 	IsDir      bool      `json:"isDir"`
 	Symlink    bool      `json:"symlink"`
 	LinkTarget string    `json:"linkTarget,omitempty"`
+}
+
+// DirSizeInfo is the recursively computed size of a directory.
+// Files 为 -1 表示服务端快速路径（du）未统计文件数。
+type DirSizeInfo struct {
+	Size  int64 `json:"size"`
+	Files int64 `json:"files"`
+}
+
+// MirrorItem 是本地目录与远程目录镜像比较得到的一处文件差异。
+type MirrorItem struct {
+	Rel    string `json:"rel"`    // 相对路径（/ 分隔）
+	Action string `json:"action"` // upload | download | delete-remote | delete-local
+	Reason string `json:"reason"` // new | changed | extra
+	Size   int64  `json:"size"`   // 传输方向上的源文件大小
+}
+
+// MirrorDiff 是镜像比较的完整结果。
+type MirrorDiff struct {
+	Items []MirrorItem `json:"items"`
+	Bytes int64        `json:"bytes"` // 待传输文件总大小
 }
 
 // OSUser describes a system account read from /etc/passwd, used by the
@@ -99,6 +132,19 @@ type SearchOptions struct {
 type ReplaceResult struct {
 	Files       int `json:"files"`       // 被修改的文件数
 	Occurrences int `json:"occurrences"` // 被替换的匹配总数
+}
+
+// SearchProgress 是流式搜索（SFTP）过程中推送的进度事件。Results 为本次新增的
+// 命中批次，前端据此增量展示；Done 为 true 时表示搜索结束（Cancelled 表示被取消）。
+type SearchProgress struct {
+	SearchID  string         `json:"searchId"`
+	SessionID string         `json:"sessionId"`
+	Dirs      int            `json:"dirs"`
+	Files     int            `json:"files"`
+	Matches   int            `json:"matches"`
+	Results   []SearchResult `json:"results,omitempty"`
+	Done      bool           `json:"done,omitempty"`
+	Cancelled bool           `json:"cancelled,omitempty"`
 }
 
 // TerminalOutput is emitted to the frontend with chunks of SSH terminal output.
@@ -286,6 +332,20 @@ type AIConfig struct {
 	HasKey       bool    `json:"hasKey"`
 }
 
+// AIProviderInfo is one saved AI endpoint shown in the settings list. The key
+// itself is never exposed; HasKey reports whether one is stored.
+type AIProviderInfo struct {
+	ID           uint    `json:"id"`
+	Name         string  `json:"name"`
+	BaseURL      string  `json:"baseUrl"`
+	Model        string  `json:"model"`
+	Temperature  float64 `json:"temperature"`
+	MaxTokens    int     `json:"maxTokens"`
+	SystemPrompt string  `json:"systemPrompt"`
+	HasKey       bool    `json:"hasKey"`
+	Active       bool    `json:"active"`
+}
+
 // ChatMessage is one turn in a chat conversation.
 type ChatMessage struct {
 	Role    string `json:"role"` // system | user | assistant
@@ -343,6 +403,17 @@ type AgentDone struct {
 	SessionID string `json:"sessionId"`
 	Summary   string `json:"summary,omitempty"`
 	Error     string `json:"error,omitempty"`
+}
+
+// AgentConversationInfo is one persisted AI conversation of a server.
+// Transcript carries the UI entries (JSON) only when a specific conversation
+// is selected, to keep the list payload lean.
+type AgentConversationInfo struct {
+	ID         uint      `json:"id"`
+	Title      string    `json:"title"`
+	ServerKey  string    `json:"serverKey"`
+	Transcript string    `json:"transcript,omitempty"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 // FormFile represents a single file in a multipart upload.
@@ -534,6 +605,17 @@ type StressTestResult struct {
 	QPS      float64           `json:"qps"`
 	Latency  StressTestLatency `json:"latency"`
 	Statuses map[string]int64  `json:"statuses"` // e.g. {"200": 150, "500": 2}
+}
+
+// BatchExecResult is the per-server outcome of a batch command run.
+type BatchExecResult struct {
+	ConnID   uint   `json:"connId"`
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Output   string `json:"output"`
+	Error    string `json:"error"`
+	ExitCode int    `json:"exitCode"`
+	Duration int64  `json:"duration"` // milliseconds
 }
 
 // NewID returns a random hexadecimal session id.

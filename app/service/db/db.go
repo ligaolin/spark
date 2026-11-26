@@ -190,17 +190,28 @@ func Open(dialect, dsn string) (*gorm.DB, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	done := make(chan struct{})
-	var gdb *gorm.DB
-	var err error
+	type openResult struct {
+		gdb *gorm.DB
+		err error
+	}
+	resultCh := make(chan openResult, 1)
 	go func() {
-		defer close(done)
-		gdb, err = gorm.Open(dialector, &gorm.Config{})
+		gdb, err := gorm.Open(dialector, &gorm.Config{})
+		resultCh <- openResult{gdb: gdb, err: err}
 	}()
 	select {
-	case <-done:
-		return gdb, err
+	case r := <-resultCh:
+		return r.gdb, r.err
 	case <-ctx.Done():
+		// gorm.Open 无法中途取消：等它返回后立即关闭连接，避免残留句柄/连接池。
+		go func() {
+			r := <-resultCh
+			if r.gdb != nil {
+				if sqlDB, err := r.gdb.DB(); err == nil {
+					_ = sqlDB.Close()
+				}
+			}
+		}()
 		return nil, fmt.Errorf("连接数据库超时（%s）", dialect)
 	}
 }

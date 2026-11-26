@@ -68,7 +68,12 @@
                                             <Folder v-if="data.type === 'folder'" />
                                             <Document v-else />
                                         </el-icon>
-                                        <span class="tree-node-name" :title="data.name">{{ data.name }}</span>
+                                        <el-input v-if="renamingDocId === data.id" :ref="setRenameInputRef"
+                                            v-model="renameDraft" size="small" class="doc-rename-input"
+                                            @click.stop @mousedown.stop @dblclick.stop
+                                            @keyup.enter="onRenameEnter" @keyup.esc="cancelRename"
+                                            @blur="commitRename" />
+                                        <span v-else class="tree-node-name" :title="data.name">{{ data.name }}</span>
                                         <el-tag v-if="data.type === 'file' && data.kind === 'md'" size="small"
                                             type="success" class="md-tag">MD</el-tag>
                                     </span>
@@ -246,6 +251,16 @@ watch(activeKey, async (key) => {
 
 const selectedId = ref<number | null>(null)
 
+// 行内重命名（VSCode 式）：编辑中的节点 id 与输入内容
+const renamingDocId = ref(0)
+const renameDraft = ref('')
+const renameTarget = ref<TreeNode | null>(null)
+const renameInputRef = ref<{ focus: () => void; select?: () => void } | null>(null)
+
+function setRenameInputRef(el: any) {
+    renameInputRef.value = el
+}
+
 // 搜索
 const keyword = ref('')
 const searchMode = ref<'name' | 'content'>('name')
@@ -369,6 +384,9 @@ async function reloadParent(id: number) {
         treeData.value = children
     } else {
         treeRef.value?.updateKeyChildren(id, children)
+        // 懒加载节点只替换子级时 loaded 仍为 false，展开时会再次加载并出现重复节点
+        const node = treeRef.value?.getNode(id) as any
+        if (node) node.loaded = true
     }
 }
 
@@ -398,10 +416,32 @@ async function renameSelected() {
     await renameNode(node)
 }
 
-async function renameNode(node: { id: number; name: string; type: string }) {
-    const values = await showInputDialog('重命名', [{ key: 'name', label: '新名称', initial: node.name }])
-    if (!values) return
-    const name = values.name.trim()
+// VSCode 式行内重命名：树节点上直接出现输入框，Enter / 失焦提交，Esc 取消
+async function renameNode(node: TreeNode) {
+    renameTarget.value = node
+    renamingDocId.value = node.id
+    renameDraft.value = node.name
+    await nextTick()
+    renameInputRef.value?.focus()
+    renameInputRef.value?.select?.()
+}
+
+function onRenameEnter(e: KeyboardEvent) {
+    if (e.isComposing) return
+    void commitRename()
+}
+
+function cancelRename() {
+    renameTarget.value = null
+    renamingDocId.value = 0
+}
+
+async function commitRename() {
+    const node = renameTarget.value
+    if (!node) return
+    renameTarget.value = null
+    renamingDocId.value = 0
+    const name = renameDraft.value.trim()
     if (!name || name === node.name) return
     try {
         await DocumentService.Rename(node.id, name)
@@ -978,6 +1018,12 @@ function isTextEditing(t: HTMLElement | null): boolean {
     return !!t.closest('.monaco-editor, textarea, input, [contenteditable="true"]')
 }
 
+// 有选中文字（如 Markdown 预览里框选）时 Ctrl+C/X 交给浏览器原生复制
+function hasTextSelection(): boolean {
+    const sel = window.getSelection()
+    return !!sel && !sel.isCollapsed && !!sel.toString()
+}
+
 function onViewKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
         if (!activeTab.value) return
@@ -998,10 +1044,12 @@ function onViewKeydown(e: KeyboardEvent) {
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
     const k = e.key.toLowerCase()
     if (k === 'c') {
+        if (hasTextSelection()) return
         e.preventDefault()
         e.stopPropagation()
         copySelected(false)
     } else if (k === 'x') {
+        if (hasTextSelection()) return
         e.preventDefault()
         e.stopPropagation()
         copySelected(true)
@@ -1138,6 +1186,16 @@ onBeforeUnmount(unbindKeys)
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.doc-rename-input {
+    width: 170px;
+    max-width: 100%;
+}
+
+.doc-rename-input :deep(.el-input__wrapper) {
+    padding: 0 4px;
+    height: 22px;
 }
 
 .md-tag {

@@ -187,6 +187,12 @@ function isTextEditing(t: HTMLElement | null): boolean {
   return !!t.closest('.monaco-editor, textarea, input, [contenteditable="true"]')
 }
 
+// 有选中文字（如 Markdown 预览里框选）时 Ctrl+C/X 交给浏览器原生复制
+function hasTextSelection(): boolean {
+  const sel = window.getSelection()
+  return !!sel && !sel.isCollapsed && !!sel.toString()
+}
+
 function onViewKeydown(e: KeyboardEvent) {
   const id = remoteEditor.activeId
   const inst = id ? panelRefs.value[id] : null
@@ -211,10 +217,12 @@ function onViewKeydown(e: KeyboardEvent) {
   if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
   const k = e.key.toLowerCase()
   if (k === 'c') {
+    if (hasTextSelection()) return
     e.preventDefault()
     e.stopPropagation()
     inst.copySelected(false)
   } else if (k === 'x') {
+    if (hasTextSelection()) return
     e.preventDefault()
     e.stopPropagation()
     inst.copySelected(true)

@@ -6,6 +6,7 @@ import { TerminalService } from '../../bindings/spark/app/service/terminal'
 import { SFTPFileService } from '../../bindings/spark/app/service/sftp'
 import { FTPFileService } from '../../bindings/spark/app/service/ftp'
 import { ConnService } from '../../bindings/spark/app/service/connections'
+import { BatchService } from '../../bindings/spark/app/service/batchexec'
 import { CustomCommandService } from '../../bindings/spark/app/service/customcmd'
 import { DocumentService } from '../../bindings/spark/app/service/documents'
 import { FavoriteService } from '../../bindings/spark/app/service/favorites'
@@ -16,6 +17,7 @@ import { LocalService } from '../../bindings/spark/app/service/local'
 import { LocalTerminalService } from '../../bindings/spark/app/service/localterminal'
 import { HostKeyService } from '../../bindings/spark/app/service/hostkeys'
 import { SshConfigService } from '../../bindings/spark/app/service/sshconfig'
+import { SSHKeyService } from '../../bindings/spark/app/service/sshkeys'
 import { UpdateService } from '../../bindings/spark/app/service/update'
 import { ShellMenuService } from '../../bindings/spark/app/service/shellmenu'
 import { RestService } from '../../bindings/spark/app/service/rest'
@@ -27,7 +29,9 @@ import type {
   AgentAsk,
   AgentOutput,
   AgentDone,
+  AgentConversationInfo,
   AIConfig,
+  AIProviderInfo,
   ChatMessage,
   AIChatDelta,
   ConnectOptions,
@@ -46,6 +50,9 @@ import type {
   RestResponse,
   OSUser,
   FileOwner,
+  BatchExecResult,
+  MirrorItem,
+  MirrorDiff,
 } from '../../bindings/spark/app/service/types/models'
 import type {
   SavedConnection,
@@ -57,6 +64,7 @@ import type {
   SiteLink,
   SiteAccount,
   SiteFolder,
+  SSHKey,
 } from '../../bindings/spark/app/model/models'
 import type { HostKeyInfo, HostKeyStatus } from '../../bindings/spark/app/service/hostkeys/models'
 import type { DatabaseConfig } from '../../bindings/spark/app/service/databases/models'
@@ -71,6 +79,7 @@ export {
   SFTPFileService,
   FTPFileService,
   ConnService,
+  BatchService,
   CustomCommandService,
   DocumentService,
   FavoriteService,
@@ -81,6 +90,7 @@ export {
   LocalTerminalService,
   HostKeyService,
   SshConfigService,
+  SSHKeyService,
   UpdateService,
   ShellMenuService,
   RestService,
@@ -91,7 +101,9 @@ export type {
   AgentAsk,
   AgentOutput,
   AgentDone,
+  AgentConversationInfo,
   AIConfig,
+  AIProviderInfo,
   ChatMessage,
   AIChatDelta,
   ConnectOptions,
@@ -104,6 +116,7 @@ export type {
   SiteLink,
   SiteAccount,
   SiteFolder,
+  SSHKey,
   HostKeyInfo,
   HostKeyStatus,
   ServerInfo,
@@ -127,6 +140,9 @@ export type {
   RestResponse,
   OSUser,
   FileOwner,
+  BatchExecResult,
+  MirrorItem,
+  MirrorDiff,
 }
 
 // 绑定模型为接口且字段全必填，这里提供带默认值的工厂函数便于构造。
@@ -139,7 +155,10 @@ export function makeConnectOptions(partial: Partial<ConnectOptions> = {}): Conne
     useKey: false,
     privateKey: '',
     passphrase: '',
+    keyId: 0,
     forwardAgent: false,
+    jumpId: 0,
+    jump: [],
     rows: 24,
     cols: 80,
     shell: '',
@@ -164,7 +183,9 @@ export function makeSavedConnection(partial: Partial<SavedConnection> = {}): Sav
     useKey: false,
     privateKey: '',
     passphrase: '',
+    keyId: 0,
     forwardAgent: false,
+    jumpId: 0,
     defaultDir: '',
     tls: false,
     createdAt: '',
@@ -239,6 +260,7 @@ export const EVENTS = {
   localTerminalOutput: 'localTerminal:output',
   localTerminalExit: 'localTerminal:exit',
   transferProgress: 'transfer:progress',
+  sftpSearch: 'sftp:search',
   sessionClosed: 'session:closed',
   restWsMessage: 'rest:ws:message',
 } as const

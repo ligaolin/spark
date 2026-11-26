@@ -214,6 +214,8 @@ function buildTabBackend(key: string, opts: ConnectOptions): FileBackend {
         writeFile: wrap(raw.writeFile),
         search: wrap(raw.search),
         replace: wrap(raw.replace),
+        compareMirror: wrap(raw.compareMirror!),
+        relayTo: wrap(raw.relayTo!),
     }
 }
 
@@ -438,7 +440,7 @@ async function pickAndUpload() {
     }
     let files: string[]
     try {
-        files = (await LocalService.PickFiles()) ?? []
+        files = (await LocalService.PickFiles('选择要上传的文件')) ?? []
     } catch (e: any) {
         ElMessage.error(`选择文件失败：${e?.message || e}`)
         return

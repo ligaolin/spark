@@ -1,5 +1,24 @@
 <template>
   <el-form ref="formRef" :model="form" label-width="120px" label-position="left" class="ai-form">
+    <el-form-item label="接口配置">
+      <el-select v-model="editingId" style="width: 300px" placeholder="选择或新建接口" @change="onProviderChange">
+        <el-option v-for="p in providers" :key="p.id" :value="p.id"
+          :label="p.active ? `${p.name}（当前使用）` : p.name" />
+        <el-option :value="0" label="＋ 新建接口" />
+      </el-select>
+      <el-button size="small" :disabled="!editingId || editingActive" :loading="activating" @click="activate">
+        切换到此接口
+      </el-button>
+      <div class="ai-note-inline">
+        可以保存多个 AI 接口，用哪个就切到哪个；切换后所有 AI 功能立即使用当前接口
+      </div>
+    </el-form-item>
+
+    <el-form-item label="接口名称">
+      <el-input v-model="providerName" placeholder="例如 DeepSeek / 公司网关" style="width: 300px" />
+      <div class="ai-note-inline">仅用于在列表里区分，可留空（自动取模型名）</div>
+    </el-form-item>
+
     <el-form-item label="服务商预设">
       <el-select v-model="provider" style="width: 260px" @change="applyPreset">
         <el-option
@@ -27,7 +46,9 @@
         <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
       </el-select>
       <el-button size="small" text :loading="loadingModels" @click="loadModels">刷新</el-button>
-      <div class="ai-note-inline">从服务商接口获取，也可手输</div>
+      <div class="ai-note-inline">
+        {{ modelHint || '从服务商接口获取，也可直接手输（没有 /models 接口的服务商，输入模型名即可）' }}
+      </div>
     </el-form-item>
 
     <el-form-item label="API Key">
@@ -85,6 +106,12 @@
 
     <el-divider content-position="left">终端 Agent（SSH 终端的 AI 面板）</el-divider>
 
+    <el-form-item label=" ">
+      <div class="ai-note-inline" style="margin-left: 0">
+        终端 Agent 依赖模型的工具调用（function calling）能力；服务商没有 /models 接口不影响使用，在「模型名称」里直接输入即可。
+      </div>
+    </el-form-item>
+
     <el-form-item label="允许命令串联">
       <el-switch v-model="allowChain" :loading="savingAllowChain" @change="saveAllowChain" />
       <div class="ai-note-inline">
@@ -102,9 +129,21 @@
       </div>
     </el-form-item>
 
+    <el-form-item label="步数用尽自动续跑">
+      <el-switch v-model="autoContinue" :loading="savingAutoContinue" @change="saveAutoContinue" />
+      <div class="ai-note-inline">
+        单轮最多 40 步；开启后如果一直在正常推进（有成功命令、没有连续失败或重复同一条命令），AI 会自动接着做，
+        最多再续 3 段（160 步）。打转时会自动停下，不会无限刷命令。关闭则到 40 步即停、需要你追问「继续」。保存后下一轮对话生效
+      </div>
+    </el-form-item>
+
     <el-form-item>
       <div class="ai-actions">
-        <el-button type="primary" :loading="saving" @click="save">保存模型配置</el-button>
+        <el-button type="primary" :loading="saving" @click="save">
+          {{ editingId ? '保存接口' : '保存为新接口' }}
+        </el-button>
+        <el-button v-if="editingId && !editingActive" :loading="activating" @click="activate">切换到此接口</el-button>
+        <el-button v-if="editingId" :loading="deleting" @click="removeProvider">删除接口</el-button>
         <el-button v-if="form.hasKey" :loading="clearing" @click="clearKey">清除 Key</el-button>
       </div>
     </el-form-item>
@@ -112,9 +151,9 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted } from 'vue'
+import { computed, reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { AIService, makeAIConfig, type AIConfig } from '../utils/wails'
+import { AIService, makeAIConfig, type AIConfig, type AIProviderInfo } from '../utils/wails'
 import { showConfirmDialog } from '../utils/dialog'
 import { AI_PROVIDERS, providerForBaseUrl } from '../utils/aiProviders'
 import { useSettingsStore } from '../stores/settings'
@@ -126,13 +165,27 @@ const saving = ref(false)
 const clearing = ref(false)
 const modelOptions = ref<string[]>([])
 const loadingModels = ref(false)
+// 模型列表拉取失败不算错误：不少 OpenAI 兼容服务没有 /models 接口，手输模型名即可
+const modelHint = ref('')
 
-// 终端 Agent 的两个开关存在通用的 settings 表里（key: ai.agent.*）
+// 多接口：列表里选一条编辑；editingId 为 0 表示新建
+const providers = ref<AIProviderInfo[]>([])
+const editingId = ref(0)
+const providerName = ref('')
+const activating = ref(false)
+const deleting = ref(false)
+const editingActive = computed(() =>
+  editingId.value !== 0 && providers.value.some((p) => p.id === editingId.value && p.active),
+)
+
+// 终端 Agent 的开关存在通用的 settings 表里（key: ai.agent.*）
 const settings = useSettingsStore()
 const allowChain = ref(false)
 const terminalContext = ref(true)
+const autoContinue = ref(true)
 const savingAllowChain = ref(false)
 const savingTerminalContext = ref(false)
+const savingAutoContinue = ref(false)
 
 async function saveAllowChain(v: string | number | boolean) {
   savingAllowChain.value = true
@@ -160,20 +213,118 @@ async function saveTerminalContext(v: string | number | boolean) {
   }
 }
 
-// 从供应商 /v1/models 接口拉取可用模型列表（不内置）。
+async function saveAutoContinue(v: string | number | boolean) {
+  savingAutoContinue.value = true
+  try {
+    await settings.set('ai.agent.autoContinue', v ? '1' : '0')
+    ElMessage.success(v ? '已保存：步数用尽时会自动接着做' : '已保存：步数用尽即停，需追问继续')
+  } catch (e: any) {
+    autoContinue.value = !v
+    ElMessage.error(`保存失败：${e?.message || e}`)
+  } finally {
+    savingAutoContinue.value = false
+  }
+}
+
+// 从该接口自己的 /v1/models 接口拉取可用模型列表（不内置）。
+// 失败或为空都不阻塞使用：模型名允许手动输入。
 async function loadModels() {
+  if (!editingId.value) {
+    // 新接口还没保存，拿不到它的密钥；保存后再刷新即可
+    modelOptions.value = []
+    modelHint.value = ''
+    return
+  }
   loadingModels.value = true
   try {
-    const ids = await AIService.ListModels()
+    const ids = await AIService.ListModelsForProvider(editingId.value)
     modelOptions.value = ids && ids.length ? ids : []
-    if (!ids || !ids.length) {
-      ElMessage.info('服务商未返回可用模型，可手动输入模型名称')
-    }
+    modelHint.value = ids && ids.length ? '' : '服务商未返回模型列表，可直接手动输入模型名称'
   } catch (e: any) {
     modelOptions.value = []
-    ElMessage.error(`获取模型列表失败：${e?.message || e}`)
+    const detail = String(e?.message || e).slice(0, 120)
+    modelHint.value = `服务商未提供模型列表（${detail}），可直接手动输入模型名称`
   } finally {
     loadingModels.value = false
+  }
+}
+
+function blankForm() {
+  Object.assign(form, makeAIConfig({ baseUrl: '', model: '' }))
+  providerName.value = ''
+  apiKey.value = ''
+  provider.value = 'custom'
+  modelOptions.value = []
+  modelHint.value = ''
+}
+
+function applyProvider(p: AIProviderInfo) {
+  Object.assign(form, {
+    baseUrl: p.baseUrl,
+    model: p.model,
+    temperature: p.temperature,
+    maxTokens: p.maxTokens,
+    systemPrompt: p.systemPrompt,
+    hasKey: p.hasKey,
+  })
+  providerName.value = p.name
+  apiKey.value = ''
+  const matched = providerForBaseUrl(p.baseUrl)
+  provider.value = matched ? matched.key : 'custom'
+  void loadModels()
+}
+
+function onProviderChange(id: number) {
+  if (!id) {
+    blankForm()
+    return
+  }
+  const p = providers.value.find((x) => x.id === id)
+  if (p) applyProvider(p)
+}
+
+async function loadProviders(selectId?: number) {
+  try {
+    providers.value = (await AIService.ListProviders()) || []
+  } catch (e: any) {
+    providers.value = []
+    ElMessage.error(`读取接口列表失败：${e?.message || e}`)
+    return
+  }
+  const fallback = providers.value.find((p) => p.active)?.id ?? providers.value[0]?.id ?? 0
+  const target = selectId && providers.value.some((p) => p.id === selectId) ? selectId : fallback
+  editingId.value = target
+  onProviderChange(target)
+}
+
+async function activate() {
+  if (!editingId.value) return
+  activating.value = true
+  try {
+    await AIService.ActivateProvider(editingId.value)
+    await loadProviders(editingId.value)
+    ElMessage.success('已切换，所有 AI 功能将使用这个接口')
+  } catch (e: any) {
+    ElMessage.error(`切换失败：${e?.message || e}`)
+  } finally {
+    activating.value = false
+  }
+}
+
+async function removeProvider() {
+  if (!editingId.value) return
+  const p = providers.value.find((x) => x.id === editingId.value)
+  const ok = await showConfirmDialog('删除接口', `确定删除「${p?.name || '该接口'}」？`, true, '删除')
+  if (!ok) return
+  deleting.value = true
+  try {
+    await AIService.DeleteProvider(editingId.value)
+    await loadProviders()
+    ElMessage.success('已删除')
+  } catch (e: any) {
+    ElMessage.error(`删除失败：${e?.message || e}`)
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -187,19 +338,11 @@ function applyPreset(key: string) {
 }
 
 async function load() {
-  try {
-    const cfg = await AIService.GetConfig()
-    Object.assign(form, cfg)
-    // 根据保存的 baseUrl 反推服务商预设，避免每次进入都显示「自定义」
-    const matched = providerForBaseUrl(cfg.baseUrl)
-    provider.value = matched ? matched.key : 'custom'
-    void loadModels()
-  } catch {
-    /* 忽略，保留默认值 */
-  }
   await settings.load()
   allowChain.value = settings.values['ai.agent.allowChain'] === '1'
   terminalContext.value = settings.values['ai.agent.terminalContext'] !== '0'
+  autoContinue.value = settings.values['ai.agent.autoContinue'] !== '0'
+  await loadProviders()
 }
 
 async function save() {
@@ -213,11 +356,26 @@ async function save() {
   }
   saving.value = true
   try {
-    await AIService.SaveConfig({ ...form, baseUrl: form.baseUrl.trim(), model: form.model.trim() }, apiKey.value)
-    form.hasKey = true
+    const isNew = editingId.value === 0
+    const wasActive = editingActive.value
+    const id = await AIService.SaveProvider({
+      id: editingId.value,
+      name: providerName.value.trim(),
+      baseUrl: form.baseUrl.trim(),
+      model: form.model.trim(),
+      temperature: form.temperature,
+      maxTokens: form.maxTokens,
+      systemPrompt: form.systemPrompt,
+      hasKey: false,
+      active: false,
+    }, apiKey.value)
+    // 新建的接口直接启用；编辑当前接口时同步生效
+    if (isNew || wasActive) {
+      await AIService.ActivateProvider(id)
+    }
     apiKey.value = ''
-    ElMessage.success('已保存')
-    void loadModels()
+    await loadProviders(id)
+    ElMessage.success(isNew || wasActive ? '已保存并启用' : '已保存')
   } catch (e: any) {
     ElMessage.error(`保存失败：${e?.message || e}`)
   } finally {
@@ -226,12 +384,13 @@ async function save() {
 }
 
 async function clearKey() {
-  const ok = await showConfirmDialog('清除 API Key', '确定清除已保存的 API Key？清除后 AI 助手将无法发送消息。', false, '清除')
+  const ok = await showConfirmDialog('清除 API Key', '确定清除该接口已保存的 API Key？清除后 AI 助手将无法发送消息。', false, '清除')
   if (!ok) return
   clearing.value = true
   try {
-    await AIService.ClearKey()
+    await AIService.ClearProviderKey(editingId.value)
     form.hasKey = false
+    await loadProviders(editingId.value)
     ElMessage.success('已清除')
   } catch (e: any) {
     ElMessage.error(`清除失败：${e?.message || e}`)

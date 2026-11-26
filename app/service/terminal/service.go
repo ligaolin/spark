@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"spark/app/service/settings"
+	"spark/app/service/sshconn"
 	"spark/app/service/sshlib"
 	"spark/app/service/types"
 
@@ -27,7 +28,7 @@ import (
 // Each session streams its output to the frontend through the
 // "terminal:output" event and announces termination with "terminal:exit".
 type TerminalService struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	sessions map[string]*sshSession
 
 	tunnelMu  sync.Mutex
@@ -36,10 +37,13 @@ type TerminalService struct {
 }
 
 type sshSession struct {
-	id     string
-	client *xssh.Client
-	sess   *xssh.Session
-	stdin  io.WriteCloser
+	id string
+	// serverKey 是 user@host:port，用于把 AI 对话历史按服务器归类，
+	// 重连后（session id 变化）仍能找回同一台服务器的记录。
+	serverKey string
+	client    *xssh.Client
+	sess      *xssh.Session
+	stdin     io.WriteCloser
 
 	stopKA chan struct{}
 	kaOnce sync.Once
@@ -49,7 +53,17 @@ type sshSession struct {
 	closed bool
 	// tail 是最近一段 PTY 原始输出（含 ANSI 控制序列），供 AI 助手读取
 	// "终端刚才发生了什么"（见 RecentOutput），避免它对着报错一问三不知。
-	tail []byte
+	// 用定长环形缓冲，避免每来一块输出就整体搬移一次（旧实现是 O(n²)）。
+	tailRing []byte
+	tailPos  int
+	tailLen  int
+
+	// 输出合批：把细碎的 PTY 数据块按 ~16ms 窗口合并成一次事件发给前端，
+	// 大幅降低跨进程事件与 xterm 写入次数（大文件 cat / 日志刷屏时尤其明显）。
+	outMu     sync.Mutex
+	outBuf    []byte
+	outTimer  *time.Timer
+	outClosed bool
 }
 
 // ServiceName implements application.ServiceName.
@@ -70,6 +84,38 @@ func IsSessionConnected(id string) bool {
 	return global.IsConnected(id)
 }
 
+// serverKeyFor builds the stable per-server key used to group AI history.
+func serverKeyFor(opts types.ConnectOptions) string {
+	user := strings.TrimSpace(opts.Username)
+	host := strings.ToLower(strings.TrimSpace(opts.Host))
+	port := opts.Port
+	if port <= 0 || port > 65535 {
+		port = 22
+	}
+	return fmt.Sprintf("%s@%s:%d", user, host, port)
+}
+
+// SessionServerKey returns the "user@host:port" key of a live session.
+func SessionServerKey(id string) string {
+	if global == nil {
+		return ""
+	}
+	s := global.get(id)
+	if s == nil {
+		return ""
+	}
+	return s.serverKey
+}
+
+// ServerKey exposes the session's server key as a frontend binding.
+func (t *TerminalService) ServerKey(id string) string {
+	s := t.get(id)
+	if s == nil {
+		return ""
+	}
+	return s.serverKey
+}
+
 // ExecCommand runs a command on an existing session through a fresh SSH exec
 // channel, returning combined output and exit code.
 func ExecCommand(id, command string) (string, int, error) {
@@ -88,13 +134,9 @@ func (t *TerminalService) Connect(opts types.ConnectOptions) (string, error) {
 	if opts.Port <= 0 || opts.Port > 65535 {
 		opts.Port = 22
 	}
+	opts = sshconn.Resolve(opts)
 
-	config, err := sshlib.BuildClientConfig(opts)
-	if err != nil {
-		return "", err
-	}
-
-	client, err := xssh.Dial("tcp", net.JoinHostPort(opts.Host, strconv.Itoa(opts.Port)), config)
+	client, err := sshlib.Dial(opts)
 	if err != nil {
 		if werr := sshlib.AsHostKeyError(err); werr != nil {
 			return "", werr
@@ -130,7 +172,14 @@ func (t *TerminalService) Connect(opts types.ConnectOptions) (string, error) {
 		return "", fmt.Errorf("获取标准输入失败: %w", err)
 	}
 
-	s := &sshSession{id: id, client: client, sess: sess, stdin: stdin, stopKA: make(chan struct{})}
+	s := &sshSession{
+		id:        id,
+		serverKey: serverKeyFor(opts),
+		client:    client,
+		sess:      sess,
+		stdin:     stdin,
+		stopKA:    make(chan struct{}),
+	}
 
 	// 保活：定期发送 SSH keepalive，连接死亡（网络中断/空闲超时被断开）时
 	// 关闭客户端，触发下方 watch 的 terminal:exit 通知前端（间隔可在设置中调整）
@@ -1244,6 +1293,8 @@ func (t *TerminalService) watch(s *sshSession) {
 		}
 		msg = err.Error()
 	}
+	// 先冲刷最后一批输出，避免 "terminal:exit" 抢在末尾数据之前到达前端
+	s.flushOutput()
 	application.Get().Event.Emit("terminal:exit", types.TerminalExit{
 		SessionID: s.id,
 		Code:      code,
@@ -1262,26 +1313,113 @@ type outputWriter struct {
 // maxTailBytes 每个会话保留的最近 PTY 输出上限。
 const maxTailBytes = 32 * 1024
 
+// 输出合批窗口与触发阈值：小数据等到 16ms 一起发，数据量大则立即发，
+// 保证交互式回显不被明显延迟。
+const (
+	outputFlushInterval = 16 * time.Millisecond
+	outputFlushSize     = 64 * 1024
+)
+
 func (w *outputWriter) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
 	w.sess.appendTail(p)
-	application.Get().Event.Emit("terminal:output", types.TerminalOutput{
-		SessionID: w.id,
-		Data:      string(p),
-	})
+	w.sess.enqueueOutput(p)
 	return len(p), nil
 }
 
-// appendTail keeps a bounded copy of the most recent PTY output.
+// appendTail keeps a bounded copy of the most recent PTY output using a fixed
+// ring buffer (constant work per write, old bytes are simply overwritten).
 func (s *sshSession) appendTail(p []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.tail = append(s.tail, p...)
-	if len(s.tail) > maxTailBytes {
-		s.tail = append([]byte(nil), s.tail[len(s.tail)-maxTailBytes:]...)
+	if s.tailRing == nil {
+		s.tailRing = make([]byte, maxTailBytes)
 	}
+	if len(p) >= maxTailBytes {
+		copy(s.tailRing, p[len(p)-maxTailBytes:])
+		s.tailPos = 0
+		s.tailLen = maxTailBytes
+		return
+	}
+	n := copy(s.tailRing[s.tailPos:], p)
+	if n < len(p) {
+		copy(s.tailRing, p[n:])
+	}
+	s.tailPos = (s.tailPos + len(p)) % maxTailBytes
+	if s.tailLen < maxTailBytes {
+		s.tailLen += len(p)
+		if s.tailLen > maxTailBytes {
+			s.tailLen = maxTailBytes
+		}
+	}
+}
+
+// tailBytes returns the buffered tail in chronological order.
+func (s *sshSession) tailBytes() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tailLen == 0 {
+		return nil
+	}
+	out := make([]byte, s.tailLen)
+	if s.tailLen < maxTailBytes {
+		copy(out, s.tailRing[:s.tailPos])
+		return out
+	}
+	n := copy(out, s.tailRing[s.tailPos:])
+	copy(out[n:], s.tailRing[:s.tailPos])
+	return out
+}
+
+// enqueueOutput buffers output and flushes it on a short timer or once the
+// buffer grows large, so the frontend receives fewer, bigger events.
+func (s *sshSession) enqueueOutput(p []byte) {
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
+	if s.outClosed {
+		return
+	}
+	s.outBuf = append(s.outBuf, p...)
+	if len(s.outBuf) >= outputFlushSize {
+		s.flushOutputLocked()
+	} else if s.outTimer == nil {
+		s.outTimer = time.AfterFunc(outputFlushInterval, s.onOutputTimer)
+	}
+}
+
+func (s *sshSession) onOutputTimer() {
+	s.outMu.Lock()
+	s.outTimer = nil
+	s.flushOutputLocked()
+	s.outMu.Unlock()
+}
+
+// flushOutputLocked emits the pending buffer as one event. Caller holds outMu
+// so events for a session stay ordered.
+func (s *sshSession) flushOutputLocked() {
+	if s.outTimer != nil {
+		s.outTimer.Stop()
+		s.outTimer = nil
+	}
+	if len(s.outBuf) == 0 {
+		return
+	}
+	data := string(s.outBuf)
+	s.outBuf = s.outBuf[:0]
+	application.Get().Event.Emit("terminal:output", types.TerminalOutput{
+		SessionID: s.id,
+		Data:      data,
+	})
+}
+
+// flushOutput flushes any pending output immediately (e.g. right before the
+// exit event, so the final bytes are not reordered after "terminal:exit").
+func (s *sshSession) flushOutput() {
+	s.outMu.Lock()
+	s.flushOutputLocked()
+	s.outMu.Unlock()
 }
 
 // RecentOutput returns the tail of a session's PTY output with ANSI escape
@@ -1296,9 +1434,7 @@ func RecentOutput(id string, maxBytes int) string {
 	if s == nil {
 		return ""
 	}
-	s.mu.Lock()
-	raw := string(s.tail)
-	s.mu.Unlock()
+	raw := string(s.tailBytes())
 	if raw == "" {
 		return ""
 	}
@@ -1355,8 +1491,8 @@ func (t *TerminalService) ensure() {
 }
 
 func (t *TerminalService) get(id string) *sshSession {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	return t.sessions[id]
 }
 
@@ -1388,6 +1524,10 @@ func (s *sshSession) close() error {
 	}
 	s.closed = true
 	s.mu.Unlock()
+	s.outMu.Lock()
+	s.outClosed = true
+	s.flushOutputLocked()
+	s.outMu.Unlock()
 	s.kaOnce.Do(func() { close(s.stopKA) })
 	s.kaWg.Wait()
 	return s.client.Close()

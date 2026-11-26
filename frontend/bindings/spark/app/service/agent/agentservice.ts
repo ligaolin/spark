@@ -10,6 +10,18 @@
 // @ts-ignore: Unused imports
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as types$0 from "../types/models.js";
+
+/**
+ * ActiveConversation reports which persisted conversation the session is on
+ * (ID 0 when none), including its UI transcript.
+ */
+export function ActiveConversation(sessionID: string): $CancellablePromise<types$0.AgentConversationInfo> {
+    return $Call.ByID(3369771809, sessionID);
+}
+
 /**
  * Cancel stops the current turn.
  */
@@ -18,10 +30,42 @@ export function Cancel(sessionID: string): $CancellablePromise<void> {
 }
 
 /**
- * Clear resets the in-memory conversation for a session (含环境快照与工作目录)。
+ * Clear deletes the current conversation (memory + persisted record) for a
+ * session, so the next message starts a fresh one.
  */
 export function Clear(sessionID: string): $CancellablePromise<void> {
     return $Call.ByID(498519269, sessionID);
+}
+
+/**
+ * DeleteConversation removes a saved conversation; a live session using it is
+ * detached so the next message starts a new record.
+ */
+export function DeleteConversation(convID: number): $CancellablePromise<void> {
+    return $Call.ByID(2399927388, convID);
+}
+
+/**
+ * ListConversations returns the saved conversations of the session's server,
+ * newest first (transcript omitted to keep the list light).
+ */
+export function ListConversations(sessionID: string): $CancellablePromise<types$0.AgentConversationInfo[] | null> {
+    return $Call.ByID(2719117564, sessionID);
+}
+
+/**
+ * NewConversation detaches the session from its current record; the next
+ * message creates a fresh row (empty conversations are never stored).
+ */
+export function NewConversation(sessionID: string): $CancellablePromise<void> {
+    return $Call.ByID(3129951741, sessionID);
+}
+
+/**
+ * RenameConversation updates a conversation title.
+ */
+export function RenameConversation(convID: number, title: string): $CancellablePromise<void> {
+    return $Call.ByID(147694009, convID, title);
 }
 
 /**
@@ -29,6 +73,22 @@ export function Clear(sessionID: string): $CancellablePromise<void> {
  */
 export function Respond(sessionID: string, approved: boolean, command: string): $CancellablePromise<void> {
     return $Call.ByID(2019376253, sessionID, approved, command);
+}
+
+/**
+ * SaveTranscript stores the frontend-rendered entry list (JSON) so a restored
+ * conversation looks exactly like the live one.
+ */
+export function SaveTranscript(sessionID: string, transcript: string): $CancellablePromise<void> {
+    return $Call.ByID(737225755, sessionID, transcript);
+}
+
+/**
+ * SelectConversation loads a saved conversation into the session's memory and
+ * returns it together with its UI transcript.
+ */
+export function SelectConversation(sessionID: string, convID: number): $CancellablePromise<types$0.AgentConversationInfo> {
+    return $Call.ByID(2644490007, sessionID, convID);
 }
 
 /**

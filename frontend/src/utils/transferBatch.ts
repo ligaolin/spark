@@ -25,6 +25,8 @@ const OP_LABEL: Record<string, string> = {
   download: '下载',
   delete: '删除',
   copy: '复制',
+  compress: '压缩',
+  extract: '解压',
 }
 
 export async function runBatchTransfer(opts: BatchTransferOptions): Promise<{ ok: number; failed: string[] }> {

@@ -170,6 +170,39 @@ export interface RestRequestModel {
 }
 
 /**
+ * SSHKey stores an app-managed SSH key pair. The private key is encrypted with
+ * the machine-bound AES key before being persisted (see app/service/secure).
+ */
+export interface SSHKey {
+    "id": number;
+    "name": string;
+
+    /**
+     * ed25519 | rsa
+     */
+    "type": string;
+    "comment": string;
+
+    /**
+     * authorized_keys 单行格式（含备注）
+     */
+    "publicKey": string;
+
+    /**
+     * PEM，加密存储
+     */
+    "privateKey": string;
+
+    /**
+     * 私钥口令（可空），加密存储
+     */
+    "passphrase": string;
+    "fingerprint": string;
+    "createdAt": string;
+    "updatedAt": string;
+}
+
+/**
  * SavedConnection stores a connection profile (SSH terminal / SFTP / FTP)
  * so users can reconnect without retyping the details.
  * Sensitive fields (Password / Passphrase / PrivateKey) are encrypted with a
@@ -204,6 +237,16 @@ export interface SavedConnection {
      * SSH agent forwarding
      */
     "forwardAgent": boolean;
+
+    /**
+     * 跳板机连接 ID（0 = 直连）
+     */
+    "jumpId": number;
+
+    /**
+     * 引用的密钥库密钥 ID（0 = 使用内联私钥）
+     */
+    "keyId": number;
     "defaultDir": string;
 
     /**

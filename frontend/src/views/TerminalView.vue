@@ -30,13 +30,13 @@
                     :title="panelVisible ? '收起信息面板' : '展开信息面板（SFTP / 信息 / 进程 / 命令 / 网络 / 转发代理）'"
                     @click="panelVisible = !panelVisible">
                     <el-icon>
-                        <InfoFilled />
+                        <component :is="panelVisible ? Fold : Expand" />
                     </el-icon>
                 </div>
             </div>
 
             <div class="terminal-body">
-                <el-splitter layout="horizontal" class="term-splitter">
+                <el-splitter layout="horizontal" class="term-splitter" :class="{ 'side-collapsed': !panelVisible }">
                     <el-splitter-panel :min="260">
                         <div class="term-area">
                             <KeepAlive>
@@ -46,11 +46,9 @@
                     </el-splitter-panel>
 
                     <el-splitter-panel
-                        v-show="panelVisible"
-                        :size="panelSize"
-                        :min="260"
+                        :size="panelVisible ? panelSize : 0"
+                        :min="panelVisible ? 260 : 0"
                         :max="panelMaxWidth"
-                        collapsible
                         @resize="onPanelResize"
                     >
                         <aside class="side-panel">
@@ -64,9 +62,6 @@
                                     <el-radio-button value="tunnel">转发 / 代理</el-radio-button>
                                     <el-radio-button value="ai">AI</el-radio-button>
                                 </el-radio-group>
-                                <el-icon class="side-close" @click="panelVisible = false">
-                                    <Close />
-                                </el-icon>
                             </div>
                             <div class="side-body">
                                 <SftpPanel v-show="panelTab === 'sftp'" :opts="activeTabOpts" :tab-key="store.activeKey"
@@ -96,7 +91,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Monitor, Close, Plus, InfoFilled, CloseBold, DArrowRight, CircleClose } from '@element-plus/icons-vue'
+import { Monitor, Close, Plus, Fold, Expand, CloseBold, DArrowRight, CircleClose } from '@element-plus/icons-vue'
 import { on as busOn } from '../utils/bus'
 import ContextMenu from '../components/ContextMenu.vue'
 import type { CtxItem } from '../components/ContextMenu.vue'
@@ -410,6 +405,11 @@ async function onConnect(opts: ConnectOptions, save: boolean) {
     width: 100%;
 }
 
+/* 面板收起时把分隔条一并隐藏（面板尺寸由 :size/:min 控制，内容保持挂载） */
+.term-splitter.side-collapsed :deep(.el-splitter-bar) {
+    display: none;
+}
+
 .term-splitter :deep(.el-splitter-panel) {
     min-width: 0;
     min-height: 0;
@@ -466,18 +466,6 @@ async function onConnect(opts: ConnectOptions, save: boolean) {
     min-width: 0;
     overflow-x: auto;
     white-space: nowrap;
-}
-
-.side-close {
-    cursor: pointer;
-    color: var(--text-secondary);
-    padding: 4px;
-    border-radius: 4px;
-}
-
-.side-close:hover {
-    color: var(--text-primary);
-    background: var(--tab-hover-2);
 }
 
 .side-body {

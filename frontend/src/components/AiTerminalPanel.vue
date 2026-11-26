@@ -1,6 +1,6 @@
 <template>
     <div class="ai-chat">
-        <!-- 顶部：标题 -->
+        <!-- 顶部：标题 / 服务器 / 历史 -->
         <div class="ai-head">
             <span class="ai-title">
                 <el-icon>
@@ -8,6 +8,48 @@
                 </el-icon>
                 AI 助手
             </span>
+            <span v-if="serverKey" class="ai-server" :title="`历史对话按服务器分组：${serverKey}`">
+                {{ serverKey }}
+            </span>
+            <span class="bar-spacer" />
+            <el-popover v-model:visible="historyVisible" placement="bottom-end" :width="280" trigger="click">
+                <template #reference>
+                    <button class="head-btn" :disabled="!sessionId" title="历史对话">
+                        <el-icon>
+                            <Clock />
+                        </el-icon>
+                    </button>
+                </template>
+                <div class="hist">
+                    <div class="hist-head">
+                        <span>历史对话</span>
+                        <span v-if="serverKey" class="hist-server">{{ serverKey }}</span>
+                    </div>
+                    <div v-if="!conversations.length" class="hist-empty">当前服务器还没有历史对话</div>
+                    <div v-for="c in conversations" :key="c.id" class="hist-item"
+                        :class="{ active: c.id === activeConvId }" @click="selectConversation(c)">
+                        <div class="hist-main">
+                            <div class="hist-name">{{ c.title }}</div>
+                            <div class="hist-time">{{ formatTime(c.updatedAt) }}</div>
+                        </div>
+                        <button class="mini" title="重命名" @click.stop="renameConversation(c)">
+                            <el-icon>
+                                <EditPen />
+                            </el-icon>
+                        </button>
+                        <button class="mini" title="删除" @click.stop="deleteConversation(c)">
+                            <el-icon>
+                                <Delete />
+                            </el-icon>
+                        </button>
+                    </div>
+                </div>
+            </el-popover>
+            <button class="head-btn" :disabled="!sessionId || running" title="新对话" @click="newConversation">
+                <el-icon>
+                    <Plus />
+                </el-icon>
+            </button>
         </div>
 
         <!-- 消息区 -->
@@ -39,7 +81,9 @@
                         </el-icon>
                     </div>
                     <div class="ai-msg">
-                        <MdPreview v-if="e.text" :model-value="e.text" :theme="mdTheme" language="zh-CN"
+                        <!-- 流式阶段用纯文本，避免每个 token 都重排 Markdown；结束后一次性渲染 -->
+                        <div v-if="e.streaming && e.text" class="md-stream">{{ e.text }}</div>
+                        <MdPreview v-else-if="e.text" :model-value="e.text" :theme="mdTheme" language="zh-CN"
                             :editor-id="`ai-md-${sessionId}-${i}`" class="md-body" />
                         <span v-if="e.streaming" class="caret" />
                         <div v-if="!e.streaming && e.text" class="msg-actions">
@@ -158,7 +202,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watchEffect } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue'
 import { Events, Clipboard } from '@wailsio/runtime'
 import { ElMessage } from 'element-plus'
 import {
@@ -170,11 +214,15 @@ import {
     CopyDocument,
     DocumentCopy,
     WarnTriangleFilled,
+    Clock,
+    Plus,
+    EditPen,
+    Delete,
 } from '@element-plus/icons-vue'
 import { MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
-import { AgentService, AIService, EVENTS, type AgentAsk, type AgentDone, type AgentOutput, type AgentReply, type AgentStep } from '../utils/wails'
-import { showConfirmDialog } from '../utils/dialog'
+import { AgentService, AIService, TerminalService, EVENTS, type AgentAsk, type AgentConversationInfo, type AgentDone, type AgentOutput, type AgentReply, type AgentStep } from '../utils/wails'
+import { showConfirmDialog, showInputDialog } from '../utils/dialog'
 import { useSettingsStore } from '../stores/settings'
 
 const props = defineProps<{ sessionId: string }>()
@@ -276,10 +324,202 @@ function scrollToLatest(force = false) {
     })
 }
 
+// ---------- 历史对话（按服务器持久化） ----------
+
+const serverKey = ref('')
+const activeConvId = ref(0)
+const conversations = ref<AgentConversationInfo[]>([])
+const historyVisible = ref(false)
+const restoredSessions = new Set<string>()
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+
+function restoreTranscript(sid: string, json: string) {
+    if (!json) return
+    try {
+        const list = JSON.parse(json) as Entry[]
+        if (!Array.isArray(list)) return
+        // 恢复时清掉流式标记，避免出现不会结束的光标
+        histories[sid] = list.map((e) => (e.kind === 'reply' ? { ...e, streaming: false } : e))
+        scrollToLatest(true)
+    } catch {
+        /* 记录损坏时忽略，保留空对话 */
+    }
+}
+
+async function refreshConversations() {
+    if (!props.sessionId) return
+    try {
+        conversations.value = (await AgentService.ListConversations(props.sessionId)) || []
+    } catch {
+        /* 忽略 */
+    }
+}
+
+async function initSession() {
+    const sid = props.sessionId
+    if (!sid) {
+        serverKey.value = ''
+        activeConvId.value = 0
+        conversations.value = []
+        return
+    }
+    if (restoredSessions.has(sid)) {
+        void refreshConversations()
+        return
+    }
+    restoredSessions.add(sid)
+    if (!serverKey.value) {
+        serverKey.value = await TerminalService.ServerKey(sid).catch(() => '')
+    }
+    // 后端内存里已有当前对话（应用未重启）就直接恢复；否则取该服务器最近一条
+    try {
+        const active = await AgentService.ActiveConversation(sid)
+        if (active.serverKey) serverKey.value = active.serverKey
+        if (active.id) {
+            activeConvId.value = active.id
+            if (!(histories[sid]?.length)) restoreTranscript(sid, active.transcript || '')
+            void refreshConversations()
+            return
+        }
+    } catch {
+        /* 忽略，继续按列表恢复 */
+    }
+    try {
+        const list = (await AgentService.ListConversations(sid)) || []
+        conversations.value = list
+        if (list.length && !(histories[sid]?.length)) await selectConversation(list[0], true)
+    } catch {
+        /* 忽略 */
+    }
+}
+
+async function syncActiveConversation() {
+    if (!props.sessionId) return
+    try {
+        const info = await AgentService.ActiveConversation(props.sessionId)
+        if (info.id && info.id !== activeConvId.value) {
+            activeConvId.value = info.id
+            void refreshConversations()
+        }
+    } catch {
+        /* 忽略 */
+    }
+}
+
+async function selectConversation(c: AgentConversationInfo, silent = false) {
+    const sid = props.sessionId
+    if (!sid) return
+    if (running.value) {
+        if (!silent) ElMessage.warning('AI 正在处理，请稍后再切换对话')
+        return
+    }
+    if (c.id === activeConvId.value) {
+        historyVisible.value = false
+        return
+    }
+    try {
+        const info = await AgentService.SelectConversation(sid, c.id)
+        activeConvId.value = info.id
+        histories[sid] = []
+        runningBySession[sid] = false
+        pendingBySession[sid] = null
+        thinkingBySession[sid] = null
+        restoreTranscript(sid, info.transcript || '')
+        historyVisible.value = false
+        void refreshConversations()
+    } catch (e: any) {
+        if (!silent) ElMessage.error(`切换对话失败：${e?.message || e}`)
+    }
+}
+
+async function newConversation() {
+    const sid = props.sessionId
+    if (!sid || running.value) return
+    try {
+        await AgentService.NewConversation(sid)
+    } catch (e: any) {
+        ElMessage.error(`新建对话失败：${e?.message || e}`)
+        return
+    }
+    activeConvId.value = 0
+    histories[sid] = []
+    pendingBySession[sid] = null
+    thinkingBySession[sid] = null
+    historyVisible.value = false
+    input.value = ''
+}
+
+async function renameConversation(c: AgentConversationInfo) {
+    const v = await showInputDialog('重命名对话', [{ key: 'title', label: '标题', initial: c.title }])
+    const title = v?.title?.trim()
+    if (!title || title === c.title) return
+    try {
+        await AgentService.RenameConversation(c.id, title)
+        await refreshConversations()
+    } catch (e: any) {
+        ElMessage.error(`重命名失败：${e?.message || e}`)
+    }
+}
+
+async function deleteConversation(c: AgentConversationInfo) {
+    const ok = await showConfirmDialog('删除对话', `确定删除「${c.title}」？删除后无法恢复。`, true, '删除')
+    if (!ok) return
+    try {
+        await AgentService.DeleteConversation(c.id)
+    } catch (e: any) {
+        ElMessage.error(`删除失败：${e?.message || e}`)
+        return
+    }
+    if (c.id === activeConvId.value) {
+        activeConvId.value = 0
+        histories[props.sessionId] = []
+    }
+    await refreshConversations()
+}
+
+function formatTime(iso: string): string {
+    if (!iso) return ''
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return ''
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+// 对话记录落盘：消息流频繁变化，用防抖合并写入
+function scheduleSave() {
+    if (!activeConvId.value) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+        saveTimer = null
+        void persistTranscript()
+    }, 1200)
+}
+
+async function persistTranscript() {
+    const sid = props.sessionId
+    if (!sid || !activeConvId.value) return
+    const list = histories[sid]
+    if (!list || !list.length) return
+    try {
+        await AgentService.SaveTranscript(sid, JSON.stringify(list))
+    } catch {
+        /* 持久化失败不影响对话 */
+    }
+}
+
+watch(
+    () => histories[props.sessionId],
+    () => scheduleSave(),
+    { deep: true },
+)
+
+watch(() => props.sessionId, () => void initSession())
+
 // ---------- 操作 ----------
 
 function onModelChange() {
-    if (model.value) settings.set('ai.model', model.value).catch(() => undefined)
+    // 同步到当前接口记录，避免设置页里显示的模型与终端用过的模型不一致
+    if (model.value) AIService.SetActiveModel(model.value).catch(() => undefined)
 }
 
 async function copyText(text: string) {
@@ -340,13 +580,15 @@ async function reject() {
 }
 
 async function clear() {
-    const ok = await showConfirmDialog('清空对话', '确定清空当前会话的 AI 对话历史？', true, '清空')
+    const ok = await showConfirmDialog('清空对话', '确定清空当前对话？该对话的历史记录也会一并删除。', true, '清空')
     if (!ok) return
     histories[props.sessionId] = []
     runningBySession[props.sessionId] = false
     pendingBySession[props.sessionId] = null
     thinkingBySession[props.sessionId] = null
     await AgentService.Clear(props.sessionId).catch(() => undefined)
+    activeConvId.value = 0
+    await refreshConversations()
 }
 
 // ---------- 事件 ----------
@@ -518,6 +760,8 @@ function onDone(evt: any) {
     } else if (d.summary && d.summary !== '已取消' && d.summary !== '已由用户取消') {
         push(sid, { kind: 'notice', text: d.summary })
     }
+    // 第一条消息之后后端才创建持久化记录，这里同步到它的 id 并落盘
+    void syncActiveConversation().then(() => scheduleSave())
 }
 
 onMounted(() => {
@@ -542,8 +786,16 @@ onMounted(() => {
             delete pendingBySession[sid]
             delete thinkingBySession[sid]
             delete startedBySession[sid]
+            restoredSessions.delete(sid)
+            // 历史记录留在数据库里，重连同一台服务器后还能找回
+            if (sid === props.sessionId) {
+                activeConvId.value = 0
+                conversations.value = []
+                serverKey.value = ''
+            }
         }
     }))
+    void initSession()
 })
 
 // 只在对话进行中开启计时器更新「思考中（N s）」文案，闲着不占资源
@@ -578,6 +830,12 @@ onBeforeUnmount(() => {
         clearInterval(thinkingTimer)
         thinkingTimer = null
     }
+    if (saveTimer !== null) {
+        clearTimeout(saveTimer)
+        saveTimer = null
+        // 面板卸载前把最后一次渲染结果落盘，避免丢掉尾部输出
+        void persistTranscript()
+    }
 })
 </script>
 
@@ -609,6 +867,120 @@ onBeforeUnmount(() => {
     font-weight: 600;
     color: var(--text-primary);
     flex-shrink: 0;
+}
+
+.ai-server {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--term-font);
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.head-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
+.head-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    background: var(--hover-bg);
+}
+
+.head-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ---------- 历史对话 ---------- */
+
+.hist {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 340px;
+    overflow-y: auto;
+}
+
+.hist-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    padding: 2px 4px 6px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 4px;
+}
+
+.hist-server {
+    font-family: var(--term-font);
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-muted);
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hist-empty {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 10px 4px;
+    text-align: center;
+}
+
+.hist-item {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.hist-item:hover {
+    background: var(--hover-bg);
+}
+
+.hist-item.active {
+    background: var(--active-bg);
+}
+
+.hist-item.active .hist-name {
+    color: var(--active-text);
+}
+
+.hist-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.hist-name {
+    font-size: 12.5px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hist-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
 }
 
 .ai-model {
@@ -672,6 +1044,14 @@ onBeforeUnmount(() => {
     line-height: 1.65;
     color: var(--text-primary);
     position: relative;
+}
+
+/* 流式输出的纯文本占位：逻辑与最终 Markdown 视图保持一致的字号/行高 */
+.md-stream {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12.5px;
+    line-height: 1.65;
 }
 
 /* Markdown 预览：去掉 md-editor 自带的边框/背景/内边距，融进对话流 */

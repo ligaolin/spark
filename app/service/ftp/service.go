@@ -6,6 +6,7 @@ package ftp
 
 import (
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -29,7 +30,7 @@ import (
 
 // FTPFileService manages FTP sessions for remote file operations.
 type FTPFileService struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	sessions map[string]*ftpSession
 }
 
@@ -324,6 +325,45 @@ func (s *FTPFileService) Search(id, dir, pattern, mode string, opts types.Search
 	return results, nil
 }
 
+// DirSize returns the total size of a remote directory tree. FTP has no
+// server-side size command, so the tree is listed recursively.
+func (s *FTPFileService) DirSize(id, remotePath string) (types.DirSizeInfo, error) {
+	sess, err := s.get(id)
+	if err != nil {
+		return types.DirSizeInfo{}, err
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if remotePath == "" {
+		if remotePath, err = sess.conn.CurrentDir(); err != nil {
+			return types.DirSizeInfo{}, err
+		}
+	}
+	info := types.DirSizeInfo{}
+	var walk func(dir string)
+	walk = func(dir string) {
+		entries, lerr := sess.conn.List(dir)
+		if lerr != nil {
+			return
+		}
+		for _, e := range entries {
+			switch e.Type {
+			case ftp.EntryTypeFolder:
+				walk(joinRemote(dir, e.Name))
+			case ftp.EntryTypeFile:
+				info.Files++
+				if e.Size > 0 {
+					info.Size += int64(e.Size)
+				} else if sz, szErr := sess.conn.FileSize(joinRemote(dir, e.Name)); szErr == nil && sz > 0 {
+					info.Size += sz
+				}
+			}
+		}
+	}
+	walk(remotePath)
+	return info, nil
+}
+
 // Replace replaces every content match of pattern in files under dir,
 // returning how many files and occurrences were changed.
 func (s *FTPFileService) Replace(id, dir, pattern, replacement, mode string, opts types.SearchOptions) (types.ReplaceResult, error) {
@@ -425,6 +465,30 @@ func (s *FTPFileService) ReadFile(id, remotePath string) (string, error) {
 	return string(data), nil
 }
 
+// ReadBinary reads a remote file and returns its content as base64 (used by
+// the image/PDF preview), capped at fileutil.MaxPreviewSize.
+func (s *FTPFileService) ReadBinary(id, remotePath string) (string, error) {
+	sess, err := s.get(id)
+	if err != nil {
+		return "", err
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	rc, err := sess.conn.Retr(remotePath)
+	if err != nil {
+		return "", ftpErrHint(err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(rc, fileutil.MaxPreviewSize+1))
+	if err != nil {
+		return "", ftpErrHint(err)
+	}
+	if int64(len(data)) > fileutil.MaxPreviewSize {
+		return "", fmt.Errorf("文件过大（超过 %d MB），无法预览", fileutil.MaxPreviewSize>>20)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
 // WriteFile overwrites a remote text file with the given content (FTP STOR).
 func (s *FTPFileService) WriteFile(id, remotePath, content string) error {
 	sess, err := s.get(id)
@@ -471,12 +535,19 @@ func (s *FTPFileService) Copy(id, srcPath, dstPath string, isDir bool) error {
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
-	return ftpErrHint(copyFTP(sess.conn, srcPath, dstPath, isDir))
+	total := int64(0)
+	if isDir {
+		total = scanRemoteTree(sess.conn, srcPath).total
+	} else if sz, szErr := sess.conn.FileSize(srcPath); szErr == nil && sz > 0 {
+		total = sz
+	}
+	counter := &transferCounter{id: id, op: "copy", name: path.Base(dstPath), total: total}
+	return ftpErrHint(copyFTP(sess.conn, srcPath, dstPath, isDir, counter))
 }
 
-func copyFTP(conn *ftp.ServerConn, src, dst string, isDir bool) error {
+func copyFTP(conn *ftp.ServerConn, src, dst string, isDir bool, counter *transferCounter) error {
 	if !isDir {
-		return copyFTPFile(conn, src, dst)
+		return copyFTPFile(conn, src, dst, counter)
 	}
 	if err := ensureRemoteDir(conn, dst); err != nil {
 		return err
@@ -489,12 +560,12 @@ func copyFTP(conn *ftp.ServerConn, src, dst string, isDir bool) error {
 		sp := joinRemote(src, e.Name)
 		dp := joinRemote(dst, e.Name)
 		if e.Type == ftp.EntryTypeFolder {
-			if err := copyFTP(conn, sp, dp, true); err != nil {
+			if err := copyFTP(conn, sp, dp, true, counter); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := copyFTPFile(conn, sp, dp); err != nil {
+		if err := copyFTPFile(conn, sp, dp, counter); err != nil {
 			return err
 		}
 	}
@@ -503,8 +574,8 @@ func copyFTP(conn *ftp.ServerConn, src, dst string, isDir bool) error {
 
 // copyFTPFile 复制单个文件。FTP 同一控制连接上不能同时挂着 RETR 的数据流又
 // 发 STOR，否则 STOR 会读到 RETR 残留的 226 响应而报错；所以先完整取回到
-// 本地临时文件并消费完 226，再发起上传。
-func copyFTPFile(conn *ftp.ServerConn, src, dst string) error {
+// 本地临时文件并消费完 226，再发起上传。进度按 RETR 读取的字节数上报。
+func copyFTPFile(conn *ftp.ServerConn, src, dst string, counter *transferCounter) error {
 	tmp, err := os.CreateTemp("", "spark-ftp-copy-*")
 	if err != nil {
 		return err
@@ -519,7 +590,7 @@ func copyFTPFile(conn *ftp.ServerConn, src, dst string) error {
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(tmp, rc)
+	_, copyErr := io.Copy(tmp, &progressReader{r: rc, c: counter})
 	closeErr := rc.Close()
 	if copyErr != nil {
 		return copyErr
@@ -599,6 +670,12 @@ func (s *FTPFileService) uploadFile(conn *ftp.ServerConn, id, localPath, remoteP
 	if offset > 0 {
 		// 已存在的远端内容也计入进度，续传时进度不会卡在 0
 		counter.add(int(offset))
+		// REST 只告诉服务器从 offset 开始写入，本地文件也必须跳到同一位置，
+		// 否则会把文件头重复写进远端，续传后内容错乱。
+		if _, serr := local.Seek(offset, io.SeekStart); serr != nil {
+			counter.done -= offset
+			return conn.Stor(remotePath, pr)
+		}
 		// StorFrom 需要服务器支持 REST STREAM，失败则退回整文件上传
 		if err := conn.StorFrom(remotePath, pr, uint64(offset)); err != nil {
 			if _, serr := local.Seek(0, io.SeekStart); serr != nil {
@@ -760,8 +837,8 @@ func entryTypeName(t ftp.EntryType) string {
 }
 
 func (s *FTPFileService) get(id string) (*ftpSession, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if sess, ok := s.sessions[id]; ok {
 		return sess, nil
 	}
@@ -780,13 +857,32 @@ func ensureRemoteDir(conn *ftp.ServerConn, dir string) error {
 	if dir == "" || dir == "." || dir == "/" {
 		return nil
 	}
-	if _, err := conn.List(dir); err == nil {
+	if remoteEntryExists(conn, dir) {
 		return nil
 	}
 	if err := ensureRemoteDir(conn, path.Dir(dir)); err != nil {
 		return err
 	}
-	return conn.MakeDir(dir)
+	if err := conn.MakeDir(dir); err != nil {
+		// 并发创建或上级确保后已存在：再确认一次，存在即视为成功
+		if remoteEntryExists(conn, dir) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// remoteEntryExists reports whether the remote path exists. MLST (GetEntry) is a
+// single-round-trip check; LIST is the fallback when the server lacks MLST.
+func remoteEntryExists(conn *ftp.ServerConn, dir string) bool {
+	if e, err := conn.GetEntry(dir); err == nil && e != nil {
+		return true
+	}
+	if _, err := conn.List(dir); err == nil {
+		return true
+	}
+	return false
 }
 
 // transferCounter accumulates bytes for one logical transfer (a single file or

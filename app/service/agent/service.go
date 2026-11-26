@@ -19,13 +19,16 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"sync"
 
+	"spark/app/model"
 	"spark/app/service/ai"
+	"spark/app/service/db"
 	"spark/app/service/settings"
 	"spark/app/service/terminal"
 	"spark/app/service/types"
@@ -41,10 +44,18 @@ const (
 )
 
 const (
-	// maxSteps 一轮对话最多执行多少步（每步 = 一次工具调用）
+	// maxSteps 一轮对话单段最多执行多少步（每步 = 一次工具调用）
 	maxSteps = 40
-	// maxLLMMessages 喂给模型的上下文上限（保留 system + 最近 N-1 条）
-	maxLLMMessages = 60
+	// maxAutoContinueRounds 单轮最多自动续跑几段：总量上限 = maxSteps*(1+轮数)
+	maxAutoContinueRounds = 3
+	// maxLLMMessages 即使预算充足，也限制保留的消息条数
+	maxLLMMessages = 80
+	// maxContextChars 一次请求带给模型的历史预算（字符，粗略对应 token）。
+	// 超出部分压缩成一条进度摘要，而不是从中间截断（截断会拆散
+	// assistant tool_calls 与 role:"tool" 的配对，服务商直接判非法）。
+	maxContextChars = 40000
+	// autoSummaryLimit 压缩摘要的最大字符数
+	autoSummaryLimit = 2000
 	// agentTemperature 运维场景要稳定可复现，比闲聊用的默认温度低得多
 	agentTemperature = 0.2
 	// maxToolOutput 单条命令回灌给模型的输出上限（字节）
@@ -63,13 +74,22 @@ const (
 	KeyAllowChain = "ai.agent.allowChain"
 	// KeyTerminalContext 是否把用户终端最近输出作为上下文（默认开启）
 	KeyTerminalContext = "ai.agent.terminalContext"
+	// KeyAutoContinue 达到单轮步数上限后，是否在持续推进时自动接着跑（默认开启）
+	KeyAutoContinue = "ai.agent.autoContinue"
 )
+
+// 自动续跑时追加给模型的提示：先回顾进展，避免原地重复刷命令。
+const autoContinuePrompt = "继续完成刚才的任务。先根据上面的结果判断还差什么，不要重复已经执行过的命令；" +
+	"如果任务已经完成，直接用文字总结结果并停止调用工具。"
 
 // allowChain 读取「允许命令串联」开关。
 func allowChain() bool { return settings.GetString(KeyAllowChain, "0") == "1" }
 
 // terminalContextEnabled 读取「附带终端最近输出」开关。
 func terminalContextEnabled() bool { return settings.GetString(KeyTerminalContext, "1") != "0" }
+
+// autoContinueEnabled 读取「步数用尽自动续跑」开关。
+func autoContinueEnabled() bool { return settings.GetString(KeyAutoContinue, "1") != "0" }
 
 // AgentService keeps one conversation per SSH session.
 type AgentService struct {
@@ -83,6 +103,11 @@ type conversation struct {
 	running   bool
 	cancel    context.CancelFunc
 	approveCh chan approveDecision
+
+	// convID / serverKey 指向持久化的对话记录（见 model.AgentConversation）。
+	// convID 为 0 表示这条会话还没有落库（新对话且尚未发消息）。
+	convID    uint
+	serverKey string
 
 	// cwd 跨步骤保留的工作目录：每条命令先 cd 到这里，执行后再回读 pwd，
 	// 所以模型写 cd 的效果会延续到下一步。
@@ -136,7 +161,6 @@ func (s *AgentService) Send(sessionID, message, mode string) error {
 	c.running = true
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
-	c.approveCh = make(chan approveDecision, 1)
 	c.mu.Unlock()
 
 	go s.run(ctx, c, sessionID, message, mode)
@@ -177,32 +201,259 @@ func (s *AgentService) Cancel(sessionID string) error {
 	return nil
 }
 
-// Clear resets the in-memory conversation for a session (含环境快照与工作目录)。
+// Clear deletes the current conversation (memory + persisted record) for a
+// session, so the next message starts a fresh one.
 func (s *AgentService) Clear(sessionID string) error {
 	s.mu.Lock()
+	c := s.convs[sessionID]
 	delete(s.convs, sessionID)
 	s.mu.Unlock()
+	if c != nil {
+		c.mu.Lock()
+		id := c.convID
+		c.mu.Unlock()
+		if id != 0 {
+			_ = db.GetDB().Delete(&model.AgentConversation{}, id).Error
+		}
+	}
 	return nil
+}
+
+// ---------- 对话持久化 ----------
+
+// serverKeyOf 返回会话所属服务器的稳定标识；会话断开后仍由内存缓存兜底。
+func (s *AgentService) serverKeyOf(sessionID string) string {
+	c := s.conv(sessionID)
+	c.mu.Lock()
+	key := c.serverKey
+	c.mu.Unlock()
+	if key != "" {
+		return key
+	}
+	key = terminal.SessionServerKey(sessionID)
+	if key != "" {
+		c.mu.Lock()
+		c.serverKey = key
+		c.mu.Unlock()
+	}
+	return key
+}
+
+// ensureConversation 为当前会话绑定一条持久化记录；新对话在第一条消息时
+// 才真正落库（标题取消息首行），避免只点「新对话」就留下空记录。
+func (s *AgentService) ensureConversation(c *conversation, sessionID, firstMessage string) {
+	key := s.serverKeyOf(sessionID)
+	c.mu.Lock()
+	if c.serverKey == "" {
+		c.serverKey = key
+	}
+	if c.convID != 0 {
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+
+	row := model.AgentConversation{ServerKey: key, Title: conversationTitle(firstMessage)}
+	if err := db.GetDB().Create(&row).Error; err != nil {
+		return
+	}
+	c.mu.Lock()
+	c.convID = row.ID
+	c.mu.Unlock()
+}
+
+// persist 把协议历史写回数据库（每步一次，崩溃/关窗最多丢当前这一步）。
+func (s *AgentService) persist(c *conversation) {
+	c.mu.Lock()
+	id := c.convID
+	data, err := json.Marshal(c.messages)
+	c.mu.Unlock()
+	if id == 0 || err != nil {
+		return
+	}
+	_ = db.GetDB().Model(&model.AgentConversation{}).Where("id = ?", id).
+		Updates(map[string]any{"llm_messages": string(data)}).Error
+}
+
+func conversationTitle(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if i := strings.IndexAny(msg, "\r\n"); i >= 0 {
+		msg = strings.TrimSpace(msg[:i])
+	}
+	r := []rune(msg)
+	if len(r) > 30 {
+		msg = string(r[:30]) + "…"
+	}
+	if msg == "" {
+		return "新对话"
+	}
+	return msg
+}
+
+func conversationInfo(row model.AgentConversation, withTranscript bool) types.AgentConversationInfo {
+	info := types.AgentConversationInfo{
+		ID:        row.ID,
+		Title:     row.Title,
+		ServerKey: row.ServerKey,
+		UpdatedAt: row.UpdatedAt,
+	}
+	if withTranscript {
+		info.Transcript = row.Transcript
+	}
+	return info
+}
+
+// ListConversations returns the saved conversations of the session's server,
+// newest first (transcript omitted to keep the list light).
+func (s *AgentService) ListConversations(sessionID string) ([]types.AgentConversationInfo, error) {
+	key := s.serverKeyOf(sessionID)
+	var rows []model.AgentConversation
+	if err := db.GetDB().Where("server_key = ?", key).
+		Order("updated_at desc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]types.AgentConversationInfo, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, conversationInfo(r, false))
+	}
+	return out, nil
+}
+
+// ActiveConversation reports which persisted conversation the session is on
+// (ID 0 when none), including its UI transcript.
+func (s *AgentService) ActiveConversation(sessionID string) (types.AgentConversationInfo, error) {
+	key := s.serverKeyOf(sessionID)
+	c := s.conv(sessionID)
+	c.mu.Lock()
+	id := c.convID
+	c.mu.Unlock()
+	if id == 0 {
+		return types.AgentConversationInfo{ServerKey: key}, nil
+	}
+	var row model.AgentConversation
+	if err := db.GetDB().First(&row, id).Error; err != nil {
+		return types.AgentConversationInfo{ServerKey: key}, nil
+	}
+	return conversationInfo(row, true), nil
+}
+
+// SelectConversation loads a saved conversation into the session's memory and
+// returns it together with its UI transcript.
+func (s *AgentService) SelectConversation(sessionID string, convID uint) (types.AgentConversationInfo, error) {
+	if convID == 0 {
+		return types.AgentConversationInfo{}, errors.New("对话 ID 无效")
+	}
+	key := s.serverKeyOf(sessionID)
+	var row model.AgentConversation
+	if err := db.GetDB().First(&row, convID).Error; err != nil {
+		return types.AgentConversationInfo{}, errors.New("对话不存在")
+	}
+	if row.ServerKey != key {
+		return types.AgentConversationInfo{}, errors.New("该对话不属于当前服务器")
+	}
+	var msgs []ai.Message
+	if row.LLMMessages != "" {
+		_ = json.Unmarshal([]byte(row.LLMMessages), &msgs)
+	}
+	c := s.conv(sessionID)
+	c.mu.Lock()
+	if c.running {
+		c.mu.Unlock()
+		return types.AgentConversationInfo{}, errors.New("AI 正在处理，暂时不能切换对话")
+	}
+	c.messages = msgs
+	c.convID = row.ID
+	c.mu.Unlock()
+	return conversationInfo(row, true), nil
+}
+
+// NewConversation detaches the session from its current record; the next
+// message creates a fresh row (empty conversations are never stored).
+func (s *AgentService) NewConversation(sessionID string) error {
+	c := s.conv(sessionID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.running {
+		return errors.New("AI 正在处理，暂时不能新建对话")
+	}
+	c.messages = nil
+	c.convID = 0
+	return nil
+}
+
+// RenameConversation updates a conversation title.
+func (s *AgentService) RenameConversation(convID uint, title string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return errors.New("标题不能为空")
+	}
+	r := []rune(title)
+	if len(r) > 60 {
+		title = string(r[:60])
+	}
+	res := db.GetDB().Model(&model.AgentConversation{}).Where("id = ?", convID).Update("title", title)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return errors.New("对话不存在")
+	}
+	return nil
+}
+
+// DeleteConversation removes a saved conversation; a live session using it is
+// detached so the next message starts a new record.
+func (s *AgentService) DeleteConversation(convID uint) error {
+	if err := db.GetDB().Delete(&model.AgentConversation{}, convID).Error; err != nil {
+		return err
+	}
+	s.mu.Lock()
+	for _, c := range s.convs {
+		c.mu.Lock()
+		if c.convID == convID {
+			c.messages = nil
+			c.convID = 0
+		}
+		c.mu.Unlock()
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+// SaveTranscript stores the frontend-rendered entry list (JSON) so a restored
+// conversation looks exactly like the live one.
+func (s *AgentService) SaveTranscript(sessionID, transcript string) error {
+	c := s.conv(sessionID)
+	c.mu.Lock()
+	id := c.convID
+	c.mu.Unlock()
+	if id == 0 {
+		return nil
+	}
+	return db.GetDB().Model(&model.AgentConversation{}).Where("id = ?", id).
+		Update("transcript", transcript).Error
 }
 
 // ---------- 一轮对话 ----------
 
 func (s *AgentService) run(ctx context.Context, c *conversation, sessionID, message, mode string) {
-	c.mu.Lock()
-	approveCh := c.approveCh
-	c.mu.Unlock()
-
 	defer func() {
 		c.mu.Lock()
 		c.running = false
 		c.cancel = nil
 		c.approveCh = nil
-		// 保留 system + 最近 maxLLMMessages 条，防止长时间对话内存无界增长
-		if len(c.messages) > maxLLMMessages+1 {
-			c.messages = llmContext(c.messages)
+		// 落盘前把过长的历史压成摘要：内存与持久化记录都不随轮次无界增长
+		if len(c.messages) > 1 {
+			if compacted := compactHistory(c.messages, maxContextChars*2); len(compacted) < len(c.messages) {
+				c.messages = compacted
+			}
 		}
 		c.mu.Unlock()
+		s.persist(c)
 	}()
+
+	// 第一条消息时创建持久化记录（标题取消息首行），关闭窗口 / 重连后历史仍在。
+	s.ensureConversation(c, sessionID, message)
 
 	// 环境快照：每个会话只花一条命令采集一次，之后写进系统提示词。
 	emitStep(sessionID, 0, "thinking", "", "正在读取服务器环境", false, "")
@@ -229,11 +480,31 @@ func (s *AgentService) run(ctx context.Context, c *conversation, sessionID, mess
 	}
 	c.messages = append(c.messages, ai.UserMessage(message))
 	c.mu.Unlock()
+	s.persist(c)
 
-	for step := 0; step < maxSteps; step++ {
+	// 步数上限不再直接收尾：只要这一步有真实进展（有成功命令、没在连续
+	// 失败或重复同一条命令），就自动追加一条"接着做"继续跑，最多续 3 段。
+	limit := maxSteps
+	rounds := 0
+	tracker := &progressTracker{}
+	for step := 0; ; step++ {
 		if ctx.Err() != nil {
 			emitDone(sessionID, "已取消", "")
 			return
+		}
+		if step >= limit {
+			if rounds >= maxAutoContinueRounds || !autoContinueEnabled() || !tracker.healthy() {
+				emitDone(sessionID, fmt.Sprintf("已达到步数上限（%d 步）。可以继续追问让它接着做", step), "")
+				return
+			}
+			rounds++
+			limit += maxSteps
+			emitStep(sessionID, step+1, "thinking", "",
+				fmt.Sprintf("达到单轮步数上限，自动继续（第 %d/%d 段）", rounds+1, maxAutoContinueRounds+1), false, "")
+			c.mu.Lock()
+			c.messages = append(c.messages, ai.UserMessage(autoContinuePrompt))
+			c.mu.Unlock()
+			s.persist(c)
 		}
 
 		emitStep(sessionID, step+1, "thinking", "", "正在思考下一步", false, "")
@@ -273,6 +544,7 @@ func (s *AgentService) run(ctx context.Context, c *conversation, sessionID, mess
 			ToolCalls: resp.RawCalls,
 		})
 		c.mu.Unlock()
+		s.persist(c)
 
 		// 没有工具调用 = 这一轮的文字就是最终回答
 		if len(resp.ToolCalls) == 0 {
@@ -322,11 +594,21 @@ func (s *AgentService) run(ctx context.Context, c *conversation, sessionID, mess
 
 			finalCommand := command
 			if needsApproval {
+				// 每条命令用独立通道：上一条命令遗留的审批不会误触发下一条
+				ch := make(chan approveDecision, 1)
+				c.mu.Lock()
+				c.approveCh = ch
+				c.mu.Unlock()
 				application.Get().Event.Emit("agent:ask", types.AgentAsk{
 					SessionID: sessionID, Step: step + 1, Command: command, Reason: reason, Why: why,
 				})
 				select {
-				case d := <-approveCh:
+				case d := <-ch:
+					c.mu.Lock()
+					if c.approveCh == ch {
+						c.approveCh = nil
+					}
+					c.mu.Unlock()
 					if !d.approved {
 						emitStep(sessionID, step+1, "rejected", command, "", false, "")
 						s.addToolResult(c, tc.ID, "用户拒绝执行该命令。请换一种方式，或先用文字向用户说明为什么需要它")
@@ -337,6 +619,11 @@ func (s *AgentService) run(ctx context.Context, c *conversation, sessionID, mess
 						finalCommand = strings.TrimSpace(d.command)
 					}
 				case <-ctx.Done():
+					c.mu.Lock()
+					if c.approveCh == ch {
+						c.approveCh = nil
+					}
+					c.mu.Unlock()
 					emitDone(sessionID, "已取消", "")
 					return
 				}
@@ -347,11 +634,13 @@ func (s *AgentService) run(ctx context.Context, c *conversation, sessionID, mess
 			out, exitCode, newCwd, err := s.execCommand(sessionID, c, finalCommand)
 			if err != nil {
 				// 命令没能跑起来（超时 / 会话断开）：告诉模型，让它自己决定换命令还是收尾
+				tracker.record(finalCommand, true, -1)
 				s.addToolResult(c, tc.ID, "执行未完成："+err.Error())
 				application.Get().Event.Emit("agent:output", types.AgentOutput{
 					SessionID: sessionID, Step: step + 1, Command: finalCommand,
 					Output: err.Error(), ExitCode: -1,
 				})
+				s.persist(c)
 				if !terminal.IsSessionConnected(sessionID) {
 					emitDone(sessionID, "", "SSH 会话已断开")
 					return
@@ -364,10 +653,10 @@ func (s *AgentService) run(ctx context.Context, c *conversation, sessionID, mess
 				Output: out, ExitCode: exitCode,
 			})
 			s.addToolResult(c, tc.ID, toolResultText(exitCode, newCwd, out))
+			tracker.record(finalCommand, false, exitCode)
 		}
+		s.persist(c)
 	}
-
-	emitDone(sessionID, fmt.Sprintf("已达到最大步数（%d）。可以继续追问让它接着做", maxSteps), "")
 }
 
 // ---------- 环境快照与命令执行 ----------
@@ -613,21 +902,173 @@ func agentSystemPrompt(env, termTail string, chain bool) string {
 	return b.String()
 }
 
-// llmContext caps the messages sent to the model to bound memory and tokens.
-// 裁掉开头孤立的 tool 结果：它对应的 assistant tool_calls 已经被裁掉，
-// 多数服务商会直接判为非法请求。
+// ---------- 上下文压缩 ----------
+
+const summaryPrefix = "【较早对话的进展摘要（原始记录已压缩，如需细节可重新执行命令查看）】\n"
+
+// llmContext 按字符预算裁剪发给模型的历史副本。
 func llmContext(msgs []ai.Message) []ai.Message {
-	if len(msgs) <= maxLLMMessages {
+	return compactHistory(msgs, maxContextChars)
+}
+
+// compactHistory 返回一条可直接发请求的历史副本：
+//   - 保留 system 提示词；
+//   - 被裁掉的较早内容压成一条确定性的进度摘要（不额外调用模型）；
+//   - 保留的尾部从完整的一步开始：跳过开头孤立的 tool 结果，避免
+//     assistant.tool_calls 与 role:"tool" 被截断拆散（服务商直接判非法）。
+func compactHistory(msgs []ai.Message, budget int) []ai.Message {
+	if len(msgs) <= 1 {
 		return append([]ai.Message(nil), msgs...)
 	}
-	out := make([]ai.Message, 0, maxLLMMessages)
-	out = append(out, msgs[0]) // system
-	tail := append([]ai.Message(nil), msgs[len(msgs)-(maxLLMMessages-1):]...)
-	for len(tail) > 0 && tail[0].Role == "tool" {
-		tail = tail[1:]
+	cut := len(msgs)
+	used := 0
+	for i := len(msgs) - 1; i >= 1; i-- {
+		if len(msgs)-i > maxLLMMessages {
+			break
+		}
+		size := messageSize(msgs[i])
+		if used+size > budget {
+			cut = i + 1
+			break
+		}
+		used += size
+		cut = i
 	}
-	out = append(out, tail...)
+	if cut == len(msgs) {
+		return append([]ai.Message(nil), msgs...)
+	}
+	for cut < len(msgs) && msgs[cut].Role == "tool" {
+		cut++
+	}
+	out := make([]ai.Message, 0, len(msgs)-cut+2)
+	out = append(out, msgs[0])
+	if cut > 1 {
+		if summary := summarizeMessages(msgs[1:cut]); summary != "" {
+			out = append(out, ai.UserMessage(summaryPrefix+summary))
+		}
+	}
+	out = append(out, msgs[cut:]...)
 	return out
+}
+
+// messageSize 估算单条消息占用的字符量（含工具调用的参数）。
+func messageSize(m ai.Message) int {
+	n := len(m.Content) + len(m.ToolCallID) + 16
+	for _, tc := range m.ToolCalls {
+		n += len(tc.Function.Name) + len(tc.Function.Arguments) + 24
+	}
+	return n
+}
+
+var exitCodeRe = regexp.MustCompile(`退出码:\s*(-?\d+)`)
+
+// summarizeMessages 把较早的消息压成简短的进度摘要：用户要求、执行过的
+// 命令与退出码、助手的结论，便于模型在压缩后仍知道自己做过什么。
+func summarizeMessages(msgs []ai.Message) string {
+	lines := make([]string, 0, len(msgs))
+	for i := 0; i < len(msgs); i++ {
+		m := msgs[i]
+		switch m.Role {
+		case "user":
+			if strings.HasPrefix(m.Content, "【较早对话的进展摘要") {
+				body := oneLine(strings.TrimPrefix(m.Content, summaryPrefix), 400)
+				if body != "" {
+					lines = append(lines, "- 更早进展："+body)
+				}
+				continue
+			}
+			if text := oneLine(m.Content, 80); text != "" {
+				lines = append(lines, "- 用户要求："+text)
+			}
+		case "assistant":
+			if len(m.ToolCalls) == 0 {
+				if text := oneLine(m.Content, 60); text != "" {
+					lines = append(lines, "- 助手："+text)
+				}
+				continue
+			}
+			results := map[string]string{}
+			for j := i + 1; j < len(msgs) && msgs[j].Role == "tool"; j++ {
+				results[msgs[j].ToolCallID] = msgs[j].Content
+			}
+			for _, tc := range m.ToolCalls {
+				cmd := oneLine(argCommand(tc.Function.Arguments), 90)
+				if cmd == "" {
+					continue
+				}
+				line := "- 执行：" + cmd
+				if res, ok := results[tc.ID]; ok {
+					if mm := exitCodeRe.FindStringSubmatch(res); mm != nil {
+						line += "（退出码 " + mm[1] + "）"
+					}
+				}
+				lines = append(lines, line)
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	// 只保留最近若干条，摘要本身也不能无限长
+	total, start := 0, len(lines)
+	for start > 0 {
+		n := len(lines[start-1]) + 1
+		if total+n > autoSummaryLimit {
+			break
+		}
+		total += n
+		start--
+	}
+	return strings.Join(lines[start:], "\n")
+}
+
+// argCommand 从工具调用的 JSON 参数里取 command 字段。
+func argCommand(args string) string {
+	var m struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal([]byte(args), &m) == nil {
+		return m.Command
+	}
+	return args
+}
+
+// oneLine 折叠空白并截断，用于摘要里的一行文本。
+func oneLine(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
+}
+
+// progressTracker 记录最近执行情况，用于判断自动续跑是否还有意义。
+type progressTracker struct {
+	last     string
+	repeats  int
+	failures int
+	success  int
+}
+
+func (p *progressTracker) record(cmd string, failed bool, exitCode int) {
+	if cmd == p.last && cmd != "" {
+		p.repeats++
+	} else {
+		p.repeats = 0
+		p.last = cmd
+	}
+	if failed || exitCode != 0 {
+		p.failures++
+	} else {
+		p.failures = 0
+		p.success++
+	}
+}
+
+// healthy 判断还有推进价值：至少成功执行过命令，且没有连续失败/重复同一条命令。
+func (p *progressTracker) healthy() bool {
+	return p.success > 0 && p.failures < 3 && p.repeats < 3
 }
 
 // isSingleCommand 判断是否是一条命令（忽略引号内的 ;/&&/||，允许单管道 |）。

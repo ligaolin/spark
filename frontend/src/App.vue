@@ -1,7 +1,7 @@
 <template>
     <el-config-provider :locale="zhCn">
         <el-splitter class="app-shell">
-            <el-splitter-panel :min="120" :max="400" size="190px">
+            <el-splitter-panel :min="120" :max="400" size="160px">
                 <aside class="sidebar">
                     <div class="brand">
                         <img class="brand-logo" :src="logoUrl" alt="Spark" />
@@ -137,7 +137,16 @@ const menu = computed(() => {
         { path: '/sites', label: '站点管理', icon: Collection },
         { path: '/remote-editor', label: '编辑器', icon: EditPen },
     ]
-    return all.filter((item) => !hidden.has(item.path))
+    // 按设置里保存的顺序排列；未出现在顺序中的新菜单项排在最后（保持默认相对次序）
+    const order = settings.menuOrderPaths
+    const rank = new Map(order.map((p, i) => [p, i]))
+    return all
+        .filter((item) => !hidden.has(item.path))
+        .sort(
+            (a, b) =>
+                (rank.get(a.path) ?? Number.MAX_SAFE_INTEGER) -
+                (rank.get(b.path) ?? Number.MAX_SAFE_INTEGER),
+        )
 })
 
 // 路由路径 → 组件名映射（用于 keep-alive include 过滤）

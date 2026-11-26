@@ -30,6 +30,14 @@ export function Copy(id: string, srcPath: string, dstPath: string, isDir: boolea
 }
 
 /**
+ * DirSize returns the total size of a remote directory tree. FTP has no
+ * server-side size command, so the tree is listed recursively.
+ */
+export function DirSize(id: string, remotePath: string): $CancellablePromise<types$0.DirSizeInfo> {
+    return $Call.ByID(4190427444, id, remotePath);
+}
+
+/**
  * Disconnect closes an FTP session.
  */
 export function Disconnect(id: string): $CancellablePromise<void> {
@@ -65,6 +73,14 @@ export function List(id: string, remotePath: string): $CancellablePromise<types$
  */
 export function Mkdir(id: string, remotePath: string): $CancellablePromise<void> {
     return $Call.ByID(3852481093, id, remotePath);
+}
+
+/**
+ * ReadBinary reads a remote file and returns its content as base64 (used by
+ * the image/PDF preview), capped at fileutil.MaxPreviewSize.
+ */
+export function ReadBinary(id: string, remotePath: string): $CancellablePromise<string> {
+    return $Call.ByID(1770276199, id, remotePath);
 }
 
 /**

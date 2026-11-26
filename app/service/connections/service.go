@@ -14,6 +14,7 @@ import (
 
 	"spark/app/model"
 	"spark/app/service/db"
+	"spark/app/service/sshconn"
 	"spark/app/service/sshlib"
 	"spark/app/service/types"
 
@@ -265,8 +266,57 @@ func reachableConn(cn model.SavedConnection, deep bool) bool {
 		UseKey:     cn.UseKey,
 		PrivateKey: cn.PrivateKey,
 		Passphrase: cn.Passphrase,
+		JumpID:     cn.JumpID,
+		KeyID:      cn.KeyID,
 	}
-	return sshlib.TestLogin(opts) == nil
+	return sshlib.TestLogin(sshconn.Resolve(opts)) == nil
+}
+
+// TestConnection probes the given (possibly unsaved) connection with the form's
+// current values and returns nil on success. SSH performs a real login
+// (jump chain included; host key verification is skipped for probing), FTP
+// performs a login as well.
+func (c *ConnService) TestConnection(connType string, opts types.ConnectOptions) error {
+	if strings.TrimSpace(opts.Host) == "" {
+		return errors.New("主机地址不能为空")
+	}
+	if strings.TrimSpace(opts.Username) == "" {
+		return errors.New("用户名不能为空")
+	}
+	if connType == "ftp" {
+		return ftpProbe(opts.Host, opts.Port, opts.Username, opts.Password, opts.TLS, opts.Insecure)
+	}
+	if err := sshlib.TestLogin(sshconn.Resolve(opts)); err != nil {
+		return fmt.Errorf("%w", err)
+	}
+	return nil
+}
+
+// ftpProbe dials and logs in to an FTP/FTPS server, returning a descriptive error.
+func ftpProbe(host string, port int, username, password string, tlsMode, insecure bool) error {
+	if port <= 0 || port > 65535 {
+		port = 21
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	var conn *ftp.ServerConn
+	var err error
+	if tlsMode {
+		tlsConf := &tls.Config{InsecureSkipVerify: insecure, ServerName: host}
+		conn, err = ftp.Dial(addr,
+			ftp.DialWithTimeout(8*time.Second),
+			ftp.DialWithExplicitTLS(tlsConf),
+		)
+	} else {
+		conn, err = ftp.Dial(addr, ftp.DialWithTimeout(8*time.Second))
+	}
+	if err != nil {
+		return fmt.Errorf("连接服务器失败: %w", err)
+	}
+	defer func() { _ = conn.Quit() }()
+	if err := conn.Login(username, password); err != nil {
+		return fmt.Errorf("登录失败: %w", err)
+	}
+	return nil
 }
 
 // tcpReachable dials host:port with a short timeout to test reachability.

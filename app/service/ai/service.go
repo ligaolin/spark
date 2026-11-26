@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"spark/app/model"
+	"spark/app/service/db"
 	"spark/app/service/secure"
 	"spark/app/service/settings"
 	"spark/app/service/types"
@@ -34,6 +36,8 @@ const (
 	keyMaxTokens    = "ai.maxTokens"
 	keySystemPrompt = "ai.systemPrompt"
 	keyAPIKey       = "ai.apiKey" // encrypted
+	// keyActiveProvider 当前启用的多接口配置 id（空表示未使用多接口）
+	keyActiveProvider = "ai.activeProvider"
 )
 
 // AIService exposes BYOK chat completions to the frontend.
@@ -152,14 +156,14 @@ func (s *AIService) SaveConfig(cfg types.AIConfig, apiKey string) error {
 	if baseURL == "" {
 		return errors.New("API 地址不能为空")
 	}
-	model := strings.TrimSpace(cfg.Model)
-	if model == "" {
+	modelName := strings.TrimSpace(cfg.Model)
+	if modelName == "" {
 		return errors.New("模型名称不能为空")
 	}
 	if err := settings.Set(keyBaseURL, baseURL); err != nil {
 		return err
 	}
-	if err := settings.Set(keyModel, model); err != nil {
+	if err := settings.Set(keyModel, modelName); err != nil {
 		return err
 	}
 	if err := settings.Set(keyTemperature, strconv.FormatFloat(cfg.Temperature, 'f', -1, 64)); err != nil {
@@ -180,12 +184,215 @@ func (s *AIService) SaveConfig(cfg types.AIConfig, apiKey string) error {
 			return err
 		}
 	}
+	// 当前启用的多接口记录同步更新，避免设置页与列表数据分叉
+	if id := activeProviderID(); id != 0 {
+		updates := map[string]any{
+			"base_url":      baseURL,
+			"model":         modelName,
+			"temperature":   cfg.Temperature,
+			"max_tokens":    cfg.MaxTokens,
+			"system_prompt": cfg.SystemPrompt,
+		}
+		if key := strings.TrimSpace(apiKey); key != "" {
+			if enc, err := secure.Encrypt(key); err == nil {
+				updates["api_key"] = enc
+			}
+		}
+		_ = db.GetDB().Model(&model.AIProvider{}).Where("id = ?", id).Updates(updates).Error
+	}
 	return nil
 }
 
-// ClearKey removes the stored API key.
+// ClearKey removes the stored API key (including the active provider's copy).
 func (s *AIService) ClearKey() error {
+	if id := activeProviderID(); id != 0 {
+		_ = db.GetDB().Model(&model.AIProvider{}).Where("id = ?", id).Update("api_key", "").Error
+	}
 	return settings.Set(keyAPIKey, "")
+}
+
+// ClearProviderKey removes one saved endpoint's API key; when that endpoint is
+// the active one the live config is cleared too.
+func (s *AIService) ClearProviderKey(id uint) error {
+	if id == 0 {
+		return errors.New("接口 ID 无效")
+	}
+	if err := db.GetDB().Model(&model.AIProvider{}).Where("id = ?", id).Update("api_key", "").Error; err != nil {
+		return err
+	}
+	if activeProviderID() == id {
+		return settings.Set(keyAPIKey, "")
+	}
+	return nil
+}
+
+// ---------- 多接口配置 ----------
+
+func activeProviderID() uint {
+	raw := strings.TrimSpace(settings.GetString(keyActiveProvider, ""))
+	if raw == "" {
+		return 0
+	}
+	id, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return uint(id)
+}
+
+// ensureLegacyProvider 把旧版单配置迁移成第一条接口记录（只做一次）。
+func (s *AIService) ensureLegacyProvider() {
+	var count int64
+	if err := db.GetDB().Model(&model.AIProvider{}).Count(&count).Error; err != nil || count > 0 {
+		return
+	}
+	baseURL := settings.GetString(keyBaseURL, "")
+	if baseURL == "" {
+		return
+	}
+	row := model.AIProvider{
+		Name:         "默认",
+		BaseURL:      baseURL,
+		Model:        settings.GetString(keyModel, ""),
+		Temperature:  settings.GetFloat(keyTemperature, 0.7),
+		MaxTokens:    settings.GetInt(keyMaxTokens, 2048),
+		SystemPrompt: settings.GetString(keySystemPrompt, ""),
+		APIKey:       settings.GetString(keyAPIKey, ""),
+	}
+	if err := db.GetDB().Create(&row).Error; err != nil {
+		return
+	}
+	_ = settings.Set(keyActiveProvider, strconv.FormatUint(uint64(row.ID), 10))
+}
+
+// ListProviders returns all saved endpoints, marking the active one.
+func (s *AIService) ListProviders() ([]types.AIProviderInfo, error) {
+	s.ensureLegacyProvider()
+	var rows []model.AIProvider
+	if err := db.GetDB().Order("id asc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	active := activeProviderID()
+	out := make([]types.AIProviderInfo, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, types.AIProviderInfo{
+			ID:           r.ID,
+			Name:         r.Name,
+			BaseURL:      r.BaseURL,
+			Model:        r.Model,
+			Temperature:  r.Temperature,
+			MaxTokens:    r.MaxTokens,
+			SystemPrompt: r.SystemPrompt,
+			HasKey:       r.APIKey != "",
+			Active:       r.ID == active,
+		})
+	}
+	return out, nil
+}
+
+// SaveProvider creates (ID 0) or updates one endpoint; an empty apiKey keeps
+// the stored key. It returns the provider id.
+func (s *AIService) SaveProvider(p types.AIProviderInfo, apiKey string) (uint, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(p.BaseURL), "/")
+	if baseURL == "" {
+		return 0, errors.New("API 地址不能为空")
+	}
+	modelName := strings.TrimSpace(p.Model)
+	if modelName == "" {
+		return 0, errors.New("模型名称不能为空")
+	}
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		name = modelName
+	}
+	var row model.AIProvider
+	if p.ID != 0 {
+		if err := db.GetDB().First(&row, p.ID).Error; err != nil {
+			return 0, errors.New("接口配置不存在")
+		}
+	}
+	row.Name = name
+	row.BaseURL = baseURL
+	row.Model = modelName
+	row.Temperature = p.Temperature
+	row.MaxTokens = p.MaxTokens
+	row.SystemPrompt = p.SystemPrompt
+	if key := strings.TrimSpace(apiKey); key != "" {
+		enc, err := secure.Encrypt(key)
+		if err != nil {
+			return 0, err
+		}
+		row.APIKey = enc
+	}
+	if row.ID == 0 {
+		if err := db.GetDB().Create(&row).Error; err != nil {
+			return 0, err
+		}
+	} else if err := db.GetDB().Save(&row).Error; err != nil {
+		return 0, err
+	}
+	return row.ID, nil
+}
+
+// ActivateProvider applies a saved endpoint as the current AI config.
+func (s *AIService) ActivateProvider(id uint) error {
+	var row model.AIProvider
+	if err := db.GetDB().First(&row, id).Error; err != nil {
+		return errors.New("接口配置不存在")
+	}
+	if err := settings.Set(keyBaseURL, row.BaseURL); err != nil {
+		return err
+	}
+	if err := settings.Set(keyModel, row.Model); err != nil {
+		return err
+	}
+	if err := settings.Set(keyTemperature, strconv.FormatFloat(row.Temperature, 'f', -1, 64)); err != nil {
+		return err
+	}
+	if err := settings.Set(keyMaxTokens, strconv.Itoa(row.MaxTokens)); err != nil {
+		return err
+	}
+	if err := settings.Set(keySystemPrompt, row.SystemPrompt); err != nil {
+		return err
+	}
+	// 密钥整体替换：切到没有 key 的接口时不能沿用上一个接口的密钥
+	if err := settings.Set(keyAPIKey, row.APIKey); err != nil {
+		return err
+	}
+	return settings.Set(keyActiveProvider, strconv.FormatUint(uint64(row.ID), 10))
+}
+
+// DeleteProvider removes a saved endpoint. Deleting the active one falls back
+// to the first remaining provider (if any).
+func (s *AIService) DeleteProvider(id uint) error {
+	if err := db.GetDB().Delete(&model.AIProvider{}, id).Error; err != nil {
+		return err
+	}
+	if activeProviderID() != id {
+		return nil
+	}
+	_ = settings.Set(keyActiveProvider, "")
+	var next model.AIProvider
+	if err := db.GetDB().Order("id asc").First(&next).Error; err != nil {
+		return nil
+	}
+	return s.ActivateProvider(next.ID)
+}
+
+// SetActiveModel 终端面板切换模型时同步更新当前接口记录。
+func (s *AIService) SetActiveModel(modelName string) error {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return errors.New("模型名称不能为空")
+	}
+	if err := settings.Set(keyModel, modelName); err != nil {
+		return err
+	}
+	if id := activeProviderID(); id != 0 {
+		_ = db.GetDB().Model(&model.AIProvider{}).Where("id = ?", id).
+			Update("model", modelName).Error
+	}
+	return nil
 }
 
 // ListModels fetches the model IDs available on the configured provider
@@ -200,11 +407,30 @@ func (s *AIService) ListModels() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return fetchModels(cfg.BaseURL, apiKey)
+}
 
+// ListModelsForProvider 用某条已保存接口自己的地址与密钥取模型列表，
+// 便于在尚未切换的情况下先确认它有哪些模型。
+func (s *AIService) ListModelsForProvider(id uint) ([]string, error) {
+	var row model.AIProvider
+	if err := db.GetDB().First(&row, id).Error; err != nil {
+		return nil, errors.New("接口配置不存在")
+	}
+	key := ""
+	if row.APIKey != "" {
+		if k, err := secure.Decrypt(row.APIKey); err == nil {
+			key = k
+		}
+	}
+	return fetchModels(row.BaseURL, key)
+}
+
+func fetchModels(baseURL, apiKey string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(cfg.BaseURL, "/")+"/models", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/models", nil)
 	if err != nil {
 		return nil, err
 	}

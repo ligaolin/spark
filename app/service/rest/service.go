@@ -39,6 +39,49 @@ type RestService struct{}
 func (s *RestService) ServiceName() string { return "RestService" }
 
 // ---------------------------------------------------------------------------
+// Shared HTTP clients (connection pooling)
+// ---------------------------------------------------------------------------
+
+func restCheckRedirect(_ *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("重定向次数过多")
+	}
+	return nil
+}
+
+func newRestTransport(insecure bool) *http.Transport {
+	t := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	if insecure {
+		t.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	return t
+}
+
+// 复用底层连接池：每次请求新建 Transport 会让 TCP/TLS 连接无法复用，
+// 高频调用会堆积大量 TIME_WAIT 和文件句柄。证书校验与跳过校验分开用
+// 两个客户端，避免 InsecureSkipVerify 相互影响。超时交给每次请求的
+// context 控制（流式响应需要保持连接，不能设 Client.Timeout）。
+var (
+	restClientSecure   = &http.Client{Transport: newRestTransport(false), CheckRedirect: restCheckRedirect}
+	restClientInsecure = &http.Client{Transport: newRestTransport(true), CheckRedirect: restCheckRedirect}
+)
+
+func restClientFor(insecure bool) *http.Client {
+	if insecure {
+		return restClientInsecure
+	}
+	return restClientSecure
+}
+
+// ---------------------------------------------------------------------------
 // HTTP send
 // ---------------------------------------------------------------------------
 
@@ -63,20 +106,20 @@ func (s *RestService) Send(req types.RestRequest) types.RestResponse {
 		timeout = 30
 	}
 
-	client := &http.Client{
-		Timeout: time.Duration(timeout) * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: req.Insecure},
-		},
-		CheckRedirect: func(r *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return fmt.Errorf("重定向次数过多")
-			}
-			return nil
-		},
-	}
+	client := restClientFor(req.Insecure)
+
+	// 每次请求用 context 控制超时，共享客户端本身不设 Timeout：
+	// 流式响应需要一直读到结束，不能被整体超时掐断。
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	ctxHandedOff := false
+	defer func() {
+		if !ctxHandedOff {
+			cancel()
+		}
+	}()
 
 	var bodyReader io.Reader
+	var pipeReader *io.PipeReader
 	var contentType string
 
 	if len(req.FormFiles) > 0 {
@@ -111,14 +154,18 @@ func (s *RestService) Send(req types.RestRequest) types.RestResponse {
 				file.Close()
 			}
 		}()
+		pipeReader = pr
 		bodyReader = pr
 		contentType = writer.FormDataContentType()
 	} else if req.Body != "" {
 		bodyReader = bytes.NewReader([]byte(req.Body))
 	}
 
-	httpReq, err := http.NewRequest(method, url, bodyReader)
+	httpReq, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
+		if pipeReader != nil {
+			_ = pipeReader.CloseWithError(err)
+		}
 		return types.RestResponse{
 			Duration: time.Since(start).Milliseconds(),
 			Error:    fmt.Sprintf("构造请求失败: %v", err),
@@ -137,6 +184,9 @@ func (s *RestService) Send(req types.RestRequest) types.RestResponse {
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		if pipeReader != nil {
+			_ = pipeReader.CloseWithError(err)
+		}
 		return types.RestResponse{
 			Duration: time.Since(start).Milliseconds(),
 			Error:    fmt.Sprintf("请求失败: %v", err),
@@ -160,7 +210,9 @@ func (s *RestService) Send(req types.RestRequest) types.RestResponse {
 	}
 
 	if isStreaming {
-		streamID := startStream(resp.Body)
+		// 把取消权移交给流读取协程，读完/断开时再释放请求 context
+		ctxHandedOff = true
+		streamID := startStream(resp.Body, cancel)
 		return types.RestResponse{
 			Status:     resp.StatusCode,
 			StatusText: http.StatusText(resp.StatusCode),
@@ -200,7 +252,9 @@ var (
 	streamsMu sync.Mutex
 )
 
-const maxStreamBuffer = 1 << 20 // 1MB
+const maxStreamBuffer = 8 << 20 // 8MB
+
+var errStreamTruncated = errors.New("流式响应超过 8MB 缓冲上限，已截断")
 
 type streamState struct {
 	body   io.ReadCloser
@@ -210,7 +264,7 @@ type streamState struct {
 	err    error
 }
 
-func startStream(body io.ReadCloser) string {
+func startStream(body io.ReadCloser, cancel context.CancelFunc) string {
 	id := fmt.Sprintf("stream_%d", time.Now().UnixNano())
 	st := &streamState{body: body}
 	streamsMu.Lock()
@@ -223,6 +277,9 @@ func startStream(body io.ReadCloser) string {
 			st.done = true
 			st.mu.Unlock()
 			body.Close()
+			if cancel != nil {
+				cancel()
+			}
 			time.AfterFunc(30*time.Second, func() {
 				streamsMu.Lock()
 				delete(streams, id)
@@ -238,20 +295,27 @@ func startStream(body io.ReadCloser) string {
 			n, err := reader.Read(buf)
 			if n > 0 {
 				st.mu.Lock()
-				if st.buffer.Len() < maxStreamBuffer {
-					writeN := n
-					if st.buffer.Len()+n > maxStreamBuffer {
-						st.buffer.Reset()
-						writeN = maxStreamBuffer
+				remaining := maxStreamBuffer - st.buffer.Len()
+				switch {
+				case remaining <= 0:
+					// 已达到上限：继续读并丢弃，让连接正常结束，同时上报截断
+					if st.err == nil {
+						st.err = errStreamTruncated
 					}
-					st.buffer.Write(buf[:writeN])
+				case n > remaining:
+					st.buffer.Write(buf[:remaining])
+					st.err = errStreamTruncated
+				default:
+					st.buffer.Write(buf[:n])
 				}
 				st.mu.Unlock()
 			}
 			if err != nil {
 				if err != io.EOF {
 					st.mu.Lock()
-					st.err = err
+					if st.err == nil {
+						st.err = err
+					}
 					st.mu.Unlock()
 				}
 				break
@@ -1031,6 +1095,10 @@ func (s *RestService) StressTest(req types.StressTestRequest) types.StressTestRe
 	if req.Concurrency <= 0 {
 		req.Concurrency = 1
 	}
+	// 并发过高会瞬间打满文件句柄和端口，压测本身也就失真
+	if req.Concurrency > 500 {
+		req.Concurrency = 500
+	}
 	if req.Total <= 0 {
 		req.Total = 1
 	}
@@ -1055,12 +1123,7 @@ func (s *RestService) StressTest(req types.StressTestRequest) types.StressTestRe
 		method = "GET"
 	}
 
-	client := &http.Client{
-		Timeout: time.Duration(req.Timeout) * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: req.Insecure},
-		},
-	}
+	client := restClientFor(req.Insecure)
 
 	start := time.Now()
 
@@ -1080,8 +1143,10 @@ func (s *RestService) StressTest(req types.StressTestRequest) types.StressTestRe
 					bodyReader = strings.NewReader(req.Body)
 				}
 
-				httpReq, err := http.NewRequest(method, req.URL, bodyReader)
+				reqCtx, cancel := context.WithTimeout(context.Background(), time.Duration(req.Timeout)*time.Second)
+				httpReq, err := http.NewRequestWithContext(reqCtx, method, req.URL, bodyReader)
 				if err != nil {
+					cancel()
 					mu.Lock()
 					records = append(records, record{statusCode: 0, duration: time.Since(t0).Milliseconds(), success: false})
 					mu.Unlock()
@@ -1098,6 +1163,7 @@ func (s *RestService) StressTest(req types.StressTestRequest) types.StressTestRe
 				resp, err := client.Do(httpReq)
 				dur := time.Since(t0).Milliseconds()
 				if err != nil {
+					cancel()
 					mu.Lock()
 					records = append(records, record{statusCode: 0, duration: dur, success: false})
 					mu.Unlock()
@@ -1105,6 +1171,7 @@ func (s *RestService) StressTest(req types.StressTestRequest) types.StressTestRe
 				}
 				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
+				cancel()
 
 				mu.Lock()
 				records = append(records, record{statusCode: resp.StatusCode, duration: dur, success: resp.StatusCode < 500})
@@ -1461,8 +1528,10 @@ func getEffectiveCommonHeaders(folderID uint) []types.KV {
 		allFolders = append(allFolders, f)
 		cur = f.ParentID
 	}
-	// Reverse so ancestors come first, then children override
-	result := make(map[string]string)
+	// Reverse so ancestors come first, then children override.
+	// 用切片保持首次出现的顺序（map 遍历顺序随机，会让请求头的顺序每次不同）。
+	values := make(map[string]string)
+	var order []string
 	for i := len(allFolders) - 1; i >= 0; i-- {
 		var headers []types.KV
 		if err := json.Unmarshal([]byte(allFolders[i].CommonHeaders), &headers); err != nil {
@@ -1470,14 +1539,18 @@ func getEffectiveCommonHeaders(folderID uint) []types.KV {
 		}
 		for _, h := range headers {
 			k := strings.TrimSpace(h.Key)
-			if k != "" {
-				result[k] = h.Value
+			if k == "" {
+				continue
 			}
+			if _, seen := values[k]; !seen {
+				order = append(order, k)
+			}
+			values[k] = h.Value
 		}
 	}
-	out := make([]types.KV, 0, len(result))
-	for k, v := range result {
-		out = append(out, types.KV{Key: k, Value: v})
+	out := make([]types.KV, 0, len(order))
+	for _, k := range order {
+		out = append(out, types.KV{Key: k, Value: values[k]})
 	}
 	return out
 }

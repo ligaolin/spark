@@ -5,10 +5,12 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"strconv"
 
 	"spark/app/model"
 	"spark/app/service/agent"
 	"spark/app/service/ai"
+	"spark/app/service/batchexec"
 	"spark/app/service/connections"
 	"spark/app/service/customcmd"
 	"spark/app/service/databases"
@@ -26,6 +28,7 @@ import (
 	"spark/app/service/shellmenu"
 	"spark/app/service/sites"
 	"spark/app/service/sshconfig"
+	"spark/app/service/sshkeys"
 	"spark/app/service/terminal"
 	"spark/app/service/tray"
 	"spark/app/service/types"
@@ -77,6 +80,8 @@ func initDatabase() {
 		}
 	}
 	model.Migrate()
+	// 数据库就绪后再启用设置缓存，确保读到的是当前库的数据
+	settings.Reload()
 }
 
 func initAutoStart(app *application.App) {
@@ -114,6 +119,7 @@ func createServices(termSvc *terminal.TerminalService, shellMenuSvc *shellmenu.S
 		application.NewService(&sftp.SFTPFileService{}),
 		application.NewService(&ftp.FTPFileService{}),
 		application.NewService(&connections.ConnService{}),
+		application.NewService(&batchexec.BatchService{}),
 		application.NewService(&customcmd.CustomCommandService{}),
 		application.NewService(&documents.DocumentService{}),
 		application.NewService(&favorites.FavoriteService{}),
@@ -123,6 +129,7 @@ func createServices(termSvc *terminal.TerminalService, shellMenuSvc *shellmenu.S
 		application.NewService(&local.LocalService{}),
 		application.NewService(&hostkeys.HostKeyService{}),
 		application.NewService(&sshconfig.SshConfigService{}),
+		application.NewService(&sshkeys.SSHKeyService{}),
 		application.NewService(&update.UpdateService{}),
 		application.NewService(shellMenuSvc),
 		application.NewService(&rest.RestService{}),
@@ -177,24 +184,12 @@ func createWindow(app *application.App) *application.WebviewWindow {
 	win.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		ww, wh := win.Size()
 		if ww > 0 && wh > 0 {
-			_ = settings.Set(keyWinWidth, itoa(ww))
-			_ = settings.Set(keyWinHeight, itoa(wh))
+			_ = settings.Set(keyWinWidth, strconv.Itoa(ww))
+			_ = settings.Set(keyWinHeight, strconv.Itoa(wh))
 		}
 	})
 
 	return win
-}
-
-func itoa(n int) string {
-	if n <= 0 {
-		return "0"
-	}
-	digits := make([]byte, 0, 12)
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-	return string(digits)
 }
 
 func init() {

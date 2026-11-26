@@ -55,7 +55,12 @@
                                         <Folder v-if="data.isDir" />
                                         <Document v-else />
                                     </el-icon>
-                                    <span class="rep-tree-name" :title="data.name">{{ data.name }}</span>
+                                    <el-input v-if="renamingPath === data.path" :ref="setRenameInputRef"
+                                        v-model="renameDraft" size="small" class="rep-rename-input"
+                                        @click.stop @mousedown.stop @dblclick.stop
+                                        @keyup.enter="onRenameEnter" @keyup.esc="cancelRename"
+                                        @blur="commitRename" />
+                                    <span v-else class="rep-tree-name" :title="data.name">{{ data.name }}</span>
                                 </span>
                             </template>
                         </el-tree>
@@ -195,6 +200,15 @@ interface TreeNode {
 
 // 当前选中的树节点；未选中时操作针对根目录
 const selectedNode = ref<TreeNode | null>(null)
+// 行内重命名（VSCode 式）：编辑中的节点路径与输入内容
+const renamingPath = ref('')
+const renameDraft = ref('')
+const renameTarget = ref<TreeNode | null>(null)
+const renameInputRef = ref<{ focus: () => void; select?: () => void } | null>(null)
+
+function setRenameInputRef(el: any) {
+    renameInputRef.value = el
+}
 // 右键菜单状态
 const ctxVisible = ref(false)
 const ctxX = ref(0)
@@ -458,7 +472,7 @@ async function pickUploadFiles() {
     const dir = currentDir.value
     let files: string[]
     try {
-        files = (await LocalService.PickFiles()) ?? []
+        files = (await LocalService.PickFiles('选择要上传的文件')) ?? []
     } catch (e: any) {
         ElMessage.error(`选择文件失败：${e?.message || e}`)
         return
@@ -594,30 +608,66 @@ async function renameNode() {
         ElMessage.warning('请先选择要重命名的文件或目录')
         return
     }
-    const values = await showInputDialog('重命名', [{ key: 'name', label: '新名称', initial: n.name }])
-    if (!values) return
-    const name = values.name.trim()
+    await startRename(n)
+}
+
+// VSCode 式行内重命名：节点上直接出现输入框，Enter / 失焦提交，Esc 取消
+async function startRename(n: TreeNode, initial = n.name) {
+    renameTarget.value = n
+    renamingPath.value = n.path
+    renameDraft.value = initial
+    await nextTick()
+    renameInputRef.value?.focus()
+    renameInputRef.value?.select?.()
+}
+
+function onRenameEnter(e: KeyboardEvent) {
+    if (e.isComposing) return
+    void commitRename()
+}
+
+function cancelRename() {
+    renameTarget.value = null
+    renamingPath.value = ''
+}
+
+async function commitRename() {
+    const n = renameTarget.value
+    if (!n) return
+    renameTarget.value = null
+    renamingPath.value = ''
+    const name = renameDraft.value.trim()
     if (!name || name === n.name) return
     const dir = parentDir(n.path, props.backend.sep)
+    if (await nameExists(dir, name)) {
+        ElMessage.warning(`「${name}」已存在`)
+        await startRename(n, name)
+        return
+    }
     const target = joinPath(dir, name, props.backend.sep)
     try {
         await props.backend.rename(n.path, target)
         // 若被重命名的文件正打开着，同步更新标签与编辑器实例的 key
         const open = openFiles.value.find((f) => f.key === n.path)
-        if (open) {
-            editorRefs.value[target] = editorRefs.value[n.path]
-            delete editorRefs.value[n.path]
-            open.key = target
-            open.path = target
-            open.name = name
-            if (activeKey.value === n.path) activeKey.value = target
-        }
+        if (open) await rekeyOpenFile(open, n.path, target, name)
         selectedNode.value = { path: target, name, isDir: n.isDir }
         ElMessage.success('已重命名')
         await reloadDir(dir)
     } catch (e: any) {
         ElMessage.error(`重命名失败：${e?.message || e}`)
     }
+}
+
+// 标签 key 变化会让编辑器组件按 key 重挂载，而内容只保存在编辑器实例中，
+// 所以先取出当前内容，等新实例挂载后回填，避免重命名/移动后内容变空白。
+async function rekeyOpenFile(f: OpenFile, oldKey: string, newKey: string, name = basename(newKey)) {
+    const content = editorRefs.value[oldKey]?.getContent() ?? f.original
+    f.key = newKey
+    f.path = newKey
+    f.name = name
+    if (activeKey.value === oldKey) activeKey.value = newKey
+    await nextTick()
+    editorRefs.value[newKey]?.setContent(content)
 }
 
 // ---------- 复制 / 剪切 / 粘贴（目录树） ----------
@@ -671,7 +721,7 @@ async function paste() {
     try {
         if (c.cut) {
             await props.backend.rename(c.path, target)
-            updateOpenPaths(c.path, target, c.isDir)
+            await updateOpenPaths(c.path, target, c.isDir)
         } else {
             await props.backend.copy(c.path, target, c.isDir)
         }
@@ -826,7 +876,7 @@ async function onNodeDrop(dragging: any, drop: any, dropType: string) {
     const srcDir = parentDir(src.path, props.backend.sep)
     try {
         await props.backend.rename(src.path, target)
-        updateOpenPaths(src.path, target, src.isDir)
+        await updateOpenPaths(src.path, target, src.isDir)
         if (selectedNode.value?.path === src.path) {
             selectedNode.value = { path: target, name: src.name, isDir: src.isDir }
         }
@@ -841,7 +891,8 @@ async function onNodeDrop(dragging: any, drop: any, dropType: string) {
 }
 
 // 移动后同步打开的标签：文件本身被移动 → 直接改 key/path；目录被移动 → 目录内已打开的文件路径一并前移
-function updateOpenPaths(oldPath: string, newPath: string, isDir: boolean) {
+async function updateOpenPaths(oldPath: string, newPath: string, isDir: boolean) {
+    const pending: Array<{ f: OpenFile; oldKey: string; np: string }> = []
     for (const f of openFiles.value) {
         let np: string | null = null
         if (!isDir && f.key === oldPath) {
@@ -852,15 +903,9 @@ function updateOpenPaths(oldPath: string, newPath: string, isDir: boolean) {
         ) {
             np = newPath + f.key.slice(oldPath.length)
         }
-        if (!np) continue
-        const oldKey = f.key
-        editorRefs.value[np] = editorRefs.value[oldKey]
-        delete editorRefs.value[oldKey]
-        f.key = np
-        f.path = np
-        f.name = basename(np)
-        if (activeKey.value === oldKey) activeKey.value = np
+        if (np) pending.push({ f, oldKey: f.key, np })
     }
+    for (const p of pending) await rekeyOpenFile(p.f, p.oldKey, p.np)
 }
 
 // ---------- 目录树右键菜单 ----------
@@ -1224,6 +1269,16 @@ defineExpose({
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.rep-rename-input {
+    width: 180px;
+    max-width: 100%;
+}
+
+.rep-rename-input :deep(.el-input__wrapper) {
+    padding: 0 4px;
+    height: 22px;
 }
 
 .rep-editor {

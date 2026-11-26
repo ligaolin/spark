@@ -194,17 +194,33 @@
     <div class="cfg-row cfg-row-col">
       <div class="cfg-info">
         <div class="cfg-label">侧边栏菜单</div>
-        <div class="cfg-desc">勾选希望在左侧菜单显示的功能板块；取消勾选后隐藏，保存后立即刷新生效</div>
+        <div class="cfg-desc">拖动行或点击箭头调整顺序，勾选控制是否显示；点击保存后侧边栏立即刷新</div>
       </div>
-      <div class="cfg-ctrl menu-toggles">
-        <el-checkbox v-for="item in allMenuItems" :key="item.path"
-          :model-value="!hiddenSet.has(item.path)"
-          @change="(v) => toggleMenu(item.path, v)">
-          {{ item.label }}
-        </el-checkbox>
-        <el-button size="small" type="primary" :loading="savingMenu" @click="saveMenu">
-          保存
-        </el-button>
+      <div class="cfg-ctrl menu-order">
+        <div class="menu-order-list">
+          <div v-for="(path, i) in menuOrder" :key="path" class="menu-order-item"
+            :class="{ dragging: dragIndex === i, 'drop-target': dropIndex === i }" draggable="true"
+            @dragstart="onDragStart(i, $event)" @dragover.prevent="onDragOver(i)" @dragleave="onDragLeave(i)"
+            @drop.prevent="onDrop(i)" @dragend="onDragEnd">
+            <el-icon class="drag-handle" title="拖动排序"><Rank /></el-icon>
+            <el-checkbox :model-value="!hiddenSet.has(path)" @change="(v) => toggleMenu(path, !!v)">
+              {{ menuLabel(path) }}
+            </el-checkbox>
+            <span class="order-btns">
+              <el-button size="small" text :disabled="i === 0" title="上移" @click="moveMenu(i, -1)">
+                <el-icon><ArrowUp /></el-icon>
+              </el-button>
+              <el-button size="small" text :disabled="i === menuOrder.length - 1" title="下移"
+                @click="moveMenu(i, 1)">
+                <el-icon><ArrowDown /></el-icon>
+              </el-button>
+            </span>
+          </div>
+        </div>
+        <div class="menu-order-actions">
+          <el-button size="small" text @click="resetMenuOrder">恢复默认顺序</el-button>
+          <el-button size="small" type="primary" :loading="savingMenu" @click="saveMenu">保存</el-button>
+        </div>
       </div>
     </div>
 
@@ -215,6 +231,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Rank, ArrowUp, ArrowDown } from '@element-plus/icons-vue'
 import { useSettingsStore } from '../stores/settings'
 import { SettingsService } from '../utils/wails'
 import { checkForUpdatesManual, setUpdateSuppress } from '../utils/updateCheck'
@@ -246,7 +263,7 @@ const savingAutoStart = ref(false)
 const suppressVal = ref(false)
 const checking = ref(false)
 
-// 侧边栏菜单可见性
+// 侧边栏菜单可见性与排序
 const allMenuItems = [
     { path: '/local-terminal', label: '本地终端' },
     { path: '/connections', label: '连接管理' },
@@ -257,8 +274,76 @@ const allMenuItems = [
     { path: '/sites', label: '站点管理' },
     { path: '/remote-editor', label: '编辑器' },
 ]
+const defaultMenuOrder = allMenuItems.map((m) => m.path)
 const hiddenSet = ref(new Set<string>())
+const menuOrder = ref<string[]>([...defaultMenuOrder])
 const savingMenu = ref(false)
+const dragIndex = ref(-1)
+const dropIndex = ref(-1)
+
+function menuLabel(path: string): string {
+    return allMenuItems.find((m) => m.path === path)?.label ?? path
+}
+
+// 已保存顺序可能缺少新版本新增的菜单项：去掉未知/重复项，缺失项按默认顺序补在末尾
+function normalizeOrder(order: string[]): string[] {
+    const known = new Set(defaultMenuOrder)
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const p of order) {
+        if (!known.has(p) || seen.has(p)) continue
+        seen.add(p)
+        out.push(p)
+    }
+    for (const p of defaultMenuOrder) {
+        if (!seen.has(p)) out.push(p)
+    }
+    return out
+}
+
+function moveMenu(i: number, delta: number) {
+    const j = i + delta
+    if (j < 0 || j >= menuOrder.value.length) return
+    const next = [...menuOrder.value]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    menuOrder.value = next
+}
+
+function resetMenuOrder() {
+    menuOrder.value = [...defaultMenuOrder]
+}
+
+function onDragStart(i: number, e: DragEvent) {
+    dragIndex.value = i
+    if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.setData('text/plain', String(i))
+    }
+}
+
+function onDragOver(i: number) {
+    if (dragIndex.value >= 0 && i !== dragIndex.value) dropIndex.value = i
+}
+
+function onDragLeave(i: number) {
+    if (dropIndex.value === i) dropIndex.value = -1
+}
+
+function onDrop(i: number) {
+    const from = dragIndex.value
+    dragIndex.value = -1
+    dropIndex.value = -1
+    if (from < 0 || from === i) return
+    const next = [...menuOrder.value]
+    const [moved] = next.splice(from, 1)
+    next.splice(i, 0, moved)
+    menuOrder.value = next
+}
+
+function onDragEnd() {
+    dragIndex.value = -1
+    dropIndex.value = -1
+}
 
 onMounted(async () => {
   await settings.load()
@@ -275,6 +360,7 @@ onMounted(async () => {
   autoStartVal.value = await SettingsService.IsAutoStart()
   suppressVal.value = settings.updateSuppress
   hiddenSet.value = new Set(settings.hiddenMenuPaths)
+  menuOrder.value = normalizeOrder(settings.menuOrderPaths)
 })
 
 async function saveKeepalive() {
@@ -450,8 +536,8 @@ function toggleMenu(path: string, visible: boolean) {
 async function saveMenu() {
   savingMenu.value = true
   try {
-    const csv = [...hiddenSet.value].join(',')
-    await settings.set('menu.hidden', csv)
+    await settings.set('menu.order', menuOrder.value.join(','))
+    await settings.set('menu.hidden', [...hiddenSet.value].join(','))
     ElMessage.success('已保存，菜单立即刷新')
   } catch (e: any) {
     ElMessage.error(`保存失败：${e?.message || e}`)
@@ -524,8 +610,62 @@ async function saveMenu() {
   padding: 0 3px;
 }
 
-.menu-toggles {
-  flex-wrap: wrap;
+.menu-order {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  max-width: 440px;
+}
+
+.menu-order-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.menu-order-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--hover-bg);
+}
+
+.menu-order-item.dragging {
+  opacity: 0.45;
+}
+
+.menu-order-item.drop-target {
+  border-color: var(--accent);
+}
+
+.drag-handle {
+  cursor: grab;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.menu-order-item :deep(.el-checkbox) {
+  flex: 1;
   min-width: 0;
+  margin-right: 0;
+}
+
+.order-btns {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.order-btns .el-button + .el-button {
+  margin-left: 0;
+}
+
+.menu-order-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 </style>

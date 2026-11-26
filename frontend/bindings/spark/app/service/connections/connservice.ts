@@ -13,6 +13,9 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as model$0 from "../../model/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as types$0 from "../types/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -94,6 +97,16 @@ export function RenameGroup(oldName: string, newName: string): $CancellablePromi
  */
 export function SetGroup(id: number, group: string): $CancellablePromise<void> {
     return $Call.ByID(1126893584, id, group);
+}
+
+/**
+ * TestConnection probes the given (possibly unsaved) connection with the form's
+ * current values and returns nil on success. SSH performs a real login
+ * (jump chain included; host key verification is skipped for probing), FTP
+ * performs a login as well.
+ */
+export function TestConnection(connType: string, opts: types$0.ConnectOptions): $CancellablePromise<void> {
+    return $Call.ByID(2208839927, connType, opts);
 }
 
 /**

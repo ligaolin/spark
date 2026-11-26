@@ -5,6 +5,9 @@
                 <el-radio-button value="name">文件名</el-radio-button>
                 <el-radio-button value="content">文件内容</el-radio-button>
             </el-radio-group>
+            <el-button v-if="searching && backend.searchStream" size="small" @click="cancelSearch">
+                取消
+            </el-button>
             <el-button size="small" type="primary" :loading="searching" @click="doSearch">搜索</el-button>
         </div>
 
@@ -26,7 +29,8 @@
         </div>
 
         <div class="search-bar exclude-bar">
-            <span class="exclude-label">排除</span>
+            <span class="exclude-label"
+                title="默认已排除 .git、node_modules、dist、build 等目录及 *.min.js、*.map、*.log 等文件">排除</span>
             <el-input v-model="exclude" size="small" placeholder="glob，逗号/换行分隔，如 node_modules, *.log" clearable
                 @keyup.enter="doSearch" />
         </div>
@@ -55,7 +59,7 @@
                 </el-table-column>
                 <el-table-column label="大小" width="90" align="right">
                     <template #default="{ row }">
-                        <span class="dim">{{ row.isDir ? '-' : formatSize(row.size) }}</span>
+                        <span class="dim">{{ row.isDir || (!row.size && row.lineNo) ? '-' : formatSize(row.size) }}</span>
                     </template>
                 </el-table-column>
             </el-table>
@@ -63,20 +67,28 @@
 
         <div class="search-status">
             <span>{{ statusText }}</span>
-            <span v-if="mode === 'content'" class="hint">内容搜索会跳过二进制文件及超过 10MB 的文件</span>
+            <span v-if="searching && progress" class="hint">
+                <template v-if="progress.dirs || progress.files">
+                    已扫描 {{ progress.dirs }} 个目录 / {{ progress.files }} 个文件 ·
+                </template>
+                命中 {{ progress.matches }}
+            </span>
+            <span v-else-if="mode === 'content'" class="hint">内容搜索会跳过二进制文件及超过 10MB 的文件</span>
         </div>
     </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Folder, Document } from '@element-plus/icons-vue'
+import { Events } from '@wailsio/runtime'
 import { formatSize } from '../types'
-import type { SearchResult, SearchOptions } from '../types'
+import type { SearchProgress, SearchResult, SearchOptions } from '../types'
 import type { FileBackend } from '../utils/fileBackend'
 import { showConfirmDialog } from '../utils/dialog'
 import { useSettingsStore } from '../stores/settings'
+import { EVENTS } from '../utils/wails'
 
 const props = defineProps<{ backend: FileBackend }>()
 
@@ -97,7 +109,33 @@ const replacing = ref(false)
 const results = ref<SearchResult[]>([])
 const root = ref('')
 const statusText = ref('')
+const progress = ref<{ dirs: number; files: number; matches: number } | null>(null)
 const keywordRef = ref()
+
+// 当前活动搜索：仅 SFTP 流式搜索会分配 id，用于过滤 sftp:search 事件
+let activeSearchId = ''
+let searchSeq = 0
+let searchCancelled = false
+
+function onSearchProgress(p: SearchProgress | undefined) {
+    if (!p || !activeSearchId || p.searchId !== activeSearchId) return
+    if (p.results?.length) {
+        // 增量展示；搜索结束时以返回的完整列表覆盖
+        results.value = results.value.concat(p.results)
+    }
+    progress.value = { dirs: p.dirs, files: p.files, matches: p.matches }
+    if (p.done && p.cancelled) searchCancelled = true
+}
+
+let unSearch: (() => void) | null = null
+onMounted(() => {
+    unSearch = Events.On(EVENTS.sftpSearch, (evt: any) => onSearchProgress(evt?.data))
+})
+onBeforeUnmount(() => {
+    unSearch?.()
+    unSearch = null
+    if (activeSearchId) props.backend.cancelSearch?.(activeSearchId)?.catch(() => {})
+})
 
 function options(): SearchOptions {
     // 实际排除 = 设置里的全局排除 + 搜索面板里填写的排除（两者叠加）
@@ -132,17 +170,45 @@ async function doSearch() {
         ElMessage.warning('请先进入目录')
         return
     }
+    if (searching.value) return
+    const streamId = props.backend.searchStream
+        ? `search-${Date.now()}-${++searchSeq}-${Math.random().toString(36).slice(2, 8)}`
+        : ''
+    activeSearchId = streamId
+    searchCancelled = false
     searching.value = true
     statusText.value = ''
+    progress.value = null
+    if (streamId) results.value = [] // 流式：清空后按批次增量填充
     try {
-        results.value = await props.backend.search(root.value, kw, mode.value, options())
-        statusText.value =
-            results.value.length > 0 ? `共 ${results.value.length} 条结果` : '没有匹配结果'
+        const list =
+            streamId && props.backend.searchStream
+                ? await props.backend.searchStream(root.value, kw, mode.value, options(), streamId)
+                : await props.backend.search(root.value, kw, mode.value, options())
+        results.value = list
+        if (searchCancelled) {
+            statusText.value =
+                list.length > 0 ? `已取消，保留 ${list.length} 条结果` : '已取消搜索'
+        } else {
+            statusText.value = list.length > 0 ? `共 ${list.length} 条结果` : '没有匹配结果'
+        }
     } catch (e: any) {
         ElMessage.error(`搜索失败：${e?.message || e}`)
         statusText.value = ''
     } finally {
         searching.value = false
+        progress.value = null
+        activeSearchId = ''
+    }
+}
+
+async function cancelSearch() {
+    if (!activeSearchId || !props.backend.cancelSearch) return
+    searchCancelled = true // 先标记：即使 done 事件晚于返回值到达也能正确提示
+    try {
+        await props.backend.cancelSearch(activeSearchId)
+    } catch {
+        // 取消失败不阻塞界面：搜索结束时仍会给出最终结果
     }
 }
 

@@ -4,10 +4,11 @@
 package sftp
 
 import (
+	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 
 	"spark/app/service/fileutil"
 	"spark/app/service/settings"
+	"spark/app/service/sshconn"
 	"spark/app/service/sshlib"
 	"spark/app/service/types"
 
@@ -29,18 +31,29 @@ import (
 
 // SFTPFileService manages SFTP sessions for remote file operations.
 type SFTPFileService struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	sessions map[string]*sftpSession
+	// searches 保存进行中的搜索，供 CancelSearch 置取消标记（key 为前端生成的 searchId）
+	searches sync.Map
 }
 
 type sftpSession struct {
 	id     string
 	client *xssh.Client
 	sftp   *sftplib.Client
+	// 连接端点信息：服务器间直传时用于判断源与目标是否同一台机器
+	host string
+	port int
+	user string
 
 	stopKA chan struct{}
 	kaOnce sync.Once
 	kaWg   sync.WaitGroup
+
+	// 服务端工具探测（GNU find / grep），每个连接只探测一次
+	toolOnce sync.Once
+	hasFind  bool
+	hasGrep  bool
 }
 
 // ServiceName implements application.ServiceName.
@@ -55,13 +68,9 @@ func (s *SFTPFileService) Connect(opts types.ConnectOptions) (string, error) {
 	if opts.Port <= 0 || opts.Port > 65535 {
 		opts.Port = 22
 	}
+	opts = sshconn.Resolve(opts)
 
-	config, err := sshlib.BuildClientConfig(opts)
-	if err != nil {
-		return "", err
-	}
-
-	client, err := xssh.Dial("tcp", net.JoinHostPort(opts.Host, strconv.Itoa(opts.Port)), config)
+	client, err := sshlib.Dial(opts)
 	if err != nil {
 		if werr := sshlib.AsHostKeyError(err); werr != nil {
 			return "", werr
@@ -80,7 +89,10 @@ func (s *SFTPFileService) Connect(opts types.ConnectOptions) (string, error) {
 		id = types.NewID()
 	}
 
-	sess := &sftpSession{id: id, client: client, sftp: sf, stopKA: make(chan struct{})}
+	sess := &sftpSession{
+		id: id, client: client, sftp: sf, stopKA: make(chan struct{}),
+		host: opts.Host, port: opts.Port, user: opts.Username,
+	}
 
 	s.ensure()
 	s.mu.Lock()
@@ -420,21 +432,31 @@ func readRemoteTextFile(cl *sftplib.Client, p string, limit int64) (string, erro
 
 // Copy copies a remote file or directory (recursively) to a new remote path.
 // The destination parent directories are created when missing.
+// Byte progress is reported as op "copy" so the UI can show it like uploads.
 func (s *SFTPFileService) Copy(id, srcPath, dstPath string) error {
 	sess, err := s.get(id)
 	if err != nil {
 		return err
 	}
-	return copyRemote(sess.sftp, srcPath, dstPath)
+	total := int64(0)
+	if fi, statErr := sess.sftp.Stat(srcPath); statErr == nil {
+		if fi.IsDir() {
+			total = scanRemoteTree(sess.sftp, srcPath).total
+		} else {
+			total = fi.Size()
+		}
+	}
+	counter := &transferCounter{id: id, op: "copy", name: path.Base(dstPath), total: total}
+	return copyRemote(sess.sftp, srcPath, dstPath, counter)
 }
 
-func copyRemote(cl *sftplib.Client, src, dst string) error {
+func copyRemote(cl *sftplib.Client, src, dst string, counter *transferCounter) error {
 	fi, err := cl.Stat(src)
 	if err != nil {
 		return err
 	}
 	if !fi.IsDir() {
-		if err := copyRemoteFile(cl, src, dst, fi.Mode().Perm()); err != nil {
+		if err := copyRemoteFile(cl, src, dst, fi.Mode().Perm(), counter); err != nil {
 			return err
 		}
 		return nil
@@ -447,7 +469,7 @@ func copyRemote(cl *sftplib.Client, src, dst string) error {
 		return err
 	}
 	for _, e := range entries {
-		if err := copyRemote(cl, path.Join(src, e.Name()), path.Join(dst, e.Name())); err != nil {
+		if err := copyRemote(cl, path.Join(src, e.Name()), path.Join(dst, e.Name()), counter); err != nil {
 			return err
 		}
 	}
@@ -455,7 +477,7 @@ func copyRemote(cl *sftplib.Client, src, dst string) error {
 	return nil
 }
 
-func copyRemoteFile(cl *sftplib.Client, src, dst string, perm os.FileMode) error {
+func copyRemoteFile(cl *sftplib.Client, src, dst string, perm os.FileMode, counter *transferCounter) error {
 	if err := ensureRemoteDir(cl, path.Dir(dst)); err != nil {
 		return err
 	}
@@ -468,7 +490,7 @@ func copyRemoteFile(cl *sftplib.Client, src, dst string, perm os.FileMode) error
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := io.Copy(out, &progressReader{r: in, c: counter}); err != nil {
 		out.Close()
 		return err
 	}
@@ -479,95 +501,83 @@ func copyRemoteFile(cl *sftplib.Client, src, dst string, perm os.FileMode) error
 	return nil
 }
 
-// Search walks a remote directory recursively and returns filename matches
-// (mode "name") or content matches (mode "content"). opts controls case
-// sensitivity and regex (content only).
-func (s *SFTPFileService) Search(id, dir, pattern, mode string, opts types.SearchOptions) ([]types.SearchResult, error) {
+// Archive compresses a remote file or directory into a .tar.gz at dstPath,
+// using the server's tar (both are present on virtually every Linux/macOS).
+func (s *SFTPFileService) Archive(id, srcPath, dstPath string) error {
 	sess, err := s.get(id)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
-		return nil, errors.New("请输入搜索关键字")
+	if err := ensureRemoteDir(sess.sftp, path.Dir(dstPath)); err != nil {
+		return err
 	}
-	if dir == "" {
-		if dir, err = sess.sftp.Getwd(); err != nil {
-			return nil, err
-		}
+	if _, statErr := sess.sftp.Stat(dstPath); statErr == nil {
+		return fmt.Errorf("目标已存在：%s", dstPath)
 	}
-	contentMode := strings.EqualFold(mode, "content")
-	if contentMode {
-		if err := fileutil.ValidateContentPattern(pattern, opts.CaseSensitive, opts.UseRegex); err != nil {
-			return nil, err
-		}
+	cmd := fmt.Sprintf(
+		"tar -czf %s -C %s %s",
+		shQuote(dstPath), shQuote(path.Dir(srcPath)), shQuote(path.Base(srcPath)),
+	)
+	if err := runRemoteCommand(sess.client, cmd); err != nil {
+		_ = sess.sftp.Remove(dstPath)
+		return err
 	}
-	excludes := fileutil.CompileExcludes(opts.Exclude)
-	results := make([]types.SearchResult, 0, 64)
-	w := sess.sftp.Walk(dir)
-	for w.Step() {
-		if w.Err() != nil {
-			continue
-		}
-		p := w.Path()
-		if p == dir {
-			continue // 跳过根目录本身
-		}
-		if len(results) >= fileutil.MaxSearchResults {
-			break
-		}
-		info := w.Stat()
-		name := path.Base(p)
-		if fileutil.MatchesExclude(excludes, p, name) {
-			if info.IsDir() {
-				w.SkipDir()
-			}
-			continue
-		}
-		if info.IsDir() {
-			if !contentMode && fileutil.MatchNameOpt(name, pattern, opts.CaseSensitive) {
-				results = append(results, types.SearchResult{
-					Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(), IsDir: true,
-				})
-			}
-			continue
-		}
-		if contentMode {
-			if info.Size() <= 0 || info.Size() > fileutil.MaxContentSearchSize {
-				continue
-			}
-			f, oerr := sess.sftp.Open(p)
-			if oerr != nil {
-				continue
-			}
-			data, rerr := io.ReadAll(io.LimitReader(f, fileutil.MaxContentSearchSize+1))
-			_ = f.Close()
-			if rerr != nil || int64(len(data)) > fileutil.MaxContentSearchSize {
-				continue
-			}
-			if fileutil.IsBinary(data) {
-				continue
-			}
-			hits, herr := fileutil.MatchLinesOpt(data, pattern, fileutil.MaxMatchesPerFile, opts.CaseSensitive, opts.UseRegex)
-			if herr != nil {
-				return nil, herr
-			}
-			for _, h := range hits {
-				results = append(results, types.SearchResult{
-					Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(),
-					LineNo: h.LineNo, Line: h.Line,
-				})
-				if len(results) >= fileutil.MaxSearchResults {
-					break
-				}
-			}
-		} else if fileutil.MatchNameOpt(name, pattern, opts.CaseSensitive) {
-			results = append(results, types.SearchResult{
-				Path: p, Name: name, Size: info.Size(), ModTime: info.ModTime(),
-			})
-		}
+	return nil
+}
+
+// Extract unpacks a remote archive into dstDir. Supported formats: zip, tar,
+// tar.gz/tgz, tar.bz2/tbz2/tbz, tar.xz/txz. The destination is created when
+// missing; unzip is required on the server for .zip archives.
+func (s *SFTPFileService) Extract(id, archivePath, dstDir string) error {
+	sess, err := s.get(id)
+	if err != nil {
+		return err
 	}
-	return results, nil
+	lower := strings.ToLower(archivePath)
+	quotedArchive := shQuote(archivePath)
+	quotedDst := shQuote(dstDir)
+	var cmd string
+	switch {
+	case strings.HasSuffix(lower, ".zip"):
+		if err := runRemoteCommand(sess.client, "command -v unzip >/dev/null 2>&1"); err != nil {
+			return errors.New("服务器未安装 unzip，无法解压 .zip；可先解压为 tar.gz 再试")
+		}
+		cmd = fmt.Sprintf("mkdir -p %s && unzip -q -o %s -d %s", quotedDst, quotedArchive, quotedDst)
+	case strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz"):
+		cmd = fmt.Sprintf("mkdir -p %s && tar -xzf %s -C %s", quotedDst, quotedArchive, quotedDst)
+	case strings.HasSuffix(lower, ".tar.bz2") || strings.HasSuffix(lower, ".tbz2") || strings.HasSuffix(lower, ".tbz"):
+		cmd = fmt.Sprintf("mkdir -p %s && tar -xjf %s -C %s", quotedDst, quotedArchive, quotedDst)
+	case strings.HasSuffix(lower, ".tar.xz") || strings.HasSuffix(lower, ".txz"):
+		cmd = fmt.Sprintf("mkdir -p %s && tar -xJf %s -C %s", quotedDst, quotedArchive, quotedDst)
+	case strings.HasSuffix(lower, ".tar"):
+		cmd = fmt.Sprintf("mkdir -p %s && tar -xf %s -C %s", quotedDst, quotedArchive, quotedDst)
+	default:
+		return errors.New("不支持的压缩格式")
+	}
+	return runRemoteCommand(sess.client, cmd)
+}
+
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// runRemoteCommand executes cmd on the server and returns stderr on failure.
+func runRemoteCommand(client *xssh.Client, cmd string) error {
+	sess, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("创建 SSH 会话失败: %w", err)
+	}
+	defer sess.Close()
+	var stderr bytes.Buffer
+	sess.Stderr = &stderr
+	if err := sess.Run(cmd); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return errors.New(msg)
+	}
+	return nil
 }
 
 // Replace replaces every content match of pattern in files under dir,
@@ -662,6 +672,28 @@ func (s *SFTPFileService) ReadFile(id, remotePath string) (string, error) {
 		return "", errors.New("该文件为二进制文件，无法用文本编辑器打开")
 	}
 	return string(data), nil
+}
+
+// ReadBinary reads a remote file and returns its content as base64 (used by
+// the image/PDF preview), capped at fileutil.MaxPreviewSize.
+func (s *SFTPFileService) ReadBinary(id, remotePath string) (string, error) {
+	sess, err := s.get(id)
+	if err != nil {
+		return "", err
+	}
+	f, err := sess.sftp.Open(remotePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, fileutil.MaxPreviewSize+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(data)) > fileutil.MaxPreviewSize {
+		return "", fmt.Errorf("文件过大（超过 %d MB），无法预览", fileutil.MaxPreviewSize>>20)
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
 }
 
 // WriteFile overwrites a remote text file with the given content.
@@ -923,8 +955,8 @@ func (s *SFTPFileService) toFileEntry(cl *sftplib.Client, parent string, fi os.F
 }
 
 func (s *SFTPFileService) get(id string) (*sftpSession, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if sess, ok := s.sessions[id]; ok {
 		return sess, nil
 	}

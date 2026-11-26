@@ -23,6 +23,7 @@ import (
 
 	"spark/app/model"
 	"spark/app/service/db"
+	"spark/app/service/sshconn"
 	"spark/app/service/sshlib"
 	"spark/app/service/types"
 
@@ -128,8 +129,10 @@ func (s *SiteService) OpenTunnel(connectionID uint, targetURL string) (TunnelInf
 		UseKey:     conn.UseKey,
 		PrivateKey: conn.PrivateKey,
 		Passphrase: conn.Passphrase,
+		JumpID:     conn.JumpID,
+		KeyID:      conn.KeyID,
 	}
-	config, err := sshlib.BuildClientConfig(opts)
+	config, err := sshlib.BuildClientConfig(sshconn.Resolve(opts))
 	if err != nil {
 		return TunnelInfo{}, err
 	}

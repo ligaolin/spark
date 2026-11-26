@@ -34,6 +34,12 @@ export interface TransferProgress {
 }
 
 // 搜索命中的结果：文件名匹配或文件内容匹配（内容匹配带行号与行文本）
+// 目录递归大小（files 为 -1 表示服务端快速路径未统计文件数）
+export interface DirSizeInfo {
+  size: number
+  files: number
+}
+
 export interface SearchResult {
   path: string
   name: string
@@ -57,6 +63,19 @@ export interface SearchOptions {
 export interface ReplaceResult {
   files: number
   occurrences: number
+}
+
+// 流式搜索进度事件（SFTP）：results 为本次新增的命中批次，
+// done 为 true 表示搜索结束（cancelled 表示被取消）。
+export interface SearchProgress {
+  searchId: string
+  sessionId: string
+  dirs: number
+  files: number
+  matches: number
+  results?: SearchResult[]
+  done?: boolean
+  cancelled?: boolean
 }
 
 // 拖拽传输负载：source 为拖拽来源，entries 为内部面板条目，paths 为操作系统文件路径

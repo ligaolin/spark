@@ -6,12 +6,22 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 
 	"spark/app/model"
 	"spark/app/service/db"
 	"spark/app/service/version"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+)
+
+// 设置读取非常频繁（每次心跳、自动刷新、AI 调用都会读若干键），逐次查库会
+// 把 SQLite 连接打成瓶颈。这里做一次全量缓存：首次访问时读入内存，Set 时
+// 同步更新，切换数据库后调用 Reload 失效重载。
+var (
+	cacheMu     sync.RWMutex
+	cache       map[string]string
+	cacheLoaded bool
 )
 
 // SettingsService exposes the configuration store to the frontend.
@@ -25,15 +35,51 @@ func (s *SettingsService) GetVersion() string { return version.Version }
 
 // GetAll returns every stored setting as a key-value map.
 func (s *SettingsService) GetAll() (map[string]string, error) {
-	var list []model.Setting
-	if err := db.GetDB().Find(&list).Error; err != nil {
-		return nil, err
+	cacheMu.RLock()
+	loaded := cacheLoaded
+	cacheMu.RUnlock()
+	if !loaded {
+		cacheMu.Lock()
+		if !cacheLoaded {
+			if err := loadLocked(); err != nil {
+				cacheMu.Unlock()
+				return nil, err
+			}
+		}
+		cacheMu.Unlock()
 	}
-	out := make(map[string]string, len(list))
-	for _, it := range list {
-		out[it.Key] = it.Value
+
+	cacheMu.RLock()
+	defer cacheMu.RUnlock()
+	out := make(map[string]string, len(cache))
+	for k, v := range cache {
+		out[k] = v
 	}
 	return out, nil
+}
+
+// loadLocked reads all settings into the cache. Caller must hold cacheMu.
+func loadLocked() error {
+	var list []model.Setting
+	if err := db.GetDB().Find(&list).Error; err != nil {
+		return err
+	}
+	m := make(map[string]string, len(list))
+	for _, it := range list {
+		m[it.Key] = it.Value
+	}
+	cache = m
+	cacheLoaded = true
+	return nil
+}
+
+// Reload drops the cache so the next read re-loads from the (possibly switched)
+// database. Call after reconnecting to a different storage backend.
+func Reload() {
+	cacheMu.Lock()
+	cache = nil
+	cacheLoaded = false
+	cacheMu.Unlock()
 }
 
 // Set stores (or updates) a setting value.
@@ -46,17 +92,41 @@ func Set(key, value string) error {
 	if strings.TrimSpace(key) == "" {
 		return errors.New("配置键不能为空")
 	}
-	return db.GetDB().Save(&model.Setting{Key: key, Value: value}).Error
+	if err := db.GetDB().Save(&model.Setting{Key: key, Value: value}).Error; err != nil {
+		return err
+	}
+	cacheMu.Lock()
+	if cacheLoaded {
+		cache[key] = value
+	}
+	cacheMu.Unlock()
+	return nil
 }
 
 // GetString reads a setting, returning def when absent.
 func GetString(key, def string) string {
-	var it model.Setting
-	// 用 Find（而非 First）避免不存在的键每次都打 "record not found" 日志
-	if err := db.GetDB().Model(&model.Setting{}).Where("key = ?", key).Limit(1).Find(&it).Error; err != nil {
+	cacheMu.RLock()
+	if cacheLoaded {
+		v, ok := cache[key]
+		cacheMu.RUnlock()
+		if ok {
+			return v
+		}
 		return def
 	}
-	return it.Value
+	cacheMu.RUnlock()
+
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	if !cacheLoaded {
+		if err := loadLocked(); err != nil {
+			return def
+		}
+	}
+	if v, ok := cache[key]; ok {
+		return v
+	}
+	return def
 }
 
 // GetInt reads an integer setting, returning def when absent or invalid.

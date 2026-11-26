@@ -17,6 +17,7 @@ import (
 	"spark/app/model"
 	"spark/app/service/db"
 	"spark/app/service/secure"
+	"spark/app/service/settings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"gorm.io/gorm"
@@ -285,7 +286,7 @@ func (s *DatabaseService) Switch(cfg DatabaseConfig) error {
 
 	// 2. 建表
 	if err := target.AutoMigrate(
-		&model.SavedConnection{}, &model.CustomCommand{}, &model.Favorite{}, &model.Setting{},
+		&model.SavedConnection{}, &model.SSHKey{}, &model.CustomCommand{}, &model.Favorite{}, &model.Setting{},
 	); err != nil {
 		return fmt.Errorf("初始化目标数据库失败: %w", err)
 	}
@@ -304,6 +305,8 @@ func (s *DatabaseService) Switch(cfg DatabaseConfig) error {
 		return err
 	}
 	secure.SetKeySeed(KeySeedFor(cfg))
+	// 存储后端已切换，让设置缓存失效并从新库重载
+	settings.Reload()
 
 	// 5. 本地永久保存配置
 	if err := cfg.Save(); err != nil {
@@ -318,7 +321,7 @@ func targetHasData(gdb *gorm.DB) bool {
 	silent := gdb.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
 	var n int64
 	for _, m := range []interface{}{
-		&model.SavedConnection{}, &model.CustomCommand{}, &model.Favorite{}, &model.Setting{},
+		&model.SavedConnection{}, &model.SSHKey{}, &model.CustomCommand{}, &model.Favorite{}, &model.Setting{},
 	} {
 		if err := silent.Model(m).Count(&n).Error; err == nil && n > 0 {
 			return true
@@ -335,6 +338,10 @@ func migrateData(src, dst *gorm.DB, targetKey string) error {
 	// 1. 先用当前（源）密钥读取
 	var conns []model.SavedConnection
 	if err := src.Find(&conns).Error; err != nil {
+		return err
+	}
+	var keys []model.SSHKey
+	if err := src.Find(&keys).Error; err != nil {
 		return err
 	}
 	var cmds []model.CustomCommand
@@ -358,6 +365,11 @@ func migrateData(src, dst *gorm.DB, targetKey string) error {
 		if len(conns) > 0 {
 			if err := tx.Create(&conns).Error; err != nil {
 				return fmt.Errorf("迁移连接失败: %w", err)
+			}
+		}
+		if len(keys) > 0 {
+			if err := tx.Create(&keys).Error; err != nil {
+				return fmt.Errorf("迁移 SSH 密钥失败: %w", err)
 			}
 		}
 		if len(cmds) > 0 {

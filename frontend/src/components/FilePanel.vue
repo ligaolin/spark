@@ -79,7 +79,8 @@
                 @row-dblclick="onDblClick" @row-contextmenu="onRowContext" empty-text="空目录">
                 <el-table-column label="名称">
                     <template #default="{ row }">
-                        <span class="entry-name" draggable="true" :title="dragHint"
+                        <span class="entry-name" :class="{ renaming: renamingPath === row.path }"
+                            :draggable="renamingPath !== row.path" :title="dragHint"
                             @dragstart="onDragStart($event, row)" @dragover="onRowDragOver($event, row)"
                             @dragleave="onRowDragLeave($event, row)" @drop="onRowDrop($event, row)">
                             <el-icon v-if="row.isDir" color="#e6c06c">
@@ -91,14 +92,17 @@
                             <el-icon v-else color="var(--text-secondary)">
                                 <Document />
                             </el-icon>
-                            <span class="name-text" :title="row.name">{{ row.name }}</span>
+                            <el-input v-if="renamingPath === row.path" :ref="setRenameInputRef" v-model="renameDraft"
+                                size="small" class="rename-input" @click.stop @mousedown.stop @dblclick.stop
+                                @keyup.enter="onRenameEnter" @keyup.esc="cancelRename" @blur="commitRename" />
+                            <span v-else class="name-text" :title="row.name">{{ row.name }}</span>
                             <el-tag v-if="row.symlink" size="small" type="info" class="link-tag">链接</el-tag>
                         </span>
                     </template>
                 </el-table-column>
                 <el-table-column label="大小" width="80" align="right">
                     <template #default="{ row }">
-                        <span class="mono dim">{{ row.isDir ? '-' : formatSize(row.size) }}</span>
+                        <span class="mono dim">{{ row.isDir ? (dirSizes[row.path] !== undefined ? formatSize(dirSizes[row.path]) : '-') : formatSize(row.size) }}</span>
                     </template>
                 </el-table-column>
                 <el-table-column label="修改时间" width="110">
@@ -133,6 +137,20 @@
 
         <PermissionDialog v-model="permVisible" :path="permPath" :mode="permMode" :is-dir="permIsDir"
             :owner="permOwner" :users="permOwnerUsers" :owner-loading="permOwnerLoading" @apply="onPermApply" />
+
+        <!-- 图片 / PDF 预览 -->
+        <FilePreviewDialog v-model="previewVisible" :title="previewTitle" :src="previewSrc" :kind="previewKind" />
+
+        <!-- 镜像同步：本地目录 ↔ 当前远程目录 -->
+        <MirrorSyncDialog v-if="props.backend.compareMirror" v-model="mirrorVisible"
+            :backend="props.backend" :remote-dir="mirrorRemoteDir" :session-id="props.sessionId"
+            :transfer-kind="props.transferKind" :transfer-scope="props.transferScope"
+            @done="refresh" />
+
+        <!-- 服务器间直传 -->
+        <ServerRelayDialog v-if="props.backend.relayTo" v-model="relayVisible" :src-path="relayEntry.path"
+            :src-name="relayEntry.name" :is-dir="relayEntry.isDir" :backend="props.backend"
+            :session-id="props.sessionId" :exclude-conn-id="props.favKey" @done="refresh" />
     </div>
 </template>
 
@@ -159,23 +177,32 @@ import {
     Close,
     Search,
     CopyDocument,
+    DocumentCopy,
+    Box,
     Scissor,
     Files,
+    Odometer,
+    Connection,
+    Promotion,
 } from '@element-plus/icons-vue'
 import ContextMenu from './ContextMenu.vue'
 import type { CtxItem } from './ContextMenu.vue'
 import TextEditor from './TextEditor.vue'
 import SearchPanel from './SearchPanel.vue'
 import PermissionDialog from './PermissionDialog.vue'
+import FilePreviewDialog from './FilePreviewDialog.vue'
+import MirrorSyncDialog from './MirrorSyncDialog.vue'
+import ServerRelayDialog from './ServerRelayDialog.vue'
 import { FavoriteService, makeFavorite } from '../utils/wails'
 import type { Favorite, OSUser } from '../utils/wails'
+import { Clipboard } from '@wailsio/runtime'
 import { showInputDialog, showConfirmDialog } from '../utils/dialog'
 import { registerDropPanel } from '../utils/externalDrop'
 import type { DropPayload, FileEntry, PanelAction, SearchResult } from '../types'
 import { formatSize, formatTime } from '../types'
 import { joinPath, parentDir, uniqueName, type FileBackend } from '../utils/fileBackend'
 import { fileClipboard } from '../utils/fileClipboard'
-import { useTransfersStore, type TransferKind } from '../stores/transfers'
+import { useTransfersStore, type TransferKind, type TransferOp } from '../stores/transfers'
 import { notifyScope } from '../utils/transferNotify'
 
 const props = defineProps<{
@@ -280,10 +307,21 @@ async function deleteFavorite(f: Favorite) {
 const currentPath = ref('')
 const pathInput = ref('')
 const entries = ref<FileEntry[]>([])
+// 手动「计算大小」得到的目录总大小（path -> bytes），仅当前目录列表内有效
+const dirSizes = ref<Record<string, number>>({})
 const loading = ref(false)
 const selected = ref<FileEntry | null>(null)
 const selectedRows = ref<FileEntry[]>([])
 const rootRef = ref<HTMLElement>()
+
+// 行内重命名（VSCode 式）：正在编辑的行路径与输入内容
+const renamingPath = ref('')
+const renameDraft = ref('')
+const renameInputRef = ref<{ focus: () => void; select?: () => void } | null>(null)
+
+function setRenameInputRef(el: any) {
+    renameInputRef.value = el
+}
 
 // 编辑器 / 搜索
 const editorRef = ref<InstanceType<typeof TextEditor>>()
@@ -299,6 +337,68 @@ function openEditor(file: { path: string; name: string }, lineNo?: number) {
         return
     }
     editorRef.value?.open(props.backend, file, lineNo)
+}
+
+// 图片 / PDF 预览
+const previewVisible = ref(false)
+const previewSrc = ref('')
+const previewTitle = ref('')
+const previewKind = ref<'image' | 'pdf'>('image')
+
+// 镜像同步（本地 ↔ 远程目录）
+const mirrorVisible = ref(false)
+const mirrorRemoteDir = ref('')
+
+// 服务器间直传（SFTP → 另一台已保存的服务器）
+const relayVisible = ref(false)
+const relayEntry = ref<{ path: string; name: string; isDir: boolean }>({ path: '', name: '', isDir: false })
+
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico', 'avif']
+const PREVIEW_MIME: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    bmp: 'image/bmp',
+    svg: 'image/svg+xml',
+    ico: 'image/x-icon',
+    avif: 'image/avif',
+    pdf: 'application/pdf',
+}
+
+function fileExt(name: string): string {
+    const dot = name.lastIndexOf('.')
+    return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+}
+
+function previewKindOf(name: string): 'image' | 'pdf' | '' {
+    const ext = fileExt(name)
+    if (IMAGE_EXTS.includes(ext)) return 'image'
+    if (ext === 'pdf') return 'pdf'
+    return ''
+}
+
+function canPreview(entry: FileEntry | null): boolean {
+    return !!entry && !entry.isDir && !!previewKindOf(entry.name) && !!props.backend.readBinary
+}
+
+async function previewFile(entry: FileEntry) {
+    const kind = previewKindOf(entry.name)
+    if (!kind || !props.backend.readBinary) return
+    const tip = ElMessage({ message: `正在加载「${entry.name}」…`, type: 'info', duration: 0 })
+    try {
+        const b64 = await props.backend.readBinary(entry.path)
+        const mime = PREVIEW_MIME[fileExt(entry.name)] || 'application/octet-stream'
+        previewKind.value = kind
+        previewSrc.value = `data:${mime};base64,${b64}`
+        previewTitle.value = entry.name
+        previewVisible.value = true
+    } catch (e: any) {
+        ElMessage.error(`预览失败：${e?.message || e}`)
+    } finally {
+        tip.close()
+    }
 }
 
 // 切换内嵌搜索面板：再次点击切回文件列表（VS Code 式），不再弹窗
@@ -786,6 +886,15 @@ function copySelected(cut: boolean) {
     ElMessage.success(cut ? `已剪切：${entry.name}` : `已复制：${entry.name}`)
 }
 
+async function copyText(text: string, what: string) {
+    try {
+        await Clipboard.SetText(text)
+        ElMessage.success(`已复制${what}：${text}`)
+    } catch (e: any) {
+        ElMessage.error(`复制${what}失败：${e?.message || e}`)
+    }
+}
+
 function canPaste(): boolean {
     const c = fileClipboard.value
     return !!c && !!props.backend.copy && c.scope === props.backend.scope
@@ -811,19 +920,134 @@ async function paste() {
     }
     const targetName = uniqueName(entries.value.map((e) => e.name), c.name)
     const target = joinPathSafe(dir, targetName, props.backend.sep)
+    const cut = c.cut
+    // 远程复制（粘贴）登记为传输任务：大文件也能在传输面板看到进度和结果；
+    // 同盘移动只是重命名，不产生字节传输，无需记录
+    const taskKey =
+        !cut && props.transferKind && props.transferScope && props.sessionId
+            ? transfers.start({
+                kind: props.transferKind,
+                scope: props.transferScope,
+                sessionId: props.sessionId,
+                op: 'copy',
+                label: `复制 ${c.name}`,
+                fileTotal: 1,
+            })
+            : ''
+    if (taskKey) transfers.expectName(taskKey, props.sessionId!, 'copy', targetName)
     try {
-        if (c.cut) {
+        if (cut) {
             await props.backend.rename(c.path, target)
         } else {
             await props.backend.copy!(c.path, target, c.isDir)
         }
-        if (c.cut) fileClipboard.value = null
-        ElMessage.success(c.cut ? `已移动：${targetName}` : `已粘贴：${targetName}`)
+        if (cut) fileClipboard.value = null
+        if (taskKey) {
+            transfers.tick(taskKey)
+            transfers.finish(taskKey)
+        }
+        notify('success', cut ? `已移动：${targetName}` : `已粘贴：${targetName}`)
         await refresh()
         const created = entries.value.find((e) => e.name === targetName)
         if (created) selected.value = created
     } catch (e: any) {
-        ElMessage.error(`粘贴失败：${e?.message || e}`)
+        const msg = `粘贴失败：${e?.message || e}`
+        if (taskKey) {
+            transfers.tick(taskKey, { error: msg })
+            transfers.fail(taskKey, msg)
+        }
+        notify('error', msg)
+    }
+}
+
+// ---------- 压缩 / 解压（仅 SFTP 后端提供 archive/extract 时可用） ----------
+
+const ARCHIVE_EXTS = ['.tar.gz', '.tar.bz2', '.tar.xz', '.tgz', '.tbz2', '.tbz', '.txz', '.tar', '.zip']
+
+function archiveExt(name: string): string {
+    const lower = name.toLowerCase()
+    return ARCHIVE_EXTS.find((e) => lower.endsWith(e)) ?? ''
+}
+
+function trackStart(op: TransferOp, label: string): string {
+    if (!props.transferKind || !props.transferScope || !props.sessionId) return ''
+    return transfers.start({
+        kind: props.transferKind,
+        scope: props.transferScope,
+        sessionId: props.sessionId,
+        op,
+        label,
+        fileTotal: 1,
+    })
+}
+
+function trackDone(key: string) {
+    if (!key) return
+    transfers.tick(key)
+    transfers.finish(key)
+}
+
+function trackFail(key: string, msg: string) {
+    if (!key) return
+    transfers.tick(key, { error: msg })
+    transfers.fail(key, msg)
+}
+
+async function compressEntry(entry: FileEntry) {
+    if (!props.backend.archive || !currentPath.value) return
+    const targetName = uniqueName(entries.value.map((e) => e.name), `${entry.name}.tar.gz`)
+    const target = joinPathSafe(currentPath.value, targetName, props.backend.sep)
+    const taskKey = trackStart('compress', `压缩 ${entry.name}`)
+    try {
+        await props.backend.archive(entry.path, target)
+        trackDone(taskKey)
+        notify('success', `已压缩：${targetName}`)
+        await refresh()
+        const created = entries.value.find((e) => e.name === targetName)
+        if (created) selected.value = created
+    } catch (e: any) {
+        const msg = `压缩失败：${e?.message || e}`
+        trackFail(taskKey, msg)
+        notify('error', msg)
+    }
+}
+
+async function extractEntry(entry: FileEntry) {
+    if (!props.backend.extract || !currentPath.value) return
+    const ext = archiveExt(entry.name)
+    const base = (ext ? entry.name.slice(0, -ext.length) : entry.name).trim() || '解压结果'
+    const targetName = uniqueName(entries.value.map((e) => e.name), base)
+    const targetDir = joinPathSafe(currentPath.value, targetName, props.backend.sep)
+    const taskKey = trackStart('extract', `解压 ${entry.name}`)
+    try {
+        // 目标目录由后端在服务器上创建，避免刚建目录就失败留下空目录
+        await props.backend.extract(entry.path, targetDir)
+        trackDone(taskKey)
+        notify('success', `已解压到：${targetName}/`)
+        await refresh()
+        const created = entries.value.find((e) => e.name === targetName)
+        if (created) selected.value = created
+    } catch (e: any) {
+        const msg = `解压失败：${e?.message || e}`
+        trackFail(taskKey, msg)
+        notify('error', msg)
+    }
+}
+
+// 目录右键「计算大小」：本地直接遍历、SFTP 优先服务端 du、FTP 递归 LIST。
+// 结果缓存到当前列表，大小列对已计算的目录直接显示数值。
+async function calcDirSize(entry: FileEntry) {
+    if (!props.backend.dirSize) return
+    const tip = ElMessage({ message: `正在计算「${entry.name}」大小…`, type: 'info', duration: 0 })
+    try {
+        const r = await props.backend.dirSize(entry.path)
+        dirSizes.value = { ...dirSizes.value, [entry.path]: r.size }
+        tip.close()
+        const count = r.files >= 0 ? `（${r.files} 个文件）` : ''
+        ElMessage.success(`「${entry.name}」大小：${formatSize(r.size)}${count}`)
+    } catch (e: any) {
+        tip.close()
+        ElMessage.error(`计算大小失败：${e?.message || e}`)
     }
 }
 
@@ -886,6 +1110,17 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
             { key: 'refresh', label: '刷新', icon: Refresh },
             { key: 'up', label: '返回上级', icon: Top, disabled: isRoot.value },
             { key: 'home', label: '主目录', icon: House },
+            ...(props.backend.compareMirror && !isLocal
+                ? [
+                    'divider' as const,
+                    {
+                        key: 'mirror-sync',
+                        label: '镜像同步当前目录…',
+                        icon: Connection,
+                        disabled: !linked.value || !currentPath.value,
+                    } as CtxItem,
+                ]
+                : []),
         ]
     }
     // 是否处于多选上下文：右键选中项之一，且选中数量 > 1
@@ -910,7 +1145,7 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
     const items: (CtxItem | 'divider')[] = []
     items.push({
         key: 'open',
-        label: entry.isDir ? '打开 / 进入' : '打开（编辑）',
+        label: entry.isDir ? '打开 / 进入' : canPreview(entry) ? '打开 / 预览' : '打开（编辑）',
         icon: FolderOpened,
     })
     if (!isLocal) {
@@ -929,14 +1164,33 @@ function buildMenu(entry: FileEntry | null): (CtxItem | 'divider')[] {
                 : { key: 'open-in-editor', label: '用编辑器打开当前目录', icon: EditPen, disabled: !linked.value },
         )
     }
+    if (!isLocal && props.backend.relayTo) {
+        items.push({ key: 'relay-to', label: '传输到其他服务器…', icon: Promotion, disabled: !linked.value })
+    }
     items.push('divider', { key: 'copy', label: '复制', icon: CopyDocument })
     items.push({ key: 'cut', label: '剪切', icon: Scissor })
     items.push({ key: 'paste', label: '粘贴到当前目录', icon: Files, disabled: !canPaste() })
+    items.push('divider')
+    items.push({ key: 'copy-path', label: '复制路径', icon: DocumentCopy })
+    items.push({ key: 'copy-rel-path', label: '复制相对路径', icon: Link })
+    if (entry.isDir && props.backend.dirSize) {
+        items.push({ key: 'dir-size', label: '计算大小', icon: Odometer })
+    }
+    if (entry.isDir && props.backend.compareMirror && !isLocal) {
+        items.push({ key: 'mirror-sync', label: '镜像同步…', icon: Connection, disabled: !linked.value })
+    }
     items.push('divider', { key: 'rename', label: '重命名', icon: Edit })
     if (!isLocal && props.backend.chmod) {
         items.push({ key: 'chmod', label: '修改权限', icon: Lock })
     }
-    items.push({ key: 'remove', label: '删除', icon: Delete, danger: true })
+    if (props.backend.archive) {
+        items.push('divider')
+        items.push({ key: 'compress', label: '压缩为 .tar.gz', icon: Box, disabled: !linked.value })
+        if (!entry.isDir && archiveExt(entry.name)) {
+            items.push({ key: 'extract', label: '解压到同名目录', icon: FolderOpened, disabled: !linked.value })
+        }
+    }
+    items.push('divider', { key: 'remove', label: '删除', icon: Delete, danger: true })
     return items
 }
 
@@ -963,6 +1217,7 @@ async function onCtxPick(item: CtxItem) {
             break
         case 'open':
             if (entry?.isDir) await cd(entry.path)
+            else if (entry && canPreview(entry)) await previewFile(entry)
             else if (entry) openEditor(entry)
             break
         case 'open-in-editor':
@@ -985,6 +1240,25 @@ async function onCtxPick(item: CtxItem) {
         case 'copy':
             copySelected(false)
             break
+        case 'copy-path':
+            if (entry) await copyText(entry.path, '路径')
+            break
+        case 'copy-rel-path':
+            if (entry) await copyText(`./${entry.name}`, '相对路径')
+            break
+        case 'dir-size':
+            if (entry) await calcDirSize(entry)
+            break
+        case 'mirror-sync': {
+            const dir = entry?.isDir ? entry.path : currentPath.value
+            if (!dir) {
+                ElMessage.warning('请先进入远程目录')
+                break
+            }
+            mirrorRemoteDir.value = dir
+            mirrorVisible.value = true
+            break
+        }
         case 'cut':
             copySelected(true)
             break
@@ -1002,8 +1276,20 @@ async function onCtxPick(item: CtxItem) {
         case 'download-multi':
             emit('action', { action: 'download-multi' })
             break
+        case 'relay-to':
+            if (entry) {
+                relayEntry.value = { path: entry.path, name: entry.name, isDir: entry.isDir }
+                relayVisible.value = true
+            }
+            break
         case 'chmod':
             await chmod()
+            break
+        case 'compress':
+            if (entry) await compressEntry(entry)
+            break
+        case 'extract':
+            if (entry) await extractEntry(entry)
             break
         case 'remove':
             await remove()
@@ -1019,6 +1305,7 @@ async function cd(path: string) {
         currentPath.value = path
         pathInput.value = path
         entries.value = list
+        dirSizes.value = {}
         selected.value = null
         selectedRows.value = []
     } catch (e: any) {
@@ -1077,6 +1364,8 @@ function rowClassName({ row }: { row: FileEntry }): string {
 async function onDblClick(row: FileEntry) {
     if (row.isDir) {
         await cd(row.path)
+    } else if (canPreview(row)) {
+        await previewFile(row)
     } else {
         openEditor(row)
     }
@@ -1098,25 +1387,47 @@ async function mkdir() {
 }
 
 async function rename() {
-    if (!selected.value) {
+    const entry = selected.value
+    if (!entry) {
         ElMessage.warning('请先选择文件或目录')
         return
     }
-    const values = await showInputDialog('重命名', [
-        { key: 'name', label: '新名称', initial: selected.value.name },
-    ])
-    if (!values) return
-    const name = values.name.trim()
-    if (!name || name === selected.value.name) return
-    const target = joinPathSafe(
-        parentDir(selected.value.path, props.backend.sep),
-        name,
-        props.backend.sep,
-    )
+    renamingPath.value = entry.path
+    renameDraft.value = entry.name
+    await nextTick()
+    renameInputRef.value?.focus()
+    renameInputRef.value?.select?.()
+}
+
+function onRenameEnter(e: KeyboardEvent) {
+    if (e.isComposing) return
+    void commitRename()
+}
+
+function cancelRename() {
+    renamingPath.value = ''
+}
+
+async function commitRename() {
+    const oldPath = renamingPath.value
+    if (!oldPath) return
+    renamingPath.value = ''
+    const entry = entries.value.find((e) => e.path === oldPath)
+    if (!entry) return
+    const name = renameDraft.value.trim()
+    if (!name || name === entry.name) return
+    if (entries.value.some((e) => e.name === name)) {
+        ElMessage.warning(`「${name}」已存在`)
+        return
+    }
+    const target = joinPathSafe(parentDir(oldPath, props.backend.sep), name, props.backend.sep)
     try {
-        await props.backend.rename(selected.value.path, target)
+        await props.backend.rename(oldPath, target)
         ElMessage.success('已重命名')
         await refresh()
+        // 刷新后把选中行落在新名称上，方便继续操作
+        selected.value = entries.value.find((e) => e.path === target) ?? null
+        if (props.multiSelect) selectedRows.value = selected.value ? [selected.value] : []
     } catch (e: any) {
         ElMessage.error(`重命名失败：${e?.message || e}`)
     }
@@ -1262,6 +1573,7 @@ function joinPathSafe(base: string, name: string, sep: string): string {
 
 function clear() {
     entries.value = []
+    dirSizes.value = {}
     selected.value = null
     selectedRows.value = []
     currentPath.value = ''
@@ -1487,10 +1799,24 @@ onBeforeUnmount(() => {
     user-select: none;
 }
 
+.entry-name.renaming {
+    cursor: text;
+    width: 100%;
+}
+
 .name-text {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.rename-input {
+    width: 100%;
+    min-width: 120px;
+}
+
+.rename-input :deep(.el-input__wrapper) {
+    padding: 0 4px;
 }
 
 .link-tag {

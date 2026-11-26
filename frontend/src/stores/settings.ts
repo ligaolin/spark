@@ -78,6 +78,12 @@ export const useSettingsStore = defineStore('settings', {
       if (!raw) return new Set()
       return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))
     },
+    // 侧边栏菜单顺序：逗号分隔的路径（为空沿用代码内默认顺序）
+    menuOrderPaths(state): string[] {
+      const raw = (state.values['menu.order'] ?? '').trim()
+      if (!raw) return []
+      return raw.split(',').map((s) => s.trim()).filter(Boolean)
+    },
   },
 
   actions: {
