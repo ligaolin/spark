@@ -89,7 +89,7 @@ func TestMigrateDataReencrypt(t *testing.T) {
 		}
 	}()
 	models := []interface{}{
-		&model.SavedConnection{}, &model.CustomCommand{}, &model.Favorite{}, &model.Setting{},
+		&model.SavedConnection{}, &model.SSHKey{}, &model.CustomCommand{}, &model.Favorite{}, &model.Setting{},
 	}
 	if err := src.AutoMigrate(models...); err != nil {
 		t.Fatal(err)
@@ -107,6 +107,13 @@ func TestMigrateDataReencrypt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := src.Create(&model.Setting{Key: "keepalive.interval", Value: "30"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := src.Create(&model.SSHKey{
+		Name: "迁移测试", Type: "ed25519", PublicKey: "ssh-ed25519 AAAA test",
+		PrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----",
+		Passphrase: "key-pass", Fingerprint: "SHA256:test",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -130,6 +137,13 @@ func TestMigrateDataReencrypt(t *testing.T) {
 	}
 	if s.Value != "30" {
 		t.Fatalf("setting not migrated: %q", s.Value)
+	}
+	var k model.SSHKey
+	if err := dst.First(&k, 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if k.Passphrase != "key-pass" || !strings.Contains(k.PrivateKey, "BEGIN OPENSSH PRIVATE KEY") {
+		t.Fatalf("ssh key decrypt failed: %+v", k)
 	}
 
 	// 源库仍用机器密钥可解密
